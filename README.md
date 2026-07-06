@@ -6,7 +6,7 @@ Tìm điểm bán trên Google Maps — Chrome Extension + Web + Server Node.js.
 
 - `extension/` — Chrome Extension MV3 (quét Google Maps)
 - `web/` — Giao diện kết quả (Vanilla JS + Leaflet)
-- `server/` — API Node.js + MySQL/SQLite
+- `server/` — API Node.js + MySQL
 - `config/` — Cấu hình deploy (`app-config.js`)
 
 ## Chạy local
