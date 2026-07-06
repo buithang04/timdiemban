@@ -1,0 +1,54 @@
+{
+  "manifest_version": 3,
+  "name": "Tim Diem Ban - Google Maps Scraper",
+  "version": "1.7.32",
+  "description": "Cào dữ liệu Google Maps — điều khiển từ http://localhost:3000",
+  "permissions": [
+    "activeTab",
+    "tabs",
+    "windows",
+    "storage",
+    "scripting",
+    "geolocation",
+    "alarms"
+  ],
+  "host_permissions": [
+    "https://www.google.com/maps/*",
+    "http://localhost:3000/*",
+    "http://127.0.0.1:3000/*"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Tim Diem Ban"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.google.com/maps/*"
+      ],
+      "js": [
+        "grid.js",
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "http://localhost:3000/*",
+        "http://127.0.0.1:3000/*"
+      ],
+      "js": [
+        "web-bridge.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

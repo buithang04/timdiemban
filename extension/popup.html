@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+
+<html lang="vi">
+
+<head>
+
+  <meta charset="UTF-8" />
+
+  <title>Tim Diem Ban</title>
+
+  <style>
+
+    body {
+
+      width: 280px;
+
+      margin: 0;
+
+      padding: 20px;
+
+      font-family: "Segoe UI", system-ui, sans-serif;
+
+      text-align: center;
+
+      color: #1e293b;
+
+    }
+
+    h1 { font-size: 16px; margin: 0 0 8px; }
+
+    p { font-size: 13px; color: #64748b; line-height: 1.5; margin: 0 0 16px; }
+
+    a {
+
+      display: block;
+
+      padding: 12px;
+
+      background: #2563eb;
+
+      color: #fff;
+
+      text-decoration: none;
+
+      border-radius: 8px;
+
+      font-weight: 600;
+
+      font-size: 14px;
+
+    }
+
+    a:hover { background: #1d4ed8; }
+
+  </style>
+
+</head>
+
+<body>
+
+  <h1>Tim Điểm Bán</h1>
+
+  <p>Extension chạy ngầm. Mở trang kết quả để tìm kiếm và xem dữ liệu.</p>
+
+  <a id="openWebLink" href="#" target="_blank">Mở trang kết quả</a>
+
+  <script src="app-config.js"></script>
+
+  <script>
+
+    (function () {
+
+      var origin = (window.TIMDIEMBAN_CONFIG && window.TIMDIEMBAN_CONFIG.APP_ORIGIN) || "http://localhost:3000";
+
+      origin = origin.replace(/\/$/, "");
+
+      var link = document.getElementById("openWebLink");
+
+      if (link) {
+
+        link.href = origin;
+
+        link.textContent = "Mở " + origin.replace(/^https?:\/\//, "");
+
+      }
+
+    })();
+
+  </script>
+
+</body>
+
+</html>
+

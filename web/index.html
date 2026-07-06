@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Tim Điểm Bán</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
+  <base href="/" />
+  <link rel="stylesheet" href="/style.css" />
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+</head>
+<body class="page-winmap wm-console">
+  <!-- Sidebar -->
+  <aside class="wm-sidebar">
+    <div class="wm-sidebar-brand">
+      <div class="wm-sidebar-logo">C</div>
+      <div>
+        <div class="wm-sidebar-title">Chatplus</div>
+        <div class="wm-sidebar-sub">Tìm điểm</div>
+      </div>
+    </div>
+
+    <nav class="wm-sidebar-nav">
+      <a href="/" class="wm-nav-item wm-nav-active">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+        Tìm điểm bán
+      </a>
+      <a href="/nap-diem" class="wm-nav-item">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+        Nạp điểm
+      </a>
+    </nav>
+
+    <div class="wm-sidebar-winmap">
+      <div class="wm-sidebar-section-title">Site nhận dữ liệu</div>
+      <p class="wm-sidebar-hint">Lưu riêng theo tài khoản đăng nhập</p>
+      <label class="wm-sidebar-label" for="winmapSite">Winmap URL</label>
+      <input type="text" id="winmapSite" class="wm-winmap-input wm-sidebar-input" placeholder="vd: demo.winmap.vn" autocomplete="off" />
+      <label class="wm-sidebar-label" for="winmapToken">Bearer token</label>
+      <input type="password" id="winmapToken" class="wm-winmap-input wm-sidebar-input" placeholder="Để trống = giữ token cũ" autocomplete="off" />
+      <div class="wm-sidebar-winmap-btns">
+        <button type="button" id="saveSiteBtn" class="wm-btn wm-btn-outline-blue wm-btn-sm">Lưu site</button>
+        <button type="button" id="pingSiteBtn" class="wm-btn wm-btn-outline-blue wm-btn-sm">Test</button>
+        <button type="button" id="sendSiteBtn" class="wm-btn wm-btn-primary wm-btn-sm" disabled>Gửi về site</button>
+      </div>
+      <span id="winmapSiteStatus" class="wm-winmap-status"></span>
+    </div>
+
+    <div class="wm-sidebar-foot">
+      <button type="button" id="sidebarNewSearchBtn" class="wm-sidebar-cta">Làm mới</button>
+      <a href="/admin" class="wm-nav-item wm-nav-btn wm-nav-foot">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        Quản trị
+      </a>
+      <button type="button" id="sidebarLogoutBtn" class="wm-nav-item wm-nav-btn wm-nav-foot">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+        <span id="sidebarLogoutLabel">Đăng nhập</span>
+      </button>
+    </div>
+  </aside>
+
+  <!-- Main app -->
+  <div class="wm-app">
+    <div id="extVersionBanner" class="ext-version-banner ext-version-info hidden" role="status">
+      <span id="extVersionBannerText"></span>
+      <button type="button" id="extVersionDismiss" class="ext-version-dismiss hidden">Đóng</button>
+    </div>
+
+    <header class="wm-header">
+      <div class="wm-header-left">
+        <div class="wm-header-stats">
+          <h1 class="wm-header-title">Tìm Điểm Bán</h1>
+          <div class="wm-header-statline">
+            <span class="wm-hstat"><strong id="pkgPointsHdr">-</strong> điểm trong hệ thống</span>
+            <span class="wm-hstat-sep">·</span>
+            <span class="wm-hstat">Quán có SĐT: <strong id="statUsedHdr">0</strong></span>
+            <span class="wm-hstat-sep">·</span>
+            <span class="wm-hstat">Còn lại: <strong id="infoPointsHdr">-</strong></span>
+            <span class="wm-hstat wm-hstat-muted">(1 điểm / điểm tìm thấy)</span>
+          </div>
+        </div>
+      </div>
+      <div class="wm-header-right">
+        <span id="connStatus" class="conn-status conn-top">Chờ extension…</span>
+        <button type="button" id="loginBtn" class="wm-btn wm-btn-outline wm-header-login hidden">Đăng nhập</button>
+        <div id="headerUserBlock" class="wm-header-user hidden">
+          <div class="wm-header-user-info">
+            <span id="headerUserName" class="wm-header-user-name">User</span>
+            <span id="headerUserRole" class="wm-header-user-role">Thành viên</span>
+          </div>
+          <div id="headerUserAvatar" class="wm-header-avatar">U</div>
+        </div>
+      </div>
+    </header>
+
+    <main class="wm-workspace">
+      <section id="errorBanner" class="error-banner error-banner-compact hidden">
+        <strong id="errorBannerTitle">Lỗi</strong> — <span id="errorBannerText"></span>
+      </section>
+
+      <!-- Top: Search + Map -->
+      <section class="wm-top-row">
+        <div class="wm-search-col">
+          <!-- Hidden elements kept for JS references -->
+          <span id="pkgPoints" class="hidden" aria-hidden="true"></span>
+          <span id="pkgName" class="hidden" aria-hidden="true"></span>
+          <span id="statUsed" class="hidden" aria-hidden="true"></span>
+          <span id="infoPoints" class="hidden" aria-hidden="true"></span>
+
+          <div id="packageBuyRow" class="wm-package-buy hidden">
+            <span class="wm-package-buy-label">Mua thêm: <a href="/nap-diem" class="wm-topup-link">Trang nạp điểm →</a></span>
+          </div>
+          <div id="packagePendingRow" class="wm-package-pending hidden" role="status"></div>
+
+          <form id="searchForm" class="wm-search-form">
+            <div class="wm-field">
+              <label for="searchKeyword">Tên hoặc loại hình</label>
+              <div class="wm-input-icon-wrap">
+                <svg class="wm-field-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+                <input type="text" id="searchKeyword" class="wm-control" placeholder="VD: tạp hóa, quán cơm…" required />
+              </div>
+            </div>
+
+            <div class="wm-field">
+              <label for="searchRadius">Bán kính (km)</label>
+              <input type="number" id="searchRadius" class="wm-control" min="0.5" max="50" step="0.5" value="5" required />
+            </div>
+
+            <div class="wm-search-options" id="searchOptionsPanel">
+              <button
+                type="button"
+                class="wm-search-options-toggle"
+                id="searchOptionsToggle"
+                aria-expanded="false"
+                aria-controls="searchOptionsBody"
+              >
+                <span class="wm-search-options-title">Cấu hình quét</span>
+                <span class="wm-search-options-hint" id="searchOptionsHint"></span>
+                <svg class="wm-search-options-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                  <path d="m6 9 6 6 6-6"/>
+                </svg>
+              </button>
+              <div class="wm-search-options-body hidden" id="searchOptionsBody">
+                <label class="wm-check-row" for="searchFastMode">
+                  <input type="checkbox" id="searchFastMode" />
+                  <span>Chế độ nhanh — cuộn/click nhanh hơn (~30–50%), có thể thiếu SĐT hoặc địa chỉ</span>
+                </label>
+                <label class="wm-check-row" for="searchMapsAutoFocus">
+                  <input type="checkbox" id="searchMapsAutoFocus" />
+                  <span id="searchMapsAutoFocusLabel">Tự chuyển sang tab Google Maps định kỳ — tránh tab nền bị treo (có thể gây nhảy cửa sổ)</span>
+                </label>
+                <label class="wm-check-row" for="searchMapsAutoReopen">
+                  <input type="checkbox" id="searchMapsAutoReopen" />
+                  <span id="searchMapsAutoReopenLabel">Tự mở lại tab Google Maps nếu bị đóng — tiếp tục quét (tìm kiếm &amp; quét lại)</span>
+                </label>
+              </div>
+            </div>
+
+            <div class="wm-field-row">
+              <div class="wm-field">
+                <label for="searchLat">Vĩ độ (Lat)</label>
+                <input type="text" id="searchLat" class="wm-control" inputmode="decimal" placeholder="20.999059" />
+              </div>
+              <div class="wm-field">
+                <label for="searchLng">Kinh độ (Lng)</label>
+                <input type="text" id="searchLng" class="wm-control" inputmode="decimal" placeholder="105.820403" />
+              </div>
+            </div>
+
+            <div class="wm-field-actions">
+              <button type="button" id="btnFromMaps" class="wm-btn wm-btn-mini hidden" title="Lấy từ tab Google Maps">Tab Maps</button>
+              <button type="button" id="btnFromGps" class="wm-btn wm-btn-mini hidden" title="Lấy GPS">GPS</button>
+              <button type="button" id="btnPickCenter" class="wm-btn wm-btn-mini wm-btn-pick-center" title="Bấm nút này rồi click bản đồ để chọn tâm">Chọn tâm</button>
+            </div>
+
+            <button type="submit" id="startSearchBtn" class="wm-btn wm-btn-primary wm-btn-block">Tìm kiếm ngay</button>
+            <button type="button" id="cancelSearchBtn" class="wm-btn wm-btn-danger wm-btn-block hidden" title="Dừng quét Google Maps và lưu kết quả đã tìm">Dừng quét điểm bán</button>
+
+            <span id="centerPreview" class="center-preview-inline hidden"></span>
+            <span id="searchStatus" class="search-status-inline hidden"></span>
+            <div id="searchProgress" class="search-progress-inline hidden">
+              <div class="search-progress-track"><div id="searchProgressBar" class="search-progress-bar"></div></div>
+              <span id="searchProgressText">0%</span>
+            </div>
+            <span id="infoStatus" class="info-status-inline"></span>
+          </form>
+
+          
+
+          <pre id="scrapeLog" class="scrape-log scrape-log-mini hidden"></pre>
+        </div>
+
+        <div class="wm-map-col">
+          <div id="liveProgress" class="live-progress live-progress-map hidden">
+            <div class="live-progress-bar-wrap"><div id="liveProgressBar" class="live-progress-bar"></div></div>
+            <span id="liveProgressText" class="live-progress-text">Đang tìm…</span>
+          </div>
+          <div id="loadingState" class="wm-map-loading hidden">
+            <div class="spinner spinner-sm"></div>
+            <span>Đang quét Google Maps…</span>
+          </div>
+          <div id="map" class="osm-map wm-map" role="application" aria-label="Bản đồ vùng tìm"></div>
+          <div class="wm-map-controls">
+            <button type="button" id="mapZoomIn" class="wm-map-ctrl" title="Phóng to">+</button>
+            <button type="button" id="mapZoomOut" class="wm-map-ctrl" title="Thu nhỏ">−</button>
+            <button type="button" id="mapLocate" class="wm-map-ctrl wm-map-ctrl-locate" title="Vị trí của tôi">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg>
+            </button>
+          </div>
+          <div class="wm-map-legend">
+            <span><i class="wm-legend-dot wm-legend-sent"></i> Đã gửi</span>
+            <span><i class="wm-legend-dot wm-legend-draft"></i> Nháp</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Bottom: Results table -->
+      <section id="tableSection" class="wm-results-section">
+        <div id="emptyState" class="hidden" aria-hidden="true"></div>
+
+        <div class="wm-results-toolbar">
+          <div class="wm-results-toolbar-left">
+            <h3 class="wm-results-title">Danh sách điểm bán</h3>
+            <span id="resultsBadge" class="wm-results-badge">0 KẾT QUẢ</span>
+          </div>
+          <div class="wm-results-toolbar-right">
+            <div class="wm-table-search-wrap">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+              <input type="search" id="searchFilter" class="wm-table-search" placeholder="Tìm trong bảng…" />
+            </div>
+            <span id="filterCount" class="wm-filter-count hidden"></span>
+            <button type="button" id="rescanBtn" class="wm-toolbar-btn" disabled title="Quét lại điểm thiếu SĐT hoặc địa chỉ">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.86"/></svg>
+              Quét lại
+            </button>
+            <button type="button" id="resetBtn" class="wm-toolbar-btn" title="Xóa sạch dữ liệu đã lưu">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+              Làm mới
+            </button>
+            <button type="button" id="exportBtn" class="wm-toolbar-btn wm-toolbar-btn-primary" disabled>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              Xuất Excel
+            </button>
+          </div>
+        </div>
+
+        <div class="wm-table-wrap">
+          <table id="resultsTable" class="table-place-results wm-table">
+            <thead>
+              <tr>
+                <th class="col-check"><input type="checkbox" id="checkAllRows" title="Chọn tất cả" /></th>
+                <th class="col-stt">STT</th>
+                <th>Tên điểm bán</th>
+                <th>Địa chỉ</th>
+                <th>Số điện thoại</th>
+                <th class="col-rating">Đánh giá</th>
+                <th>Tọa độ (Lat, Lng)</th>
+                <th>Trạng thái</th>
+                <th class="col-actions-head">Thao tác</th>
+              </tr>
+            </thead>
+            <tbody id="resultsBody">
+              <tr class="row-empty">
+                <td class="col-check"><input type="checkbox" disabled /></td>
+                <td colspan="8" class="empty-cell-msg">Hiện chưa có dữ liệu, hãy bắt đầu tìm kiếm</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="wm-table-footer">
+          <span id="tablePagination" class="wm-pagination-text">Hiển thị 0 điểm bán</span>
+          <div id="tablePaginationControls" class="wm-pagination-controls hidden">
+            <button type="button" id="pagePrevBtn" class="wm-btn wm-btn-sm wm-page-btn" disabled aria-label="Trang trước">‹</button>
+            <span id="pageInfo" class="wm-page-info">1 / 1</span>
+            <button type="button" id="pageNextBtn" class="wm-btn wm-btn-sm wm-page-btn" disabled aria-label="Trang sau">›</button>
+          </div>
+          <button type="button" id="clearBtn" class="wm-btn wm-btn-sm hidden" disabled>Xóa đã chọn</button>
+          <button type="button" id="exportBtnFooter" class="wm-btn hidden" disabled aria-hidden="true">Excel</button>
+        </div>
+      </section>
+
+      <section id="searchInfo" class="hidden" aria-hidden="true">
+        <span id="infoKeyword"></span>
+        <span id="infoRadius"></span>
+        <span id="infoCoords"></span>
+        <span id="infoRegions"></span>
+        <span id="infoTime"></span>
+        <span id="infoTotal">0</span>
+        <span id="infoGridCells"></span>
+        <div id="gridPlan"></div>
+        <span id="pointsBadge"></span>
+      </section>
+    </main>
+  </div>
+
+  <div id="authModal" class="auth-modal hidden">
+    <div class="auth-modal-box">
+      <h2 id="authModalTitle">Đăng nhập</h2>
+      <form id="authForm">
+        <label for="authEmail">Email</label>
+        <input type="email" id="authEmail" required placeholder="email@example.com" />
+        <label for="authPassword">Mật khẩu</label>
+        <input type="password" id="authPassword" required minlength="6" />
+        <p id="authError" class="auth-error hidden"></p>
+        <button type="submit" class="btn btn-primary auth-submit">Đăng nhập</button>
+      </form>
+      <p class="auth-switch"><a href="/quen-mat-khau" class="link-btn">Quên mật khẩu?</a></p>
+    </div>
+  </div>
+
+  <div id="mapsFocusModal" class="maps-focus-modal hidden" role="dialog" aria-labelledby="mapsFocusModalTitle" aria-modal="true">
+    <div class="maps-focus-modal-box">
+      <button type="button" id="mapsFocusModalClose" class="maps-focus-close-btn" title="Đóng" aria-label="Đóng">✕</button>
+      <h2 id="mapsFocusModalTitle">Chuyển sang tab Google Maps</h2>
+      <p class="maps-focus-modal-lead">
+        Tìm kiếm đang chạy. Hãy <strong>chuyển sang tab Google Maps</strong> và giữ tab đó mở — quét nhanh và kết quả về bảng liên tục.
+        Có thể bật <strong>Tự chuyển tab Maps</strong> trong Cấu hình quét nếu hay rời tab.
+      </p>
+      <button type="button" id="mapsFocusModalOk" class="btn btn-primary maps-focus-modal-btn">Đã hiểu</button>
+    </div>
+  </div>
+
+  <div id="paymentModal" class="payment-modal hidden">
+    <div class="payment-modal-box">
+      <button class="payment-close-btn" onclick="hidePaymentModal()" title="Đóng">✕</button>
+      <h2 class="payment-title">Thanh toán qua VietQR</h2>
+      <div class="payment-qr-wrap">
+        <img id="paymentQrImg" src="" alt="QR thanh toán" class="payment-qr-img" />
+      </div>
+      <div class="payment-info">
+        <div class="payment-row"><span class="pi-label">Số tiền:</span><span id="paymentAmount" class="pi-value pi-amount"></span></div>
+        <div class="payment-row"><span class="pi-label">Nội dung CK:</span><span id="paymentNote" class="pi-value pi-note"></span></div>
+        <div class="payment-row"><span class="pi-label">Ngân hàng:</span><span id="paymentBankInfo" class="pi-value"></span></div>
+      </div>
+      <p class="payment-hint">Quét mã QR → chuyển khoản → nhấn <strong>"Tôi đã thanh toán"</strong></p>
+      <div class="payment-actions">
+        <button id="confirmPaymentBtn" class="btn btn-primary" onclick="confirmPaymentDone()">✅ Tôi đã thanh toán</button>
+        <button class="btn btn-secondary" onclick="hidePaymentModal()">Để sau</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/app-config.js"></script>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+  <script src="/grid-utils.js"></script>
+  <script src="/map.js"></script>
+  <script src="/ext-version.js"></script>
+  <script src="/search.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

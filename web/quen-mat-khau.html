@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Quên mật khẩu — Tim Diem Ban</title>
+  <base href="/" />
+  <link rel="stylesheet" href="/style.css" /></head>
+<body class="auth-page">
+  <main class="main auth-page-main">
+    <div class="admin-card auth-page-card">
+      <h1>Quên mật khẩu</h1>
+      <p class="admin-hint">Nhập email tài khoản. Hệ thống tạo liên kết đặt lại (hiệu lực 1 giờ).</p>
+      <form id="forgotForm">
+        <label for="forgotEmail">Email</label>
+        <input type="email" id="forgotEmail" required placeholder="email@example.com" />
+        <p id="forgotError" class="auth-error hidden"></p>
+        <p id="forgotSuccess" class="admin-msg admin-msg-ok hidden"></p>
+        <div id="resetLinkBox" class="reset-link-box hidden">
+          <p>Mở liên kết sau để đặt mật khẩu mới:</p>
+          <a id="resetLink" href="#" class="reset-link"></a>
+        </div>
+        <button type="submit" class="btn btn-primary auth-submit">Tạo liên kết đặt lại</button>
+      </form>
+      <p class="auth-switch"><a href="/">← Quay lại đăng nhập</a></p>
+    </div>
+  </main>
+  <script>
+    const form = document.getElementById("forgotForm");
+    const forgotError = document.getElementById("forgotError");
+    const forgotSuccess = document.getElementById("forgotSuccess");
+    const resetLinkBox = document.getElementById("resetLinkBox");
+    const resetLink = document.getElementById("resetLink");
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      forgotError.classList.add("hidden");
+      forgotSuccess.classList.add("hidden");
+      resetLinkBox.classList.add("hidden");
+      try {
+        const res = await fetch("/api/auth/forgot-password", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: document.getElementById("forgotEmail").value.trim() })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Lỗi");
+        forgotSuccess.textContent = data.message;
+        forgotSuccess.classList.remove("hidden");
+        if (data.resetPath) {
+          resetLink.href = data.resetPath;
+          resetLink.textContent = window.location.origin + data.resetPath;
+          resetLinkBox.classList.remove("hidden");
+        }
+      } catch (err) {
+        forgotError.textContent = err.message;
+        forgotError.classList.remove("hidden");
+      }
+    });
+  </script>
+</body>
+</html>

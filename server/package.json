@@ -1,0 +1,18 @@
+{
+  "name": "timdiemban-server",
+  "version": "1.0.0",
+  "description": "API server nhận dữ liệu scrape từ extension",
+  "main": "server.js",
+  "scripts": {
+    "prestart": "node ../scripts/sync-app-config.js",
+    "start": "node server.js",
+    "dev": "node server.js",
+    "sync-config": "node ../scripts/sync-app-config.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.10.0",
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "mysql2": "^3.22.5"
+  }
+}

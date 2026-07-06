@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Quản trị — Tim Diem Ban</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <base href="/" />
+  <link rel="stylesheet" href="/style.css" />
+  <link rel="stylesheet" href="/admin.css?v=3" />
+</head>
+<body class="page-winmap wm-console admin-console">
+  <aside class="wm-sidebar">
+    <div class="wm-sidebar-brand">
+      <div class="wm-sidebar-logo">W</div>
+      <div>
+        <div class="wm-sidebar-title">Winmap</div>
+        <div class="wm-sidebar-sub">Admin Console</div>
+      </div>
+    </div>
+
+    <nav id="adminNav" class="admin-nav hidden">
+      <button type="button" class="admin-nav-item active" data-panel="users">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+        Tài khoản
+      </button>
+      <button type="button" class="admin-nav-item" data-panel="orders">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4Z"/><path d="M3 6h18"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>
+        Gói &amp; đơn hàng
+        <span id="adminNavPendingBadge" class="admin-nav-badge hidden">0</span>
+      </button>
+      <button type="button" class="admin-nav-item" data-panel="vietqr">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 7h.01M7 12h.01M7 17h.01M12 7h.01M12 12h.01M12 17h.01M17 7h.01M17 12h.01M17 17h.01"/></svg>
+        VietQR
+      </button>
+    </nav>
+
+    <div class="wm-sidebar-foot">
+      <a href="/" class="wm-nav-item wm-nav-btn wm-nav-foot">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+        Trang tìm kiếm
+      </a>
+      <button type="button" id="adminLogoutBtn" class="wm-nav-item wm-nav-btn wm-nav-foot">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+        <span id="adminLogoutLabel">Đăng xuất</span>
+      </button>
+    </div>
+  </aside>
+
+  <div class="wm-app admin-app">
+    <header class="wm-header">
+      <div class="wm-header-left">
+        <div class="wm-header-stats">
+          <h1 class="wm-header-title" id="adminPageTitle">Quản trị hệ thống</h1>
+          <div class="wm-header-statline">
+            <span class="wm-hstat">Tài khoản: <strong id="statUsers">0</strong></span>
+            <span class="wm-hstat-sep">·</span>
+            <span class="wm-hstat">Tổng điểm: <strong id="statPoints">0</strong></span>
+            <span class="wm-hstat-sep">·</span>
+            <span class="wm-hstat">Chờ duyệt: <strong id="statPendingOrders">0</strong></span>
+            <span class="wm-hstat-sep">·</span>
+            <span class="wm-hstat">Đã xác nhận TT: <strong id="statConfirmedOrders">0</strong></span>
+          </div>
+        </div>
+      </div>
+      <div class="wm-header-right">
+        <div id="adminUserBar" class="wm-header-user hidden">
+          <div class="wm-header-user-info">
+            <span id="adminUserEmail" class="wm-header-user-name">Admin</span>
+            <span class="wm-header-user-role">Super Administrator</span>
+          </div>
+          <div class="wm-header-avatar">A</div>
+        </div>
+      </div>
+    </header>
+
+    <main class="admin-main">
+      <section id="adminGate" class="admin-gate-wrap">
+        <div class="admin-gate-card">
+          <h2>Đăng nhập quản trị</h2>
+          <p class="admin-hint">Dùng tài khoản admin (email + mật khẩu).</p>
+          <form id="adminGateForm" class="admin-form">
+            <div class="field">
+              <label for="adminEmail">Email admin</label>
+              <input type="email" id="adminEmail" required placeholder="admin@timdiemban.local" autocomplete="username" />
+            </div>
+            <div class="field">
+              <label for="adminPassword">Mật khẩu</label>
+              <input type="password" id="adminPassword" required placeholder="Mật khẩu admin" autocomplete="current-password" />
+            </div>
+            <p id="adminGateError" class="admin-auth-error hidden"></p>
+            <div class="admin-form-actions">
+              <button type="submit" class="admin-btn admin-btn-primary">Đăng nhập</button>
+            </div>
+          </form>
+        </div>
+      </section>
+
+      <section id="adminPanel" class="hidden">
+        <!-- Panel: Tài khoản -->
+        <div id="adminPanelUsers" class="admin-panel active">
+          <article class="admin-card admin-card-compact">
+            <div class="admin-card-head">
+              <div>
+                <h2>Thao tác nhanh</h2>
+                <p class="admin-card-desc">Tạo tài khoản, nạp gói, đặt mật khẩu, cộng điểm</p>
+              </div>
+            </div>
+            <div class="admin-card-body admin-card-body-compact">
+              <div class="admin-tool-tabs" role="tablist">
+                <button type="button" class="admin-tool-tab active" data-tool="create">Tạo tài khoản</button>
+                <button type="button" class="admin-tool-tab" data-tool="package">Nạp gói</button>
+                <button type="button" class="admin-tool-tab" data-tool="reset">Đặt lại MK</button>
+                <button type="button" class="admin-tool-tab" data-tool="points">Cộng điểm lẻ</button>
+              </div>
+
+              <div class="admin-tool-panel active" data-tool-panel="create">
+                <form id="createUserForm" class="admin-form admin-form-compact">
+                  <div class="admin-form-row admin-form-row-2">
+                    <div class="field">
+                      <label for="newEmail">Email</label>
+                      <input type="email" id="newEmail" required placeholder="user@example.com" />
+                    </div>
+                    <div class="field">
+                      <label for="newPassword">Mật khẩu</label>
+                      <input type="password" id="newPassword" required minlength="6" placeholder="Tối thiểu 6 ký tự" />
+                    </div>
+                  </div>
+                  <div class="admin-form-row admin-form-row-2">
+                    <div class="field">
+                      <label for="newPackageId">Gói điểm</label>
+                      <select id="newPackageId"></select>
+                    </div>
+                    <div class="field" id="newPointsWrap">
+                      <label for="newPoints">Điểm ban đầu (nếu không chọn gói)</label>
+                      <input type="number" id="newPoints" value="0" min="0" />
+                    </div>
+                  </div>
+                  <p id="createUserMsg" class="admin-msg hidden"></p>
+                  <div class="admin-form-actions">
+                    <button type="submit" class="admin-btn admin-btn-primary">Tạo tài khoản</button>
+                  </div>
+                </form>
+              </div>
+
+              <div class="admin-tool-panel" data-tool-panel="package">
+                <form id="assignPackageForm" class="admin-form admin-form-compact">
+                  <div class="admin-form-row admin-form-row-2">
+                    <div class="field">
+                      <label for="packageEmail">Email người dùng</label>
+                      <input type="email" id="packageEmail" required placeholder="user@example.com" />
+                    </div>
+                    <div class="field">
+                      <label for="assignPackageId">Chọn gói</label>
+                      <select id="assignPackageId" required></select>
+                    </div>
+                  </div>
+                  <p id="assignPackageMsg" class="admin-msg hidden"></p>
+                  <div class="admin-form-actions">
+                    <button type="submit" class="admin-btn admin-btn-primary">Nạp gói</button>
+                  </div>
+                </form>
+              </div>
+
+              <div class="admin-tool-panel" data-tool-panel="reset">
+                <form id="adminResetForm" class="admin-form admin-form-compact">
+                  <div class="admin-form-row admin-form-row-2">
+                    <div class="field">
+                      <label for="resetEmail">Email người dùng</label>
+                      <input type="email" id="resetEmail" required placeholder="user@example.com" />
+                    </div>
+                    <div class="field">
+                      <label for="resetPassword">Mật khẩu mới</label>
+                      <input type="password" id="resetPassword" required minlength="6" placeholder="Mật khẩu mới" />
+                    </div>
+                  </div>
+                  <p id="adminResetMsg" class="admin-msg hidden"></p>
+                  <div class="admin-form-actions">
+                    <button type="submit" class="admin-btn admin-btn-primary">Đặt lại mật khẩu</button>
+                  </div>
+                </form>
+              </div>
+
+              <div class="admin-tool-panel" data-tool-panel="points">
+                <form id="addPointsForm" class="admin-form admin-form-compact">
+                  <div class="admin-form-row admin-form-row-2">
+                    <div class="field">
+                      <label for="pointsEmail">Email</label>
+                      <input type="email" id="pointsEmail" required placeholder="user@example.com" />
+                    </div>
+                    <div class="field">
+                      <label for="pointsAmount">Số điểm cộng</label>
+                      <input type="number" id="pointsAmount" required min="1" placeholder="VD: 500" />
+                    </div>
+                  </div>
+                  <p id="addPointsMsg" class="admin-msg hidden"></p>
+                  <div class="admin-form-actions">
+                    <button type="submit" class="admin-btn admin-btn-primary">Cộng điểm</button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          </article>
+
+          <article class="admin-card admin-table-card">
+            <div class="admin-card-head">
+              <div>
+                <h2>Danh sách tài khoản</h2>
+                <p class="admin-card-desc">Quản lý user — điểm, khóa/mở, thao tác nhanh</p>
+              </div>
+              <div class="admin-card-actions">
+                <button type="button" id="refreshUsersBtn" class="admin-btn admin-btn-outline">Làm mới</button>
+              </div>
+            </div>
+            <div class="admin-card-body admin-card-body-table">
+              <div class="admin-table-wrap">
+                <table class="admin-table">
+                  <thead>
+                    <tr>
+                      <th>Email</th>
+                      <th>Điểm</th>
+                      <th>Gói</th>
+                      <th>Hết hạn</th>
+                      <th>Ngày tạo</th>
+                      <th>Trạng thái</th>
+                      <th class="col-actions-head">Thao tác</th>
+                    </tr>
+                  </thead>
+                  <tbody id="usersBody">
+                    <tr class="admin-table-empty">
+                      <td colspan="7">Chưa có tài khoản nào</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </article>
+        </div>
+
+        <!-- Panel: Gói & đơn hàng -->
+        <div id="adminPanelOrders" class="admin-panel">
+          <article class="admin-card admin-table-card">
+            <div class="admin-card-head">
+              <div>
+                <h2>Lịch sử yêu cầu mua gói</h2>
+                <p class="admin-card-desc">User gửi từ trang nạp điểm — duyệt mới cộng điểm. Đơn đã duyệt/từ chối được lưu lại.</p>
+              </div>
+              <div class="admin-card-actions">
+                <button type="button" id="refreshOrdersBtn" class="admin-btn admin-btn-outline">Làm mới</button>
+              </div>
+            </div>
+            <div class="admin-card-body admin-card-body-table">
+              <div class="admin-order-filters" role="tablist">
+                <button type="button" class="admin-order-filter active" data-order-status="pending">Chờ duyệt</button>
+                <button type="button" class="admin-order-filter" data-order-status="approved">Đã duyệt</button>
+                <button type="button" class="admin-order-filter" data-order-status="rejected">Từ chối</button>
+                <button type="button" class="admin-order-filter" data-order-status="cancelled">Đã hủy</button>
+                <button type="button" class="admin-order-filter" data-order-status="all">Tất cả</button>
+              </div>
+              <div class="admin-table-wrap">
+                <table class="admin-table">
+                  <thead>
+                    <tr>
+                      <th>Email</th>
+                      <th>Gói</th>
+                      <th>Điểm</th>
+                      <th>Số tiền</th>
+                      <th>Trạng thái đơn</th>
+                      <th>Thanh toán</th>
+                      <th>Tạo lúc</th>
+                      <th>Duyệt lúc</th>
+                      <th class="col-actions-head">Thao tác</th>
+                    </tr>
+                  </thead>
+                  <tbody id="ordersBody">
+                    <tr class="admin-table-empty">
+                      <td colspan="9">Không có yêu cầu chờ duyệt</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </article>
+        </div>
+
+        <!-- Panel: VietQR -->
+        <div id="adminPanelVietqr" class="admin-panel">
+          <article class="admin-card">
+            <div class="admin-card-head">
+              <div>
+                <h2>Cấu hình VietQR</h2>
+                <p class="admin-card-desc">
+                  API v2 từ
+                  <a href="https://my.vietqr.io" target="_blank" rel="noopener">my.vietqr.io</a>
+                  hoặc Quick Link khi chưa có key.
+                </p>
+              </div>
+            </div>
+            <div class="admin-card-body">
+              <form id="vietqrForm" class="admin-form admin-form-inline">
+                <div class="admin-form-row">
+                  <div class="field">
+                    <label for="vqBankId">Mã ngân hàng ngắn</label>
+                    <input type="text" id="vqBankId" placeholder="VD: MB" maxlength="20" />
+                  </div>
+                  <div class="field">
+                    <label for="vqAcqId">Mã BIN acqId (6 số)</label>
+                    <input type="text" id="vqAcqId" placeholder="VD: 970422" maxlength="6" inputmode="numeric" />
+                  </div>
+                  <div class="field">
+                    <label for="vqAccountNo">Số tài khoản</label>
+                    <input type="text" id="vqAccountNo" placeholder="VD: 8325896836" maxlength="30" />
+                  </div>
+                  <div class="field">
+                    <label for="vqAccountName">Tên tài khoản (IN HOA)</label>
+                    <input type="text" id="vqAccountName" placeholder="VD: NGUYEN VAN A" maxlength="50" />
+                  </div>
+                </div>
+                <div class="admin-form-row">
+                  <div class="field">
+                    <label for="vqClientId">Client ID (x-client-id)</label>
+                    <input type="text" id="vqClientId" placeholder="UUID từ my.vietqr.io" autocomplete="off" />
+                  </div>
+                  <div class="field">
+                    <label for="vqApiKey">API Key (x-api-key)</label>
+                    <input type="password" id="vqApiKey" placeholder="Để trống = giữ key cũ" autocomplete="off" />
+                  </div>
+                  <div class="field field-actions">
+                    <button type="submit" class="admin-btn admin-btn-primary">Lưu cấu hình</button>
+                    <button type="button" id="vietqrTestBtn" class="admin-btn admin-btn-outline">Test QR</button>
+                  </div>
+                </div>
+                <p id="vietqrSavedStatus" class="field-hint vietqr-saved-status hidden"></p>
+                <p id="vietqrMsg" class="admin-msg hidden"></p>
+                <div id="vietqrTestPreview" class="vietqr-test-preview hidden">
+                  <img id="vietqrTestImg" alt="QR test" />
+                  <span id="vietqrTestMethod" class="vietqr-test-method"></span>
+                </div>
+              </form>
+            </div>
+          </article>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/app-config.js"></script>
+  <script src="/admin.js"></script>
+</body>
+</html>

@@ -1,0 +1,14 @@
+node_modules/
+server/node_modules/
+server/.env
+server/data/*.db
+server/data/*.db-*
+server/data/*.json
+server/data/*.bak
+.env
+.env.*
+*.log
+.DS_Store
+Thumbs.db
+*.sqlite
+*.sqlite-journal
