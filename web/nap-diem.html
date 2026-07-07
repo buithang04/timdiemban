@@ -3,21 +3,30 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Nạp điểm — Tim Điểm Bán</title>
+  <title>Nạp credit — findmap</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
   <base href="/" />
   <link rel="stylesheet" href="/style.css" />
   <link rel="stylesheet" href="/topup.css" />
+  <script>
+    try {
+      if (!localStorage.getItem("timdiemban_token")) {
+        window.location.replace("/login");
+      }
+    } catch {
+      window.location.replace("/login");
+    }
+  </script>
 </head>
 <body class="page-winmap wm-console">
   <!-- Sidebar -->
   <aside class="wm-sidebar">
     <div class="wm-sidebar-brand">
-      <div class="wm-sidebar-logo">W</div>
+      <div class="wm-sidebar-logo"><img src="/assets/findmap-logo/logo-chatplus-findmap-svg.svg" alt="findmap logo" /></div>
       <div>
-        <div class="wm-sidebar-title">Winmap</div>
+        <div class="wm-sidebar-title">findmap</div>
         <div class="wm-sidebar-sub">Tìm điểm</div>
       </div>
     </div>
@@ -29,7 +38,7 @@
       </a>
       <a href="/nap-diem" class="wm-nav-item wm-nav-active">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
-        Nạp điểm
+        Nạp credit
       </a>
     </nav>
 
@@ -51,9 +60,9 @@
     <header class="wm-header">
       <div class="wm-header-left">
         <div class="wm-header-stats">
-          <h1 class="wm-header-title">Nạp điểm tìm kiếm</h1>
+          <h1 class="wm-header-title">Nạp credit tìm kiếm</h1>
           <div class="wm-header-statline">
-            <span class="wm-hstat">Điểm hiện tại: <strong id="currentPointsHdr">-</strong></span>
+            <span class="wm-hstat">Credit hiện tại: <strong id="currentPointsHdr">-</strong></span>
             <span class="wm-hstat-sep">·</span>
             <span class="wm-hstat">Gói: <strong id="currentPackageHdr">-</strong></span>
           </div>
@@ -76,8 +85,8 @@
       <div id="loginGate" class="topup-gate hidden">
         <div class="topup-gate-card">
           <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#0037b0" stroke-width="1.5"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
-          <h2>Đăng nhập để nạp điểm</h2>
-          <p>Bạn cần đăng nhập trước để xem và mua gói điểm.</p>
+          <h2>Đăng nhập để nạp credit</h2>
+          <p>Bạn cần đăng nhập trước để xem và mua gói credit.</p>
           <button type="button" id="gateLoginBtn" class="wm-btn wm-btn-primary" style="height:42px;padding:0 24px">Đăng nhập ngay</button>
         </div>
       </div>
@@ -85,8 +94,8 @@
       <!-- Packages grid -->
       <div id="packagesSection" class="topup-section">
         <div class="topup-section-head">
-          <h2>Chọn gói điểm</h2>
-          <p>Sau khi thanh toán, admin sẽ duyệt và cộng điểm vào tài khoản của bạn.</p>
+          <h2>Chọn gói credit</h2>
+          <p>Sau khi thanh toán, admin sẽ duyệt và cộng credit vào tài khoản của bạn.</p>
         </div>
 
         <div id="pendingNotice" class="topup-pending hidden"></div>
@@ -95,7 +104,7 @@
           <!-- Rendered by JS -->
           <div class="topup-loading">
             <div class="spinner spinner-sm"></div>
-            <span>Đang tải gói điểm…</span>
+            <span>Đang tải gói credit…</span>
           </div>
         </div>
       </div>
@@ -105,7 +114,7 @@
         <div class="pay-checkout-card">
           <div class="pay-checkout-header">
             <h2>Thanh toán sản phẩm</h2>
-            <p>Hoàn tất thanh toán để nhận gói điểm</p>
+            <p>Hoàn tất thanh toán để nhận gói credit</p>
           </div>
 
           <div class="pay-checkout-body">
@@ -115,7 +124,7 @@
                 <h3 class="pay-block-title">Thông tin đơn hàng</h3>
                 <div class="pay-order-item">
                   <div class="pay-order-item-main">
-                    <span id="topupPkgName" class="pay-order-name">Gói điểm</span>
+                    <span id="topupPkgName" class="pay-order-name">Gói credit</span>
                     <span id="topupPkgDesc" class="pay-order-desc">—</span>
                   </div>
                   <span id="topupLinePrice" class="pay-order-price">—</span>
@@ -202,7 +211,7 @@
       <!-- Order history -->
       <div id="ordersSection" class="topup-section topup-orders hidden">
         <div class="topup-section-head">
-          <h2>Đơn hàng của bạn</h2>
+          <h2>Đơn hàng credit của bạn</h2>
         </div>
         <div id="ordersList" class="topup-orders-list">
           <!-- Rendered by JS -->

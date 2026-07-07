@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Đăng nhập — findmap</title>
+  <base href="/" />
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body class="auth-page">
+  <main class="main auth-page-main">
+    <div class="admin-card auth-page-card">
+      <h1>Đăng nhập findmap</h1>
+      <p class="admin-hint">Đăng nhập để tìm kiếm điểm bán và đồng bộ dữ liệu từ extension.</p>
+      <form id="loginForm">
+        <label for="loginEmail">Email</label>
+        <input type="email" id="loginEmail" required placeholder="email@example.com" autocomplete="username" />
+        <label for="loginPassword">Mật khẩu</label>
+        <input type="password" id="loginPassword" required minlength="6" autocomplete="current-password" />
+        <p id="loginError" class="auth-error hidden"></p>
+        <button type="submit" class="btn btn-primary auth-submit">Đăng nhập</button>
+      </form>
+      <p class="auth-switch"><a href="/quen-mat-khau" class="link-btn">Quên mật khẩu?</a></p>
+      <p class="auth-switch"><a href="#" id="openRegisterModal" class="link-btn">Tạo tài khoản</a></p>
+    </div>
+  </main>
+
+  <div id="registerModal" class="auth-modal hidden">
+    <div class="auth-modal-box">
+      <h2>Tạo tài khoản</h2>
+      <form id="registerForm">
+        <label for="registerFullName">Tên đầy đủ</label>
+        <input type="text" id="registerFullName" required placeholder="Nguyễn Văn A" autocomplete="name" />
+        <label for="registerEmail">Email</label>
+        <input type="email" id="registerEmail" required placeholder="email@example.com" autocomplete="username" />
+        <label for="registerPhone">Số điện thoại</label>
+        <input type="tel" id="registerPhone" required placeholder="0912345678" autocomplete="tel" />
+        <label for="registerPassword">Mật khẩu</label>
+        <input type="password" id="registerPassword" required minlength="6" autocomplete="new-password" />
+        <label for="registerPasswordConfirm">Nhập lại mật khẩu</label>
+        <input type="password" id="registerPasswordConfirm" required minlength="6" autocomplete="new-password" />
+        <p id="registerError" class="auth-error hidden"></p>
+        <button type="submit" class="btn btn-primary auth-submit">Đăng ký</button>
+      </form>
+      <p class="auth-switch"><a href="#" id="closeRegisterModal" class="link-btn">Đóng</a></p>
+    </div>
+  </div>
+
+  <div id="termsModal" class="auth-modal hidden">
+    <div class="auth-modal-box" style="width:min(850px,96vw)">
+      <h2>Điều khoản sử dụng</h2>
+      <p class="admin-hint">Bạn cần đồng ý điều khoản sử dụng trước khi tiếp tục.</p>
+      <div id="termsContent" style="max-height:280px;overflow:auto;border:1px solid #e2e8f0;border-radius:10px;padding:12px 14px;background:#f8fafc;font-size:13px;line-height:1.5;margin-bottom:12px"></div>
+      <p id="termsScrollHint" class="admin-hint" style="margin-top:-4px;margin-bottom:10px">Vui lòng cuộn hết nội dung điều khoản để mở khóa xác nhận đồng ý.</p>
+      <label style="display:grid;grid-template-columns:20px 1fr;column-gap:10px;align-items:start;margin:12px 0">
+        <input type="checkbox" id="termsAgreeServiceCheckbox" style="margin-top:3px" />
+        <span>Tôi đồng ý với Điều khoản sử dụng dịch vụ của Findmap.Chatplus và Google Maps (Bắt buộc để sử dụng dịch vụ).</span>
+      </label>
+      <label style="display:grid;grid-template-columns:20px 1fr;column-gap:10px;align-items:start;margin:12px 0">
+        <input type="checkbox" id="termsAgreeGpsCheckbox" style="margin-top:3px" />
+        <span>Tôi đồng ý cho phép ứng dụng thu thập và xử lý Dữ liệu vị trí GPS (Dữ liệu cá nhân nhạy cảm) để tìm kiếm các điểm bán xung quanh vị trí của tôi (Bắt buộc để sử dụng tính năng định vị điểm bán gần nhất).</span>
+      </label>
+      <p id="termsError" class="auth-error hidden"></p>
+      <button type="button" id="termsAgreeBtn" class="btn btn-primary auth-submit">Tôi đồng ý</button>
+    </div>
+  </div>
+
+  <script>
+    const AUTH_TOKEN_KEY = "timdiemban_token";
+    const existingToken = localStorage.getItem(AUTH_TOKEN_KEY);
+    const form = document.getElementById("loginForm");
+    const errorEl = document.getElementById("loginError");
+    const registerModal = document.getElementById("registerModal");
+    const registerForm = document.getElementById("registerForm");
+    const registerErrorEl = document.getElementById("registerError");
+    const openRegisterModalBtn = document.getElementById("openRegisterModal");
+    const closeRegisterModalBtn = document.getElementById("closeRegisterModal");
+    const termsModal = document.getElementById("termsModal");
+    const termsAgreeBtn = document.getElementById("termsAgreeBtn");
+    const termsAgreeServiceCheckbox = document.getElementById("termsAgreeServiceCheckbox");
+    const termsAgreeGpsCheckbox = document.getElementById("termsAgreeGpsCheckbox");
+    const termsError = document.getElementById("termsError");
+    const termsContent = document.getElementById("termsContent");
+    const termsScrollHint = document.getElementById("termsScrollHint");
+    let pendingTermsToken = "";
+    let pendingTermsUser = null;
+    let pendingTermsAction = "";
+    let pendingRegisterPayload = null;
+    let termsScrolledOnce = false;
+
+    function esc(value) {
+      return String(value || "").replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
+    }
+
+    function renderTerms(user) {
+      const companyName = "Công Ty TNHH An Đức Tâm";
+      const named = esc(companyName);
+      termsContent.innerHTML = `
+        <strong>ĐIỀU KHOẢN SỬ DỤNG VÀ CHÍNH SÁCH BẢO MẬT DỮ LIỆU CÁ NHÂN</strong><br>
+        (Áp dụng cho người sử dụng Phần mềm Tìm kiếm điểm bán Findmap.Chatplus)<br><br>
+        Chào mừng bạn đến với Findmap.Chatplus! Trước khi bắt đầu sử dụng các dịch vụ tìm kiếm điểm bán, định vị và xem đánh giá, bạn vui lòng đọc kỹ và xác nhận đồng ý với các điều khoản dưới đây. Việc bạn nhấn nút "Tôi đồng ý" đồng nghĩa với việc bạn đã đọc, hiểu rõ và cam kết tuân thủ toàn bộ các quy định này.<br><br>
+        <strong>PHẦN I: ĐIỀU KHOẢN SỬ DỤNG DỊCH VỤ (TERMS OF USE)</strong><br>
+        <strong>1. Chấp thuận Điều khoản và Tích hợp dịch vụ của Bên thứ ba</strong><br>
+        Phần mềm Findmap.Chatplus cung cấp giải pháp tìm kiếm điểm bán dựa trên việc tích hợp giao diện lập trình ứng dụng (API) của Google Maps Platform.<br>
+        Bằng việc sử dụng ứng dụng này, ngoài việc tuân thủ các điều khoản tại đây, bạn đồng ý bị ràng buộc pháp lý bởi:<br>
+        Điều khoản dịch vụ bổ sung của Google Maps/Google Earth (có thể truy cập tại địa chỉ do Google cung cấp).<br>
+        Chính sách bảo mật của Google.<br>
+        <strong>2. Bản quyền và Sở hữu trí tuệ</strong><br>
+        Mọi thông tin bản đồ, dữ liệu vị trí, hình ảnh gạch bản đồ (map tiles), nhãn địa điểm, tên doanh nghiệp, số điện thoại và ý kiến đánh giá hiển thị trên ứng dụng được cung cấp bởi Google Maps Platform và các đối tác cấp phép của Google. Google bảo lưu toàn bộ quyền sở hữu trí tuệ đối với các nội dung này.<br>
+        Bạn cam kết KHÔNG thực hiện các hành vi sau:<br>
+        Sử dụng bất kỳ công cụ tự động, robot, hoặc công nghệ nào để quét (scraping), tải xuống hàng loạt (bulk download), lưu trữ trái phép hoặc trích xuất dữ liệu địa điểm từ ứng dụng nhằm xây dựng cơ sở dữ liệu riêng hoặc sử dụng ngoài phạm vi ứng dụng.<br>
+        Che giấu, xóa bỏ hoặc thay đổi bất kỳ logo, chỉ dẫn bản quyền, nhãn hiệu hoặc thông báo pháp lý nào của ${named} và Google hiển thị trên giao diện.<br>
+        <strong>3. Tuân thủ Quy định về Bản đồ và Chủ quyền Quốc gia Việt Nam</strong><br>
+        Bản đồ sử dụng trong phần mềm tuân thủ nghiêm ngặt Luật Đo đạc và Bản đồ Việt Nam cũng như Nghị định 18/2020/NĐ-CP.<br>
+        Người dùng cam kết không sử dụng ứng dụng để thực hiện, chia sẻ hoặc tuyên truyền các hình ảnh bản đồ sai lệch chủ quyền quốc gia của nước Cộng hòa Xã hội Chủ nghĩa Việt Nam (bao gồm nhưng không giới hạn ở chủ quyền đối với hai quần đảo Hoàng Sa và Trường Sa).<br><br>
+        <strong>PHẦN II: CHÍNH SÁCH BẢO MẬT VÀ ĐỒNG Ý XỬ LÝ DỮ LIỆU CÁ NHÂN</strong><br>
+        (Ban hành tuân thủ Nghị định 13/2023/NĐ-CP về bảo vệ dữ liệu cá nhân)<br>
+        Bằng văn bản này, ${named} (sau đây gọi là "Chúng tôi" - đóng vai trò là Bên Kiểm soát và Xử lý dữ liệu cá nhân) thực hiện thông báo và xin sự đồng ý của bạn về việc xử lý dữ liệu cá nhân như sau:<br><br>
+        <strong>1. Các loại dữ liệu cá nhân được xử lý</strong><br>
+        Chúng tôi sẽ thu thập và xử lý các dữ liệu sau đây của bạn trong quá trình bạn trải nghiệm ứng dụng:<br>
+        Dữ liệu cá nhân cơ bản: Họ và tên hiển thị, ảnh đại diện (nếu bạn liên kết tài khoản), số điện thoại liên hệ, thông tin tài khoản số của cá nhân khi đăng ký ứng dụng, địa chỉ IP và thông tin định danh thiết bị di động.<br>
+        Dữ liệu cá nhân nhạy cảm: Dữ liệu về vị trí thực tế của bạn thông qua dịch vụ định vị GPS (được thu thập để tính toán khoảng cách và đề xuất các điểm bán gần bạn nhất).<br>
+        <strong>2. Mục đích xử lý dữ liệu</strong><br>
+        Chúng tôi xử lý dữ liệu của bạn nhằm các mục đích cụ thể sau:<br>
+        Xác định vị trí hiện tại của bạn để hiển thị chính xác các điểm bán hàng xung quanh trên bản đồ.<br>
+        Hỗ trợ bạn thực hiện cuộc gọi liên hệ trực tiếp đến điểm bán khi bạn có nhu cầu.<br>
+        Hiển thị đúng ngôn ngữ, khu vực và cải thiện trải nghiệm giao diện người dùng.<br>
+        Đảm bảo an toàn hệ thống, phòng ngừa các hành vi giả mạo hoặc tấn công bảo mật ứng dụng.<br>
+        <strong>3. Cách thức và Tổ chức liên quan đến việc xử lý dữ liệu</strong><br>
+        Cách thức xử lý: Dữ liệu vị trí (GPS) của bạn được ứng dụng ghi nhận theo thời gian thực khi được cấp quyền. Chúng tôi không lưu trữ tĩnh dữ liệu vị trí này trên máy chủ của chúng tôi mà chỉ truyền gửi an toàn dưới dạng các tham số mã hóa để gọi API của Google Maps nhằm trả về danh sách điểm bán.<br>
+        Tổ chức có liên quan: Để cung cấp tính năng bản đồ, dữ liệu tọa độ định vị của bạn sẽ được gửi đến đối tác cung cấp hạ tầng là Google LLC (Google Maps Platform) để xử lý kỹ thuật theo đúng chính sách bảo mật của Google.<br><br>
+        <strong>4. Thời gian xử lý và lưu trữ dữ liệu</strong><br>
+        Dữ liệu vị trí nhạy cảm (GPS) chỉ được xử lý tạm thời trong phiên làm việc của ứng dụng và sẽ tự động xóa ngay khi bạn tắt ứng dụng.<br>
+        Các dữ liệu cá nhân cơ bản khác (tài khoản, cài đặt) sẽ được lưu trữ và xử lý kể từ thời điểm bạn đồng ý cho đến khi bạn yêu cầu xóa tài khoản hoặc khi ứng dụng chấm dứt hoạt động hoàn toàn theo quy định pháp luật.<br><br>
+        <strong>5. Rủi ro, thiệt hại không mong muốn có thể xảy ra</strong><br>
+        Mặc dù chúng tôi áp dụng các biện pháp kỹ thuật và an ninh mạng tối đa, việc truyền tải dữ liệu trên môi trường internet luôn tiềm ẩn những rủi ro bất khả kháng như: sự cố đường truyền internet quốc tế gây gián đoạn dịch vụ định vị, hoặc các nguy cơ bị tấn công mạng ngoài tầm kiểm soát. Trong trường hợp phát sinh sự cố, chúng tôi cam kết phối hợp với các cơ quan chức năng để khắc phục và giảm thiểu tối đa thiệt hại cho bạn.<br><br>
+        <strong>6. Quyền và nghĩa vụ của bạn (Chủ thể dữ liệu)</strong><br>
+        Theo quy định pháp luật Việt Nam, bạn có các quyền và nghĩa vụ sau:<br>
+        Quyền của bạn: Quyền được biết, quyền đồng ý hoặc không đồng ý xử lý dữ liệu; quyền truy cập, chỉnh sửa hoặc yêu cầu xóa dữ liệu cá nhân của mình; quyền rút lại sự đồng ý; quyền hạn chế xử lý dữ liệu và quyền khiếu nại, tố cáo theo quy định của pháp luật.<br>
+        Cách thức thực hiện quyền: Bạn có thể tự bật/tắt quyền truy cập vị trí (GPS) trong phần cài đặt thiết bị của mình, hoặc liên hệ trực tiếp với bộ phận chăm sóc khách hàng của chúng tôi qua Email: [Email hỗ trợ của bạn] để yêu cầu xóa dữ liệu cá nhân. Chúng tôi sẽ phản hồi và giải quyết yêu cầu xóa dữ liệu của bạn trong vòng 72 giờ làm việc.<br>
+        Nghĩa vụ của bạn: Cung cấp đầy đủ, chính xác dữ liệu cá nhân khi đồng ý cho phép xử lý và tự bảo vệ dữ liệu cá nhân của mình.<br>
+        <strong>PHẦN III: XÁC NHẬN ĐỒNG Ý CỦA NGƯỜI DÙNG</strong><br>
+        Bằng cách tích chọn vào các ô dưới đây và nhấn nút "Tôi đồng ý", bạn xác nhận rằng bạn đã trên 15 tuổi (hoặc có sự đồng ý của cha mẹ/người giám hộ hợp pháp), đã đọc, hiểu rõ toàn bộ nội dung của Điều khoản sử dụng và Chính sách bảo mật dữ liệu nêu trên.
+      `;
+    }
+
+    function setTermsConsentEnabled(enabled) {
+      termsAgreeServiceCheckbox.disabled = !enabled;
+      termsAgreeGpsCheckbox.disabled = !enabled;
+      termsAgreeBtn.disabled = !enabled;
+      if (termsScrollHint) {
+        termsScrollHint.textContent = enabled
+          ? "Bạn đã cuộn hết điều khoản. Hãy tích chọn 2 ô để tiếp tục."
+          : "Vui lòng cuộn hết nội dung điều khoản để mở khóa xác nhận đồng ý.";
+      }
+    }
+
+    function openTermsModal(token, user, action = "login") {
+      pendingTermsToken = token;
+      pendingTermsUser = user || null;
+      pendingTermsAction = action;
+      termsScrolledOnce = false;
+      termsAgreeServiceCheckbox.checked = false;
+      termsAgreeGpsCheckbox.checked = false;
+      termsError.classList.add("hidden");
+      renderTerms(pendingTermsUser);
+      termsContent.scrollTop = 0;
+      setTermsConsentEnabled(false);
+      termsModal.classList.remove("hidden");
+    }
+
+    termsContent.addEventListener("scroll", () => {
+      if (termsScrolledOnce) return;
+      const reachedBottom = termsContent.scrollTop + termsContent.clientHeight >= termsContent.scrollHeight - 4;
+      if (reachedBottom) {
+        termsScrolledOnce = true;
+        setTermsConsentEnabled(true);
+      }
+    });
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      errorEl.classList.add("hidden");
+      const email = document.getElementById("loginEmail").value.trim();
+      const password = document.getElementById("loginPassword").value;
+
+      try {
+        const res = await fetch("/api/auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, password })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || "Đăng nhập thất bại");
+
+        localStorage.setItem(AUTH_TOKEN_KEY, data.token);
+        try {
+          window.postMessage(
+            { source: "timdiemban-web", type: "LOGIN", payload: { token: data.token, user: data.user } },
+            window.location.origin
+          );
+        } catch {}
+
+        if (data.user?.termsAccepted) {
+          window.location.href = "/";
+        } else {
+          openTermsModal(data.token, data.user || null, "login");
+        }
+      } catch (err) {
+        errorEl.textContent = err.message || "Đăng nhập thất bại";
+        errorEl.classList.remove("hidden");
+      }
+    });
+
+    function openRegisterModal() {
+      registerErrorEl.classList.add("hidden");
+      registerModal.classList.remove("hidden");
+    }
+
+    function closeRegisterModal() {
+      registerModal.classList.add("hidden");
+    }
+
+    openRegisterModalBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      openRegisterModal();
+    });
+    closeRegisterModalBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      closeRegisterModal();
+    });
+    registerModal.addEventListener("click", (e) => {
+      if (e.target === registerModal) closeRegisterModal();
+    });
+
+    registerForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      registerErrorEl.classList.add("hidden");
+      const fullName = document.getElementById("registerFullName").value.trim();
+      const email = document.getElementById("registerEmail").value.trim();
+      const phone = document.getElementById("registerPhone").value.trim();
+      const password = document.getElementById("registerPassword").value;
+      const confirm = document.getElementById("registerPasswordConfirm").value;
+      if (password !== confirm) {
+        registerErrorEl.textContent = "Mật khẩu nhập lại không khớp";
+        registerErrorEl.classList.remove("hidden");
+        return;
+      }
+      pendingRegisterPayload = { fullName, email, phone, password };
+      pendingTermsUser = { fullName, email, phone };
+      openTermsModal("", pendingTermsUser, "register");
+      closeRegisterModal();
+    });
+
+    async function checkTermsFromToken(token) {
+      const r = await fetch("/api/auth/me", { headers: { Authorization: `Bearer ${token}` } });
+      if (!r.ok) return null;
+      const d = await r.json().catch(() => null);
+      return d?.user || null;
+    }
+
+    // Terms popup is intentionally shown only after a successful
+    // login/register action, not on initial /login page load.
+
+    termsAgreeBtn.addEventListener("click", async () => {
+      termsError.classList.add("hidden");
+      if (!termsAgreeServiceCheckbox.checked || !termsAgreeGpsCheckbox.checked) {
+        termsError.textContent = "Bạn cần tích chọn đầy đủ 2 ô đồng ý để tiếp tục.";
+        termsError.classList.remove("hidden");
+        return;
+      }
+      try {
+        if (pendingTermsAction === "register") {
+          if (!pendingRegisterPayload) throw new Error("Thiếu dữ liệu đăng ký");
+          const reg = await fetch("/api/auth/register", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(pendingRegisterPayload)
+          });
+          const regData = await reg.json().catch(() => ({}));
+          if (!reg.ok) throw new Error(regData.error || "Đăng ký thất bại");
+          pendingTermsToken = regData.token || "";
+          pendingTermsUser = regData.user || pendingTermsUser;
+          localStorage.setItem(AUTH_TOKEN_KEY, pendingTermsToken);
+          if (!pendingTermsToken) throw new Error("Đăng ký thiếu token");
+        }
+        if (!pendingTermsToken) return;
+        const r = await fetch("/api/auth/accept-terms", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${pendingTermsToken}`
+          },
+          body: JSON.stringify({ version: "v1" })
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(d.error || "Không thể lưu điều khoản");
+        // Ensure both web + extension hold the latest accepted-terms session
+        localStorage.setItem(AUTH_TOKEN_KEY, pendingTermsToken);
+        try {
+          window.postMessage(
+            {
+              source: "timdiemban-web",
+              type: "LOGIN",
+              payload: { token: pendingTermsToken, user: d.user || pendingTermsUser || null }
+            },
+            window.location.origin
+          );
+        } catch {}
+        pendingTermsUser = d.user || pendingTermsUser || null;
+        pendingTermsToken = pendingTermsToken || "";
+        pendingTermsAction = "";
+        pendingRegisterPayload = null;
+        termsModal.classList.add("hidden");
+        window.location.replace("/");
+      } catch (err) {
+        termsError.textContent = err.message || "Không thể lưu điều khoản";
+        termsError.classList.remove("hidden");
+      }
+    });
+  </script>
+</body>
+</html>

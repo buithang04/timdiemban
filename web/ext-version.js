@@ -89,7 +89,7 @@
     if (!state.bridgeOk) {
       showBanner(
         "error",
-        `Chưa thấy extension (cần v${req}). Cài extension Tim Điểm Bán → chrome://extensions → bật và bấm Reload.`
+        `Chưa thấy extension (cần v${req}). Cài extension findmap → chrome://extensions → bật và bấm Reload.`
       );
       return;
     }
@@ -106,7 +106,7 @@
     if (cmp < 0) {
       showBanner(
         "error",
-        `Extension chưa cập nhật: đang dùng v${state.installedVersion}, cần v${req}. Mở chrome://extensions → Tim Điểm Bán → Reload.`
+        `Extension chưa cập nhật: đang dùng v${state.installedVersion}, cần v${req}. Mở chrome://extensions → findmap → Reload.`
       );
       return;
     }

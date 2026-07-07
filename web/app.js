@@ -138,6 +138,18 @@ const els = {
   headerUserName: document.getElementById("headerUserName"),
   headerUserRole: document.getElementById("headerUserRole"),
   headerUserAvatar: document.getElementById("headerUserAvatar"),
+  headerUserMenu: document.getElementById("headerUserMenu"),
+  openProfileBtn: document.getElementById("openProfileBtn"),
+  headerLogoutBtn: document.getElementById("headerLogoutBtn"),
+  profileModal: document.getElementById("profileModal"),
+  profileForm: document.getElementById("profileForm"),
+  profileEmail: document.getElementById("profileEmail"),
+  profileFullName: document.getElementById("profileFullName"),
+  profilePhone: document.getElementById("profilePhone"),
+  profileCurrentPassword: document.getElementById("profileCurrentPassword"),
+  profileNewPassword: document.getElementById("profileNewPassword"),
+  profileConfirmPassword: document.getElementById("profileConfirmPassword"),
+  profileMsg: document.getElementById("profileMsg"),
   sidebarLogoutBtn: document.getElementById("sidebarLogoutBtn"),
   sidebarLogoutLabel: document.getElementById("sidebarLogoutLabel"),
   pkgPointsHdr: document.getElementById("pkgPointsHdr"),
@@ -211,22 +223,23 @@ function formatPoints(n) {
 function updateAuthUI() {
   if (currentUser) {
     if (els.pointsBadge) {
-      els.pointsBadge.textContent = `${formatPoints(currentUser.points)} điểm`;
+      els.pointsBadge.textContent = `${formatPoints(currentUser.points)} credit`;
       els.pointsBadge.classList.remove("hidden");
     }
     els.loginBtn.textContent = "Đăng xuất";
     els.loginBtn.classList.add("hidden");
     if (els.headerUserBlock) els.headerUserBlock.classList.remove("hidden");
     if (els.headerUserName) {
-      const email = currentUser.email || "User";
-      els.headerUserName.textContent = email.split("@")[0];
+      const fallback = (currentUser.email || "User").split("@")[0];
+      els.headerUserName.textContent = currentUser.fullName || fallback;
     }
     if (els.headerUserRole) {
       els.headerUserRole.textContent =
         currentUser.role === "admin" ? "Super Administrator" : "Thành viên";
     }
     if (els.headerUserAvatar) {
-      const initial = (currentUser.email || "U")[0].toUpperCase();
+      const seed = currentUser.fullName || currentUser.email || "U";
+      const initial = seed[0].toUpperCase();
       els.headerUserAvatar.textContent = initial;
     }
     if (els.sidebarLogoutLabel) els.sidebarLogoutLabel.textContent = "Đăng xuất";
@@ -263,7 +276,7 @@ function renderPendingPackageNotice() {
   }
   const lines = pending.map((o) => {
     const label = o.paymentConfirmed ? "Đã xác nhận TT — chờ admin duyệt" : "Chờ thanh toán";
-    return `${o.packageName || "Gói điểm"} (+${formatPoints(o.points)}) — ${label}`;
+    return `${o.packageName || "Gói credit"} (+${formatPoints(o.points)} credit) — ${label}`;
   });
   els.packagePendingRow.classList.remove("hidden");
   els.packagePendingRow.innerHTML = lines.join("<br>");
@@ -418,6 +431,10 @@ function syncSessionToExtension() {
   );
 }
 
+function clearSessionInExtension() {
+  window.postMessage({ source: "timdiemban-web", type: "LOGOUT", payload: {} }, window.location.origin);
+}
+
 async function refreshUserPoints() {
   const user = await loadCurrentUser();
   updateStatUsed();
@@ -429,10 +446,17 @@ async function loadCurrentUser() {
   if (!token) {
     currentUser = null;
     updateAuthUI();
+    if (window.location.pathname === "/") {
+      window.location.replace("/login");
+    }
     return null;
   }
   try {
     const { user } = await apiRequest("/api/auth/me");
+    if (user && !user.termsAccepted) {
+      window.location.replace("/login");
+      return null;
+    }
     currentUser = user;
     updateAuthUI();
     await loadPendingPackageOrders();
@@ -441,6 +465,10 @@ async function loadCurrentUser() {
     setAuthToken("");
     currentUser = null;
     updateAuthUI();
+    clearSessionInExtension();
+    if (window.location.pathname === "/") {
+      window.location.replace("/login");
+    }
     return null;
   }
 }
@@ -452,6 +480,24 @@ function showAuthModal() {
 
 function hideAuthModal() {
   els.authModal.classList.add("hidden");
+}
+
+function toggleHeaderUserMenu(force) {
+  if (!els.headerUserMenu) return;
+  const nextOpen = typeof force === "boolean" ? force : els.headerUserMenu.classList.contains("hidden");
+  els.headerUserMenu.classList.toggle("hidden", !nextOpen);
+}
+
+function openProfileModal() {
+  if (!currentUser || !els.profileModal) return;
+  if (els.profileEmail) els.profileEmail.value = currentUser.email || "";
+  if (els.profileFullName) els.profileFullName.value = currentUser.fullName || "";
+  if (els.profilePhone) els.profilePhone.value = currentUser.phone || "";
+  if (els.profileCurrentPassword) els.profileCurrentPassword.value = "";
+  if (els.profileNewPassword) els.profileNewPassword.value = "";
+  if (els.profileConfirmPassword) els.profileConfirmPassword.value = "";
+  if (els.profileMsg) els.profileMsg.classList.add("hidden");
+  els.profileModal.classList.remove("hidden");
 }
 
 function markResultsRadiusFlags(rows, search) {
@@ -787,8 +833,8 @@ async function flushChargeNewPhones() {
     window.TimDiemBanMap?.refreshMarkers(currentData);
     window.TimDiemBanMap?.countInOut(currentData);
     showErrorBanner(
-      "Hết điểm",
-      `Đã dùng ${paid} điểm — hết điểm, chỉ giữ quán có SĐT đã lưu (${getChargedPhonesSet().size} SĐT)`
+      "Hết credit",
+      `Đã dùng ${paid} điểm (quy đổi credit) — hết credit khả dụng, chỉ giữ quán có SĐT đã lưu (${getChargedPhonesSet().size} SĐT)`
     );
   }
 
@@ -805,8 +851,8 @@ async function tryChargePendingSearch() {
       const { charged, remaining } = pointsInfo;
       const total = countUniquePhonesInRows(currentData);
       showErrorBanner(
-        "Cập nhật điểm",
-        `${total} SĐT unique — dùng ${charged} điểm — còn ${remaining} điểm`
+        "Cập nhật credit",
+        `${total} SĐT unique — dùng ${charged} điểm (quy đổi credit) — còn ${remaining} điểm`
       );
     }
     return pointsInfo;
@@ -2202,7 +2248,7 @@ async function handleExtensionPayload(type, payload) {
     await refreshUserPoints();
     setConnStatus(
       currentUser
-        ? `Đã đồng bộ — ${formatPoints(currentUser.points)} điểm (từ server)`
+        ? `Đã đồng bộ — ${formatPoints(currentUser.points)} credit (từ server)`
         : "Đã kết nối extension",
       "connected"
     );
@@ -2246,10 +2292,10 @@ async function handleExtensionPayload(type, payload) {
       const partialNote = payload.partial ? " (dừng sớm)" : "";
       const msg =
         phoneTotal > charged
-          ? `Sau loại trùng: ${phoneTotal} SĐT unique${partialNote} — dùng ${charged} điểm (hết điểm) — còn ${remaining} điểm`
+          ? `Sau loại trùng: ${phoneTotal} SĐT unique${partialNote} — dùng ${charged} điểm (hết credit khả dụng) — còn ${remaining} credit`
           : payload.partial
-            ? `Dừng sớm — ${phoneTotal} SĐT unique, dùng ${charged} điểm — còn ${remaining} điểm`
-            : `Hoàn tất — ${phoneTotal} SĐT unique (đã loại trùng), dùng ${charged} điểm — còn ${remaining} điểm`;
+            ? `Dừng sớm — ${phoneTotal} SĐT unique, dùng ${charged} điểm (quy đổi credit) — còn ${remaining} credit`
+            : `Hoàn tất — ${phoneTotal} SĐT unique (đã loại trùng), dùng ${charged} điểm (quy đổi credit) — còn ${remaining} credit`;
       showErrorBanner(payload.partial ? "Đã dừng tìm kiếm" : "Hoàn tất tìm kiếm", msg);
     } else if (payload.partial) {
       showErrorBanner("Đã dừng tìm kiếm", payload.partialReason || "Kết quả đã lưu.");
@@ -2518,16 +2564,32 @@ function handleAuthClick() {
     apiRequest("/api/logout", { method: "POST" }).catch(() => {});
     setAuthToken("");
     currentUser = null;
+    clearSessionInExtension();
     clearWinmapSiteForm();
     updateAuthUI();
     setConnStatus("Đã đăng xuất", "");
+    window.location.replace("/login");
   } else {
-    showAuthModal();
+    window.location.href = "/login";
   }
 }
 
 els.loginBtn?.addEventListener("click", handleAuthClick);
 els.sidebarLogoutBtn?.addEventListener("click", handleAuthClick);
+els.headerLogoutBtn?.addEventListener("click", () => {
+  toggleHeaderUserMenu(false);
+  handleAuthClick();
+});
+
+els.headerUserAvatar?.addEventListener("click", (e) => {
+  e.stopPropagation();
+  toggleHeaderUserMenu();
+});
+
+els.openProfileBtn?.addEventListener("click", () => {
+  toggleHeaderUserMenu(false);
+  openProfileModal();
+});
 
 els.sidebarNewSearchBtn?.addEventListener("click", () => {
   if (!confirm("Làm mới — xóa toàn bộ dữ liệu tìm kiếm hiện tại?")) return;
@@ -2542,6 +2604,58 @@ document.getElementById("mapLocate")?.addEventListener("click", () => window.Tim
 
 els.authModal.addEventListener("click", (e) => {
   if (e.target === els.authModal) hideAuthModal();
+});
+
+els.profileModal?.addEventListener("click", (e) => {
+  if (e.target === els.profileModal) els.profileModal.classList.add("hidden");
+});
+
+els.profileForm?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  if (els.profileMsg) els.profileMsg.classList.add("hidden");
+  const currentPassword = els.profileCurrentPassword?.value || "";
+  const newPassword = els.profileNewPassword?.value || "";
+  const confirmPassword = els.profileConfirmPassword?.value || "";
+  if ((currentPassword || newPassword || confirmPassword) && newPassword !== confirmPassword) {
+    if (els.profileMsg) {
+      els.profileMsg.textContent = "Mật khẩu mới nhập lại không khớp";
+      els.profileMsg.classList.remove("hidden");
+    }
+    return;
+  }
+  try {
+    const data = await apiRequest("/api/auth/profile", {
+      method: "POST",
+      body: JSON.stringify({
+        fullName: els.profileFullName?.value?.trim() || "",
+        phone: els.profilePhone?.value?.trim() || "",
+        currentPassword,
+        newPassword
+      })
+    });
+    currentUser = data.user || currentUser;
+    updateAuthUI();
+    syncSessionToExtension();
+    if (els.profileMsg) {
+      els.profileMsg.textContent = data.message || "Đã cập nhật hồ sơ";
+      els.profileMsg.classList.remove("hidden");
+    }
+    setTimeout(() => {
+      if (els.profileModal) els.profileModal.classList.add("hidden");
+    }, 500);
+  } catch (err) {
+    if (els.profileMsg) {
+      els.profileMsg.textContent = err.message || "Cập nhật thất bại";
+      els.profileMsg.classList.remove("hidden");
+    }
+  }
+});
+
+document.addEventListener("click", (e) => {
+  if (!els.headerUserMenu || !els.headerUserBlock) return;
+  if (!els.headerUserBlock.contains(e.target)) {
+    toggleHeaderUserMenu(false);
+  }
 });
 
 els.authForm.addEventListener("submit", async (e) => {
@@ -2594,7 +2708,7 @@ window.addEventListener("timdiemban:bridge-ready", (e) => {
     queryRescanStatus();
   } else {
     window.TimDiemBanExtVersion?.onBridgeMissing();
-    setConnStatus("Chưa thấy extension — cài/reload Tim Điểm Bán", "error");
+    setConnStatus("Chưa thấy extension — cài/reload findmap", "error");
   }
 });
 
@@ -2630,7 +2744,7 @@ loadCurrentUser().then(async () => {
   } else {
     setConnStatus(
       currentUser
-        ? `Đã đăng nhập — ${formatPoints(currentUser.points)} điểm · Extension chạy ngầm`
+        ? `Đã đăng nhập — ${formatPoints(currentUser.points)} credit · Extension chạy ngầm`
         : "Đăng nhập góc phải, rồi dùng form Tìm kiếm mới",
       currentUser ? "connected" : ""
     );

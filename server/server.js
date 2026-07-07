@@ -18,6 +18,7 @@ const express = require("express");
 const path = require("path");
 const fs = require("fs");
 const cors = require("cors");
+const nodemailer = require("nodemailer");
 const { pushPointsExternal, resolveImportUrl, resolveImportUrls } = require("./points-push");
 const {
   resolveAcqId,
@@ -26,16 +27,8 @@ const {
   buildQuickLinkUrl
 } = require("./vietqr");
 
-const USE_MYSQL = (process.env.DB_TYPE || "").toLowerCase() === "mysql";
-
-let dbModule, authModule;
-if (USE_MYSQL) {
-  dbModule   = require("./db-mysql");
-  authModule = require("./auth-store-mysql");
-} else {
-  dbModule   = require("./db");
-  authModule = require("./auth-store");
-}
+const dbModule = require("./db");
+const authModule = require("./auth-store");
 
 const { getSetting, setSetting } = dbModule;
 const {
@@ -61,18 +54,17 @@ const {
   cancelPackageOrder,
   setUserActive,
   setUserPoints,
+  updateOwnProfile,
+  adminUpdateUserProfile,
   chargePoints,
-  logoutToken
+  logoutToken,
+  acceptTerms
 } = authModule;
 
 // ——— Khởi tạo database ———
 let dbReady = false;
 async function initDatabase() {
-  if (USE_MYSQL) {
-    await dbModule.initDb();
-  } else {
-    dbModule.getDb();
-  }
+  await dbModule.initDb();
   dbReady = true;
 }
 initDatabase().catch((err) => {
@@ -94,9 +86,112 @@ function getExtensionManifestVersion() {
 
 const app = express();
 const PORT = 3000;
+app.set("json escape", true);
 
-app.use(cors({ origin: true, credentials: true }));
+const appConfig = require(path.join(__dirname, "..", "config", "app-config.js"));
+const appOrigin = String(appConfig.APP_ORIGIN || "").replace(/\/$/, "") || `http://localhost:${PORT}`;
+const allowedOrigins = new Set([
+  appOrigin,
+  "http://localhost:3000",
+  "http://127.0.0.1:3000"
+]);
+
+function createRateLimiter({ windowMs, max, keyPrefix }) {
+  const hits = new Map();
+  return (req, res, next) => {
+    const now = Date.now();
+    const ip = req.ip || req.socket?.remoteAddress || "unknown";
+    const key = `${keyPrefix}:${ip}`;
+    const row = hits.get(key) || { count: 0, resetAt: now + windowMs };
+    if (now > row.resetAt) {
+      row.count = 0;
+      row.resetAt = now + windowMs;
+    }
+    row.count += 1;
+    hits.set(key, row);
+    if (row.count > max) {
+      const retryAfter = Math.max(1, Math.ceil((row.resetAt - now) / 1000));
+      res.setHeader("Retry-After", String(retryAfter));
+      return res.status(429).json({ error: "Quá nhiều yêu cầu, vui lòng thử lại sau." });
+    }
+    next();
+  };
+}
+
+const apiRateLimit = createRateLimiter({ windowMs: 60 * 1000, max: 600, keyPrefix: "api" });
+const authWriteRateLimit = createRateLimiter({ windowMs: 60 * 1000, max: 30, keyPrefix: "authw" });
+
+function sanitizeValue(val) {
+  if (typeof val === "string") {
+    return val.replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, "").replace(/[<>]/g, "").trim();
+  }
+  if (Array.isArray(val)) return val.map(sanitizeValue);
+  if (val && typeof val === "object") {
+    const out = {};
+    for (const [k, v] of Object.entries(val)) out[k] = sanitizeValue(v);
+    return out;
+  }
+  return val;
+}
+
+function requestSanitizer(req, res, next) {
+  if (req.body && typeof req.body === "object") req.body = sanitizeValue(req.body);
+  if (req.query && typeof req.query === "object") req.query = sanitizeValue(req.query);
+  next();
+}
+
+function hasSuspiciousSqlInput(v) {
+  const s = String(v || "").toLowerCase();
+  return /(\bor\b\s+1=1\b|union\s+select|drop\s+table|--|;\s*--|\/\*|\*\/)/i.test(s);
+}
+
+function guardSensitiveInput(...fields) {
+  return (req, res, next) => {
+    for (const f of fields) {
+      const v = req.body?.[f];
+      if (v != null && hasSuspiciousSqlInput(v)) {
+        return res.status(400).json({ error: "Dữ liệu đầu vào không hợp lệ." });
+      }
+    }
+    next();
+  };
+}
+
+function csrfOriginGuard(req, res, next) {
+  if (!req.path.startsWith("/api/")) return next();
+  if (["GET", "HEAD", "OPTIONS"].includes(req.method)) return next();
+  const origin = req.headers.origin || "";
+  const referer = req.headers.referer || "";
+  const okOrigin = !origin || allowedOrigins.has(origin.replace(/\/$/, ""));
+  const okReferer =
+    !referer ||
+    [...allowedOrigins].some((o) => referer.startsWith(o));
+  if (!okOrigin || !okReferer) {
+    return res.status(403).json({ error: "CSRF blocked: origin không hợp lệ." });
+  }
+  next();
+}
+
+app.use((req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "SAMEORIGIN");
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  res.setHeader("Permissions-Policy", "geolocation=(self)");
+  res.setHeader("Content-Security-Policy", "default-src 'self' https: data: blob: 'unsafe-inline' 'unsafe-eval'");
+  next();
+});
+app.use(cors({
+  origin(origin, cb) {
+    if (!origin) return cb(null, true);
+    const normalized = String(origin).replace(/\/$/, "");
+    cb(null, allowedOrigins.has(normalized));
+  },
+  credentials: true
+}));
 app.use(express.json({ limit: "1mb" }));
+app.use(requestSanitizer);
+app.use(csrfOriginGuard);
+app.use("/api/", apiRateLimit);
 
 app.use((err, req, res, next) => {
   if (err instanceof SyntaxError && err.status === 400 && "body" in err) {
@@ -205,6 +300,99 @@ async function buildVietQrPayment(order) {
   return null;
 }
 
+async function getSmtpConfig() {
+  const cfg = {
+    host: await getSetting("smtp_host", ""),
+    hostBackup: await getSetting("smtp_host_backup", ""),
+    port: Number(await getSetting("smtp_port", "465")) || 465,
+    secureMode: await getSetting("smtp_secure_mode", "ssl"),
+    username: await getSetting("smtp_username", ""),
+    password: await getSetting("smtp_password", ""),
+    fromEmail: await getSetting("smtp_from_email", ""),
+    fromName: await getSetting("smtp_from_name", "findmap"),
+    clientHostname: await getSetting("smtp_client_hostname", ""),
+    helo: await getSetting("smtp_helo", ""),
+    rerouteAddress: await getSetting("smtp_reroute_address", "")
+  };
+  return cfg;
+}
+
+function smtpConfigured(cfg) {
+  return !!(cfg.host && cfg.port && cfg.username && cfg.password && cfg.fromEmail);
+}
+
+function createMailTransport(cfg, host) {
+  const secure = String(cfg.secureMode || "ssl").toLowerCase() !== "tls";
+  return nodemailer.createTransport({
+    host,
+    port: Number(cfg.port) || 465,
+    secure,
+    auth: { user: cfg.username, pass: cfg.password },
+    name: cfg.clientHostname || undefined,
+    tls: {
+      servername: cfg.helo || undefined
+    }
+  });
+}
+
+async function sendResetMail({ to, resetLink }) {
+  const cfg = await getSmtpConfig();
+  if (!smtpConfigured(cfg)) return { ok: false, reason: "smtp_not_configured" };
+  const hosts = [cfg.host, cfg.hostBackup].filter(Boolean);
+  if (!hosts.length) return { ok: false, reason: "smtp_host_missing" };
+
+  const recipient = cfg.rerouteAddress || to;
+  let lastErr = null;
+  for (const host of hosts) {
+    try {
+      const transporter = createMailTransport(cfg, host);
+      await transporter.sendMail({
+        from: `"${cfg.fromName || "findmap"}" <${cfg.fromEmail}>`,
+        to: recipient,
+        subject: "Đặt lại mật khẩu findmap",
+        text: `Bạn vừa yêu cầu đặt lại mật khẩu.\n\nNhấn link sau để đổi mật khẩu:\n${resetLink}\n\nNếu không phải bạn yêu cầu, hãy bỏ qua email này.`,
+        html: `
+          <p>Bạn vừa yêu cầu đặt lại mật khẩu.</p>
+          <p><a href="${resetLink}">Bấm vào đây để đổi mật khẩu</a></p>
+          <p>Nếu không phải bạn yêu cầu, hãy bỏ qua email này.</p>
+        `
+      });
+      return { ok: true, host, rerouted: Boolean(cfg.rerouteAddress) };
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  return { ok: false, reason: "smtp_send_failed", error: lastErr?.message || "SMTP send failed" };
+}
+
+async function sendSmtpTestMail({ to }) {
+  const cfg = await getSmtpConfig();
+  if (!smtpConfigured(cfg)) return { ok: false, reason: "smtp_not_configured" };
+  const hosts = [cfg.host, cfg.hostBackup].filter(Boolean);
+  if (!hosts.length) return { ok: false, reason: "smtp_host_missing" };
+
+  const recipient = String(to || cfg.rerouteAddress || cfg.fromEmail || "").trim();
+  if (!recipient) return { ok: false, reason: "smtp_test_recipient_missing" };
+
+  let lastErr = null;
+  for (const host of hosts) {
+    try {
+      const transporter = createMailTransport(cfg, host);
+      await transporter.sendMail({
+        from: `"${cfg.fromName || "findmap"}" <${cfg.fromEmail}>`,
+        to: recipient,
+        subject: "Test SMTP findmap",
+        text: "Day la email test cau hinh SMTP tu findmap.",
+        html: "<p>Day la email <strong>test cau hinh SMTP</strong> tu findmap.</p>"
+      });
+      return { ok: true, host, to: recipient };
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  return { ok: false, reason: "smtp_send_failed", error: lastErr?.message || "SMTP send failed" };
+}
+
 app.get("/api/packages", async (req, res) => {
   res.json({ packages: await listPackages() });
 });
@@ -217,7 +405,7 @@ app.get("/api/ext-version", (req, res) => {
   res.json(getExtensionManifestVersion());
 });
 
-app.post("/api/auth/login", async (req, res) => {
+app.post("/api/auth/login", authWriteRateLimit, guardSensitiveInput("email", "password"), async (req, res) => {
   try {
     const { email, password } = req.body || {};
     const result = await loginUser(email, password);
@@ -227,7 +415,18 @@ app.post("/api/auth/login", async (req, res) => {
   }
 });
 
-app.post("/api/auth/logout", async (req, res) => {
+app.post("/api/auth/register", authWriteRateLimit, guardSensitiveInput("email", "password"), async (req, res) => {
+  try {
+    const { fullName, email, phone, password } = req.body || {};
+    const user = await createUser(email, password, { fullName, phone });
+    const result = await loginUser(email, password);
+    res.status(201).json({ ok: true, user, token: result.token });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post("/api/auth/logout", authWriteRateLimit, async (req, res) => {
   await logoutToken(getToken(req));
   res.json({ ok: true });
 });
@@ -238,21 +437,53 @@ app.get("/api/auth/me", async (req, res) => {
   res.json({ user });
 });
 
-app.post("/api/auth/forgot-password", async (req, res) => {
+app.post("/api/auth/profile", authWriteRateLimit, requireAuth, async (req, res) => {
   try {
-    const { email } = req.body || {};
-    const result = await requestPasswordReset(email);
-    const payload = { ok: true, message: result.message };
-    if (result.token) {
-      payload.resetPath = `/dat-lai-mat-khau?token=${result.token}`;
-    }
-    res.json(payload);
+    const user = await updateOwnProfile(req.user.id, req.body || {});
+    res.json({ ok: true, user, message: "Đã cập nhật hồ sơ" });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
 });
 
-app.post("/api/auth/reset-password", async (req, res) => {
+app.post("/api/auth/accept-terms", authWriteRateLimit, requireAuth, async (req, res) => {
+  try {
+    const version = req.body?.version || "v1";
+    const user = await acceptTerms(req.user.id, version);
+    res.json({ ok: true, user });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post("/api/auth/forgot-password", authWriteRateLimit, guardSensitiveInput("email"), async (req, res) => {
+  try {
+    const { email } = req.body || {};
+    const result = await requestPasswordReset(email);
+    if (result?.token) {
+      const resetLink = `${appOrigin}/dat-lai-mat-khau?token=${result.token}`;
+      const mailResult = await sendResetMail({
+        to: String(email || "").trim().toLowerCase(),
+        resetLink
+      });
+      console.log(
+        `[AUTH] Reset link for ${String(email || "").trim().toLowerCase()}: ${resetLink}`
+      );
+      if (!mailResult.ok) {
+        console.warn(`[AUTH] SMTP chưa gửi được (${mailResult.reason})`);
+      }
+    }
+    res.json({
+      ok: true,
+      message:
+        "Nếu email tồn tại, hệ thống đã gửi hướng dẫn đặt lại mật khẩu. Nếu chưa nhận được, vui lòng liên hệ admin hỗ trợ."
+    });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post("/api/auth/reset-password", authWriteRateLimit, guardSensitiveInput("token", "password"), async (req, res) => {
   try {
     const { token, password } = req.body || {};
     const result = await resetPasswordWithToken(token, password);
@@ -262,7 +493,7 @@ app.post("/api/auth/reset-password", async (req, res) => {
   }
 });
 
-app.post("/api/admin/login", async (req, res) => {
+app.post("/api/admin/login", authWriteRateLimit, guardSensitiveInput("email", "password"), async (req, res) => {
   try {
     const { email, password } = req.body || {};
     const result = await loginAdmin(email, password);
@@ -282,11 +513,16 @@ app.get("/api/admin/packages", requireAdmin, async (req, res) => {
 
 app.post("/api/admin/users", requireAdmin, async (req, res) => {
   try {
-    const { email, password, packageId, points } = req.body || {};
-    const user = await createUser(email, password, { packageId: packageId || null, points });
+    const { email, password, packageId, points, fullName, phone } = req.body || {};
+    const user = await createUser(email, password, {
+      packageId: packageId || null,
+      points,
+      fullName,
+      phone
+    });
     res.json({
       user,
-      message: `Đã tạo tài khoản ${user.email} — ${user.points} điểm`
+      message: `Đã tạo tài khoản ${user.email} — ${user.points} credit`
     });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -311,7 +547,7 @@ app.post("/api/admin/points/add", requireAdmin, async (req, res) => {
   try {
     const { email, amount } = req.body || {};
     const user = await addPoints(email, amount);
-    res.json({ user, message: `Đã cộng ${amount} điểm cho ${email}` });
+    res.json({ user, message: `Đã cộng ${amount} credit cho ${email}` });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -321,7 +557,7 @@ app.post("/api/admin/points/set", requireAdmin, async (req, res) => {
   try {
     const { email, points } = req.body || {};
     const user = await setUserPoints(email, points);
-    res.json({ user, message: `Đã đặt ${user.points} điểm cho ${email}` });
+    res.json({ user, message: `Đã đặt ${user.points} credit cho ${email}` });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -345,6 +581,16 @@ app.post("/api/admin/users/toggle-active", requireAdmin, async (req, res) => {
       user,
       message: user.isActive ? `Đã mở khóa ${email}` : `Đã khóa ${email}`
     });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post("/api/admin/users/update-profile", requireAdmin, async (req, res) => {
+  try {
+    const { email, fullName, phone } = req.body || {};
+    const user = await adminUpdateUserProfile(email, { fullName, phone });
+    res.json({ ok: true, user, message: `Đã cập nhật hồ sơ ${user.email}` });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -526,6 +772,90 @@ app.post("/api/admin/vietqr-config", requireAdmin, async (req, res) => {
     });
   } catch (err) {
     res.status(400).json({ error: err.message });
+  }
+});
+
+app.get("/api/admin/system-config", requireAdmin, async (req, res) => {
+  const creditPerPoint = Math.max(0.1, Number(await getSetting("credit_per_point", "1")) || 1);
+  const smtp = await getSmtpConfig();
+  res.json({
+    creditPerPoint,
+    smtp: {
+      host: smtp.host,
+      hostBackup: smtp.hostBackup,
+      port: smtp.port,
+      secureMode: smtp.secureMode,
+      username: smtp.username,
+      password: smtp.password,
+      fromEmail: smtp.fromEmail,
+      fromName: smtp.fromName,
+      clientHostname: smtp.clientHostname,
+      helo: smtp.helo,
+      rerouteAddress: smtp.rerouteAddress
+    }
+  });
+});
+
+app.post("/api/admin/system-config", requireAdmin, async (req, res) => {
+  try {
+    const raw = req.body?.creditPerPoint;
+    const creditPerPoint = Math.max(0.1, Number(raw) || 1);
+    const smtp = req.body?.smtp || {};
+    const prev = await getSmtpConfig();
+    const pick = (incoming, fallback) => {
+      const v = String(incoming ?? "").trim();
+      return v ? v : String(fallback ?? "").trim();
+    };
+    await setSetting("credit_per_point", String(creditPerPoint));
+    await setSetting("smtp_host", pick(smtp.host, prev.host));
+    await setSetting("smtp_host_backup", pick(smtp.hostBackup, prev.hostBackup));
+    await setSetting(
+      "smtp_port",
+      String(Math.max(1, Number(smtp.port) || Number(prev.port) || 465))
+    );
+    await setSetting(
+      "smtp_secure_mode",
+      pick(smtp.secureMode, prev.secureMode || "ssl").toLowerCase()
+    );
+    await setSetting("smtp_username", pick(smtp.username, prev.username));
+    if (typeof smtp.password === "string" && smtp.password.trim()) {
+      await setSetting("smtp_password", smtp.password.trim());
+    }
+    await setSetting("smtp_from_email", pick(smtp.fromEmail, prev.fromEmail));
+    await setSetting("smtp_from_name", pick(smtp.fromName, prev.fromName));
+    await setSetting("smtp_client_hostname", pick(smtp.clientHostname, prev.clientHostname));
+    await setSetting("smtp_helo", pick(smtp.helo, prev.helo));
+    await setSetting("smtp_reroute_address", pick(smtp.rerouteAddress, prev.rerouteAddress));
+    res.json({
+      ok: true,
+      creditPerPoint,
+      message: `Đã lưu cấu hình: ${creditPerPoint} credit / 1 điểm + SMTP`
+    });
+  } catch (err) {
+    res.status(400).json({ error: err.message || "Lưu cấu hình thất bại" });
+  }
+});
+
+app.post("/api/admin/system-config/test-mail", requireAdmin, async (req, res) => {
+  try {
+    const to = String(req.body?.to || "").trim();
+    const result = await sendSmtpTestMail({ to });
+    if (!result.ok) {
+      return res.status(400).json({
+        error:
+          result.reason === "smtp_not_configured"
+            ? "SMTP chưa cấu hình đủ"
+            : result.reason === "smtp_test_recipient_missing"
+              ? "Thiếu email nhận test"
+              : result.error || "Gửi mail test thất bại"
+      });
+    }
+    return res.json({
+      ok: true,
+      message: `Đã gửi mail test tới ${result.to} qua ${result.host}`
+    });
+  } catch (err) {
+    return res.status(400).json({ error: err.message || "Gửi mail test thất bại" });
   }
 });
 
@@ -718,8 +1048,6 @@ app.get("/api/points/push-config", requireAuth, async (req, res) => {
 });
 
 const webDir = path.join(__dirname, "..", "web");
-const appConfig = require(path.join(__dirname, "..", "config", "app-config.js"));
-const appOrigin = String(appConfig.APP_ORIGIN || "").replace(/\/$/, "") || `http://localhost:${PORT}`;
 
 function sendWebPage(res, file) {
   res.sendFile(path.join(webDir, file));
@@ -727,6 +1055,7 @@ function sendWebPage(res, file) {
 
 /** Route trang — URL sạch, file HTML giữ trong web/ */
 const webPages = {
+  "/login": "login.html",
   "/admin": "admin.html",
   "/nap-diem": "nap-diem.html",
   "/quen-mat-khau": "quen-mat-khau.html",
@@ -739,6 +1068,7 @@ for (const [route, file] of Object.entries(webPages)) {
 
 /** Chuyển hướng URL .html cũ → route chuẩn */
 const legacyHtmlRedirects = {
+  "/login.html": "/login",
   "/admin.html": "/admin",
   "/nap-diem.html": "/nap-diem",
   "/quen-mat-khau.html": "/quen-mat-khau",
@@ -759,7 +1089,7 @@ const server = app.listen(PORT, () => {
   console.log(`Trang web: ${appOrigin}`);
   console.log(`Trang quản trị: ${appOrigin}/admin`);
   console.log(`Quên MK: ${appOrigin}/quen-mat-khau`);
-  console.log(`Database: ${USE_MYSQL ? `MySQL (${process.env.MYSQL_HOST || "localhost"}:${process.env.MYSQL_PORT || 3306}/${process.env.MYSQL_DATABASE || "timdiemban"})` : "SQLite (server/data/timdiemban.db)"}`);
+  console.log(`Database: MySQL (${process.env.MYSQL_HOST || "localhost"}:${process.env.MYSQL_PORT || 3306}/${process.env.MYSQL_DATABASE || "timdiemban"})`);
 
 });
 

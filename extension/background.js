@@ -2291,9 +2291,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.action === "SAVE_SESSION") {
     const { token, user } = message.data || {};
-    if (token && user) {
-      chrome.storage.local.set({ authToken: token, authUser: user });
-    }
+    if (token && user) chrome.storage.local.set({ authToken: token, authUser: user });
+    else chrome.storage.local.remove(["authToken", "authUser"]);
     sendResponse({ ok: true });
     return true;
   }

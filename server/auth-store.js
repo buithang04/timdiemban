@@ -1,5 +1,9 @@
+/**
+ * auth-store.js — xác thực & quản lý user (MySQL)
+ */
 const {
-  getDb,
+  getPool,
+  getSetting,
   hashPassword,
   verifyPassword,
   newId,
@@ -22,125 +26,120 @@ function computePackageExpiresAt(expireDays) {
   return exp.toISOString();
 }
 
-function rowToUser(row) {
-  if (!row) return null;
-  return sanitizeUser(row);
-}
-
-function findUserByEmail(email) {
+async function findUserByEmail(email) {
   const norm = String(email || "").trim().toLowerCase();
   if (!norm) return null;
-  return getDb().prepare("SELECT * FROM users WHERE email = ?").get(norm) || null;
+  const [rows] = await getPool().execute("SELECT * FROM users WHERE email = ?", [norm]);
+  return rows[0] || null;
 }
 
-function loginUser(email, password) {
-  const user = findUserByEmail(email);
+async function loginUser(email, password) {
+  const user = await findUserByEmail(email);
   if (!user || user.is_active === 0 || !verifyPassword(password, user.password_hash)) {
     throw new Error("Email hoặc mật khẩu không đúng");
   }
   if (user.role === "admin") {
     throw new Error("Tài khoản admin — đăng nhập tại trang quản trị");
   }
-  const token = createSessionToken(getDb(), user.id);
-  return { token, user: rowToUser(user) };
+  const token = await createSessionToken(user.id);
+  return { token, user: sanitizeUser(user) };
 }
 
-function loginAdmin(email, password) {
-  const user = findUserByEmail(email);
+async function loginAdmin(email, password) {
+  const user = await findUserByEmail(email);
   if (!user || user.is_active === 0 || user.role !== "admin") {
     throw new Error("Email hoặc mật khẩu admin không đúng");
   }
   if (!verifyPassword(password, user.password_hash)) {
     throw new Error("Email hoặc mật khẩu admin không đúng");
   }
-  const token = createSessionToken(getDb(), user.id);
-  return { token, user: rowToUser(user) };
+  const token = await createSessionToken(user.id);
+  return { token, user: sanitizeUser(user) };
 }
 
-function getUserFromToken(token) {
-  const row = getTokenRow(token);
+async function getUserFromToken(token) {
+  const row = await getTokenRow(token);
   if (!row || row.type !== "session") return null;
   if (row.is_active === 0) return null;
-  return {
-    id: row.user_id,
-    email: row.email,
-    role: row.role,
-    points: row.points ?? 0,
-    packageId: row.package_id || null,
-    packageName: row.package_name || null,
-    isActive: true,
-    createdAt: row.user_created_at
-  };
+  // Return full sanitized profile (including termsAccepted/fullName/phone)
+  // so /api/auth/me and all guards use a consistent user shape.
+  return getUserById(row.user_id);
 }
 
-function getAdminFromToken(token) {
-  const user = getUserFromToken(token);
+async function getAdminFromToken(token) {
+  const user = await getUserFromToken(token);
   if (!user || user.role !== "admin") return null;
   return user;
 }
 
-function createUser(email, password, options = {}) {
+async function createUser(email, password, options = {}) {
   const norm = String(email || "").trim().toLowerCase();
   const pw = String(password || "");
-  const { packageId = null, points = null, role = "user" } = options;
+  const { packageId = null, points = null, role = "user", fullName = "", phone = "" } = options;
+  const cleanName = String(fullName || "").trim();
+  const cleanPhone = String(phone || "").replace(/\D/g, "");
 
   if (!norm || !norm.includes("@")) throw new Error("Email không hợp lệ");
   if (pw.length < 6) throw new Error("Mật khẩu tối thiểu 6 ký tự");
-  if (findUserByEmail(norm)) throw new Error("Email đã tồn tại");
+  if (!cleanName) throw new Error("Tên không được để trống");
+  if (cleanPhone.length < 9) throw new Error("SĐT không hợp lệ");
+  if (await findUserByEmail(norm)) throw new Error("Email đã tồn tại");
+  const [phoneRows] = await getPool().execute("SELECT id FROM users WHERE phone = ? LIMIT 1", [cleanPhone]);
+  if (phoneRows.length) throw new Error("SĐT đã tồn tại");
 
-  const database = getDb();
+  const pool = getPool();
   let initialPoints = DEFAULT_POINTS;
   let assignedPackage = null;
   let packageExpiresAt = null;
 
   if (packageId) {
-    const pkg = database.prepare("SELECT * FROM packages WHERE id = ? AND is_active = 1").get(packageId);
-    if (!pkg) throw new Error("Gói điểm không hợp lệ");
-    initialPoints = pkg.points;
-    assignedPackage = pkg.id;
-    packageExpiresAt = computePackageExpiresAt(pkg.expire_days);
+    const [pkgRows] = await pool.execute(
+      "SELECT * FROM packages WHERE id = ? AND is_active = 1", [packageId]
+    );
+    if (!pkgRows[0]) throw new Error("Gói credit không hợp lệ");
+    initialPoints = pkgRows[0].points;
+    assignedPackage = pkgRows[0].id;
+    packageExpiresAt = computePackageExpiresAt(pkgRows[0].expire_days);
   } else if (points != null) {
     initialPoints = Math.max(0, Math.floor(Number(points) || 0));
   }
 
   const id = newId("u");
-  database
-    .prepare(
-      `INSERT INTO users (id, email, password_hash, role, points, package_id, package_expires_at, is_active, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)`
-    )
-    .run(
-      id,
-      norm,
-      hashPassword(pw),
-      role === "admin" ? "admin" : "user",
-      initialPoints,
-      assignedPackage,
-      packageExpiresAt,
-      new Date().toISOString()
-    );
-
+  await pool.execute(
+    `INSERT INTO users (id, full_name, email, phone, password_hash, role, points, package_id, package_expires_at, is_active, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+    [id, cleanName, norm, cleanPhone, hashPassword(pw), role === "admin" ? "admin" : "user",
+     initialPoints, assignedPackage, packageExpiresAt, new Date().toISOString()]
+  );
   return getUserById(id);
 }
 
-function requestPasswordReset(email) {
-  const user = findUserByEmail(email);
+async function acceptTerms(userId, version = "v1") {
+  await getPool().execute(
+    "UPDATE users SET accepted_terms_at = ?, accepted_terms_version = ? WHERE id = ?",
+    [new Date().toISOString(), String(version || "v1"), userId]
+  );
+  return getUserById(userId);
+}
+
+async function requestPasswordReset(email) {
+  const user = await findUserByEmail(email);
   if (!user || user.role === "admin") {
     return { ok: true, message: "Nếu email tồn tại, liên kết đặt lại mật khẩu đã được tạo." };
   }
 
-  const database = getDb();
-  purgeExpiredTokens(database);
-  database.prepare("DELETE FROM tokens WHERE user_id = ? AND type = 'password_reset'").run(user.id);
+  const pool = getPool();
+  await purgeExpiredTokens();
+  await pool.execute(
+    "DELETE FROM tokens WHERE user_id = ? AND type = 'password_reset'", [user.id]
+  );
 
   const token = newToken();
   const now = Date.now();
-  database
-    .prepare(
-      `INSERT INTO tokens (token, type, user_id, expires_at, created_at)
-       VALUES (?, 'password_reset', ?, ?, ?)`
-    )
-    .run(token, user.id, now + RESET_TTL_MS, new Date(now).toISOString());
+  await pool.execute(
+    `INSERT INTO tokens (token, type, user_id, expires_at, created_at) VALUES (?, 'password_reset', ?, ?, ?)`,
+    [token, user.id, now + RESET_TTL_MS, new Date(now).toISOString()]
+  );
 
   return {
     ok: true,
@@ -150,51 +149,52 @@ function requestPasswordReset(email) {
   };
 }
 
-function resetPasswordWithToken(token, newPassword) {
+async function resetPasswordWithToken(token, newPassword) {
   const pw = String(newPassword || "");
   if (pw.length < 6) throw new Error("Mật khẩu mới tối thiểu 6 ký tự");
 
-  const database = getDb();
-  const row = database
-    .prepare(`SELECT * FROM tokens WHERE token = ? AND type = 'password_reset' AND expires_at > ?`)
-    .get(token, Date.now());
-  if (!row) throw new Error("Liên kết không hợp lệ hoặc đã hết hạn");
+  const pool = getPool();
+  const [rows] = await pool.execute(
+    "SELECT * FROM tokens WHERE token = ? AND type = 'password_reset' AND expires_at > ?",
+    [token, Date.now()]
+  );
+  if (!rows[0]) throw new Error("Liên kết không hợp lệ hoặc đã hết hạn");
 
-  database.prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(hashPassword(pw), row.user_id);
-  database.prepare("DELETE FROM tokens WHERE token = ?").run(token);
+  await pool.execute("UPDATE users SET password_hash = ? WHERE id = ?",
+    [hashPassword(pw), rows[0].user_id]);
+  await pool.execute("DELETE FROM tokens WHERE token = ?", [token]);
 
   return { ok: true, message: "Đã đặt lại mật khẩu. Vui lòng đăng nhập lại." };
 }
 
-function adminResetPassword(email, newPassword) {
+async function adminResetPassword(email, newPassword) {
   const norm = String(email || "").trim().toLowerCase();
   const pw = String(newPassword || "");
   if (pw.length < 6) throw new Error("Mật khẩu tối thiểu 6 ký tự");
 
-  const user = findUserByEmail(norm);
+  const user = await findUserByEmail(norm);
   if (!user) throw new Error("Không tìm thấy tài khoản");
 
-  getDb().prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(hashPassword(pw), user.id);
+  await getPool().execute("UPDATE users SET password_hash = ? WHERE id = ?",
+    [hashPassword(pw), user.id]);
   return { ok: true, message: `Đã đặt lại mật khẩu cho ${norm}` };
 }
 
-function listUsers() {
-  const database = getDb();
-  const rows = database
-    .prepare(
-      `SELECT u.id, u.email, u.role, u.points, u.package_id, u.package_expires_at,
-              u.is_active, u.created_at,
-              p.name AS package_name, p.points AS package_points, p.expire_days
-       FROM users u
-       LEFT JOIN packages p ON p.id = u.package_id
-       WHERE u.role = 'user'
-       ORDER BY u.created_at DESC`
-    )
-    .all();
-
+async function listUsers() {
+  const [rows] = await getPool().execute(
+    `SELECT u.id, u.full_name, u.email, u.phone, u.role, u.points, u.package_id, u.package_expires_at,
+            u.is_active, u.created_at,
+            p.name AS package_name, p.points AS package_points, p.expire_days
+     FROM users u
+     LEFT JOIN packages p ON p.id = u.package_id
+     WHERE u.role = 'user'
+     ORDER BY u.created_at DESC`
+  );
   return rows.map((u) => ({
     id: u.id,
+    fullName: u.full_name || "",
     email: u.email,
+    phone: u.phone || "",
     role: u.role,
     points: u.points,
     packageId: u.package_id,
@@ -206,34 +206,37 @@ function listUsers() {
   }));
 }
 
-function addPoints(email, amount) {
+async function addPoints(email, amount) {
   const norm = String(email || "").trim().toLowerCase();
   const delta = Math.floor(Number(amount));
-  if (!norm || !delta) throw new Error("Số điểm không hợp lệ");
+  if (!norm || !delta) throw new Error("Số credit không hợp lệ");
 
-  const user = findUserByEmail(norm);
+  const user = await findUserByEmail(norm);
   if (!user) throw new Error("Không tìm thấy tài khoản");
 
-  const database = getDb();
   const next = Math.max(0, (user.points || 0) + delta);
-  database.prepare("UPDATE users SET points = ? WHERE id = ?").run(next, user.id);
+  await getPool().execute("UPDATE users SET points = ? WHERE id = ?", [next, user.id]);
   return getUserById(user.id);
 }
 
-function applyPackageToUser(user, packageId) {
-  const database = getDb();
-  const pkg = database.prepare("SELECT * FROM packages WHERE id = ? AND is_active = 1").get(packageId);
-  if (!pkg) throw new Error("Gói điểm không hợp lệ");
+async function applyPackageToUser(user, packageId) {
+  const pool = getPool();
+  const [pkgRows] = await pool.execute(
+    "SELECT * FROM packages WHERE id = ? AND is_active = 1", [packageId]
+  );
+  if (!pkgRows[0]) throw new Error("Gói credit không hợp lệ");
+  const pkg = pkgRows[0];
 
   const next = (user.points || 0) + pkg.points;
   const packageExpiresAt = computePackageExpiresAt(pkg.expire_days);
-  database
-    .prepare("UPDATE users SET points = ?, package_id = ?, package_expires_at = ? WHERE id = ?")
-    .run(next, pkg.id, packageExpiresAt, user.id);
+  await pool.execute(
+    "UPDATE users SET points = ?, package_id = ?, package_expires_at = ? WHERE id = ?",
+    [next, pkg.id, packageExpiresAt, user.id]
+  );
 
   return {
-    user: getUserById(user.id),
-    package: { id: pkg.id, name: pkg.name, points: pkg.points },
+    user: await getUserById(user.id),
+    package: { id: pkg.id, name: pkg.name, points: pkg.points, price: pkg.price },
     pointsAdded: pkg.points,
     totalPoints: next
   };
@@ -248,6 +251,9 @@ function rowToPackageOrder(row) {
     packageId: row.package_id,
     packageName: row.package_name,
     points: row.points,
+    paymentAmount: row.payment_amount || 0,
+    paymentConfirmed: row.payment_confirmed === 1,
+    paymentConfirmedAt: row.payment_confirmed_at || null,
     status: row.status,
     adminNote: row.admin_note || null,
     createdAt: row.created_at,
@@ -255,21 +261,19 @@ function rowToPackageOrder(row) {
   };
 }
 
-function getPackageOrderById(orderId) {
-  const row = getDb()
-    .prepare(
-      `SELECT o.*, u.email AS user_email, p.name AS package_name
-       FROM package_orders o
-       JOIN users u ON u.id = o.user_id
-       JOIN packages p ON p.id = o.package_id
-       WHERE o.id = ?`
-    )
-    .get(orderId);
-  return rowToPackageOrder(row);
+async function getPackageOrderById(orderId) {
+  const [rows] = await getPool().execute(
+    `SELECT o.*, u.email AS user_email, p.name AS package_name
+     FROM package_orders o
+     JOIN users u ON u.id = o.user_id
+     JOIN packages p ON p.id = o.package_id
+     WHERE o.id = ?`,
+    [orderId]
+  );
+  return rowToPackageOrder(rows[0]);
 }
 
-function listPackageOrders({ status = null, userId = null } = {}) {
-  const database = getDb();
+async function listPackageOrders({ status = null, userId = null } = {}) {
   let sql = `
     SELECT o.*, u.email AS user_email, p.name AS package_name
     FROM package_orders o
@@ -278,197 +282,283 @@ function listPackageOrders({ status = null, userId = null } = {}) {
     WHERE 1=1
   `;
   const params = [];
-  if (status && status !== "all") {
-    sql += " AND o.status = ?";
-    params.push(status);
-  }
-  if (userId) {
-    sql += " AND o.user_id = ?";
-    params.push(userId);
-  }
+  // status="all" → no filter; otherwise filter by status
+  if (status && status !== "all") { sql += " AND o.status = ?"; params.push(status); }
+  if (userId) { sql += " AND o.user_id = ?"; params.push(userId); }
   sql += " ORDER BY o.created_at DESC";
-  return database.prepare(sql).all(...params).map(rowToPackageOrder);
+  const [rows] = await getPool().execute(sql, params);
+  return rows.map(rowToPackageOrder);
 }
 
-/** User gửi yêu cầu mua gói — chờ admin duyệt mới cộng điểm */
-function requestPackagePurchase(userId, packageId) {
-  const database = getDb();
-  const user = database.prepare("SELECT * FROM users WHERE id = ?").get(userId);
+async function deletePackageOrder(orderId) {
+  const pool = getPool();
+  const [rows] = await pool.execute("SELECT * FROM package_orders WHERE id = ?", [orderId]);
+  if (!rows[0]) throw new Error("Không tìm thấy đơn");
+  await pool.execute("DELETE FROM package_orders WHERE id = ?", [orderId]);
+  return { message: "Đã xóa yêu cầu mua gói" };
+}
+
+async function cancelPackageOrder(orderId, userId) {
+  const pool = getPool();
+  const [rows] = await pool.execute(
+    "SELECT * FROM package_orders WHERE id = ? AND user_id = ? AND status = 'pending'",
+    [orderId, userId]
+  );
+  if (!rows[0]) throw new Error("Không tìm thấy đơn chờ thanh toán");
+
+  await pool.execute(
+    `UPDATE package_orders SET status = 'cancelled', reviewed_at = ?
+     WHERE id = ? AND status = 'pending'`,
+    [new Date().toISOString(), orderId]
+  );
+
+  return {
+    order: await getPackageOrderById(orderId),
+    message: "Đã hủy đơn — bạn có thể chọn gói khác"
+  };
+}
+
+async function requestPackagePurchase(userId, packageId) {
+  const pool = getPool();
+  const [userRows] = await pool.execute("SELECT * FROM users WHERE id = ?", [userId]);
+  const user = userRows[0];
   if (!user) throw new Error("Tài khoản không tồn tại");
   if (user.is_active === 0) throw new Error("Tài khoản đã bị khóa");
   if (user.role === "admin") throw new Error("Tài khoản admin không mua gói tại đây");
 
-  const pkg = database.prepare("SELECT * FROM packages WHERE id = ? AND is_active = 1").get(packageId);
-  if (!pkg) throw new Error("Gói điểm không hợp lệ");
+  const [pkgRows] = await pool.execute(
+    "SELECT * FROM packages WHERE id = ? AND is_active = 1", [packageId]
+  );
+  if (!pkgRows[0]) throw new Error("Gói credit không hợp lệ");
+  const pkg = pkgRows[0];
 
-  const pending = database
-    .prepare("SELECT id FROM package_orders WHERE user_id = ? AND status = 'pending' LIMIT 1")
-    .get(userId);
-  if (pending) throw new Error("Bạn đã có yêu cầu mua gói đang chờ admin duyệt");
+  const [pendingRows] = await pool.execute(
+    "SELECT id FROM package_orders WHERE user_id = ? AND status = 'pending' LIMIT 1", [userId]
+  );
+  if (pendingRows.length) throw new Error("Bạn đã có yêu cầu mua gói credit đang chờ admin duyệt");
 
   const orderId = newId("ord");
   const now = new Date().toISOString();
-  database
-    .prepare(
-      `INSERT INTO package_orders (id, user_id, package_id, points, status, created_at)
-       VALUES (?, ?, ?, ?, 'pending', ?)`
-    )
-    .run(orderId, userId, pkg.id, pkg.points, now);
+  await pool.execute(
+    `INSERT INTO package_orders (id, user_id, package_id, points, payment_amount, status, created_at)
+     VALUES (?, ?, ?, ?, ?, 'pending', ?)`,
+    [orderId, userId, pkg.id, pkg.points, pkg.price || 0, now]
+  );
 
-  const order = getPackageOrderById(orderId);
+  const order = await getPackageOrderById(orderId);
   return {
     order,
-    user: getUserById(userId),
-    message: `Đã gửi yêu cầu mua ${pkg.name} (+${pkg.points.toLocaleString("vi-VN")} điểm) — chờ admin duyệt`
+    user: await getUserById(userId),
+    message: `Đã gửi yêu cầu mua ${pkg.name} (+${pkg.points.toLocaleString("vi-VN")} credit) — vui lòng thanh toán`
   };
 }
 
-function approvePackageOrder(orderId, adminId) {
-  const database = getDb();
-  const order = database
-    .prepare("SELECT * FROM package_orders WHERE id = ? AND status = 'pending'")
-    .get(orderId);
-  if (!order) throw new Error("Không tìm thấy đơn chờ duyệt");
+async function confirmPayment(orderId, userId) {
+  const pool = getPool();
+  const [rows] = await pool.execute(
+    "SELECT * FROM package_orders WHERE id = ? AND user_id = ? AND status = 'pending'",
+    [orderId, userId]
+  );
+  if (!rows[0]) throw new Error("Không tìm thấy đơn hàng");
+  if (rows[0].payment_confirmed) throw new Error("Đã xác nhận thanh toán trước đó");
 
-  const user = database.prepare("SELECT * FROM users WHERE id = ?").get(order.user_id);
+  const now = new Date().toISOString();
+  await pool.execute(
+    "UPDATE package_orders SET payment_confirmed = 1, payment_confirmed_at = ? WHERE id = ?",
+    [now, orderId]
+  );
+  return {
+    order: await getPackageOrderById(orderId),
+    message: "Đã xác nhận — admin sẽ duyệt và cộng credit sớm"
+  };
+}
+
+async function approvePackageOrder(orderId, adminId) {
+  const pool = getPool();
+  const [orderRows] = await pool.execute(
+    "SELECT * FROM package_orders WHERE id = ? AND status = 'pending'", [orderId]
+  );
+  if (!orderRows[0]) throw new Error("Không tìm thấy đơn chờ duyệt");
+  const order = orderRows[0];
+
+  const [userRows] = await pool.execute("SELECT * FROM users WHERE id = ?", [order.user_id]);
+  const user = userRows[0];
   if (!user) throw new Error("Tài khoản không tồn tại");
   if (user.is_active === 0) throw new Error("Tài khoản user đã bị khóa — không thể duyệt");
 
-  let applied;
-  const txn = database.transaction(() => {
-    applied = applyPackageToUser(user, order.package_id);
-    database
-      .prepare(
-        `UPDATE package_orders
-         SET status = 'approved', admin_id = ?, reviewed_at = ?
-         WHERE id = ? AND status = 'pending'`
-      )
-      .run(adminId, new Date().toISOString(), orderId);
-  });
-  txn();
+  const applied = await applyPackageToUser(user, order.package_id);
+  await pool.execute(
+    `UPDATE package_orders SET status = 'approved', admin_id = ?, reviewed_at = ?
+     WHERE id = ? AND status = 'pending'`,
+    [adminId, new Date().toISOString(), orderId]
+  );
 
-  const updatedOrder = getPackageOrderById(orderId);
   return {
-    order: updatedOrder,
+    order: await getPackageOrderById(orderId),
     user: applied.user,
     package: applied.package,
-    message: `Đã duyệt — cộng ${applied.pointsAdded.toLocaleString("vi-VN")} điểm cho ${user.email} (tổng ${applied.totalPoints.toLocaleString("vi-VN")})`
+    message: `Đã duyệt — cộng ${applied.pointsAdded.toLocaleString("vi-VN")} credit cho ${user.email} (tổng ${applied.totalPoints.toLocaleString("vi-VN")} credit)`
   };
 }
 
-function rejectPackageOrder(orderId, adminId, note) {
-  const database = getDb();
-  const order = database
-    .prepare("SELECT * FROM package_orders WHERE id = ? AND status = 'pending'")
-    .get(orderId);
-  if (!order) throw new Error("Không tìm thấy đơn chờ duyệt");
+async function rejectPackageOrder(orderId, adminId, note) {
+  const pool = getPool();
+  const [rows] = await pool.execute(
+    "SELECT * FROM package_orders WHERE id = ? AND status = 'pending'", [orderId]
+  );
+  if (!rows[0]) throw new Error("Không tìm thấy đơn chờ duyệt");
 
-  const user = database.prepare("SELECT email FROM users WHERE id = ?").get(order.user_id);
+  const [userRows] = await pool.execute("SELECT email FROM users WHERE id = ?", [rows[0].user_id]);
   const adminNote = String(note || "").trim() || null;
 
-  database
-    .prepare(
-      `UPDATE package_orders
-       SET status = 'rejected', admin_id = ?, admin_note = ?, reviewed_at = ?
-       WHERE id = ? AND status = 'pending'`
-    )
-    .run(adminId, adminNote, new Date().toISOString(), orderId);
+  await pool.execute(
+    `UPDATE package_orders SET status = 'rejected', admin_id = ?, admin_note = ?, reviewed_at = ?
+     WHERE id = ? AND status = 'pending'`,
+    [adminId, adminNote, new Date().toISOString(), orderId]
+  );
 
-  const updatedOrder = getPackageOrderById(orderId);
   return {
-    order: updatedOrder,
-    message: `Đã từ chối yêu cầu mua gói của ${user?.email || "user"}`
+    order: await getPackageOrderById(orderId),
+    message: `Đã từ chối yêu cầu mua gói của ${userRows[0]?.email || "user"}`
   };
 }
 
-function assignPackage(email, packageId) {
+async function assignPackage(email, packageId) {
   const norm = String(email || "").trim().toLowerCase();
-  const user = findUserByEmail(norm);
+  const user = await findUserByEmail(norm);
   if (!user) throw new Error("Không tìm thấy tài khoản");
-  const applied = applyPackageToUser(user, packageId);
+  const applied = await applyPackageToUser(user, packageId);
   return {
     user: applied.user,
     package: applied.package,
-    message: `Đã nạp gói ${applied.package.name} (+${applied.pointsAdded.toLocaleString("vi-VN")} điểm) cho ${norm} — tổng ${applied.totalPoints.toLocaleString("vi-VN")} điểm`
+    message: `Đã nạp gói ${applied.package.name} (+${applied.pointsAdded.toLocaleString("vi-VN")} credit) cho ${norm} — tổng ${applied.totalPoints.toLocaleString("vi-VN")} credit`
   };
 }
 
-function setUserActive(email, isActive) {
+async function setUserActive(email, isActive) {
   const norm = String(email || "").trim().toLowerCase();
-  const user = findUserByEmail(norm);
+  const user = await findUserByEmail(norm);
   if (!user) throw new Error("Không tìm thấy tài khoản");
   if (user.role === "admin") throw new Error("Không thể khóa tài khoản admin");
 
-  getDb().prepare("UPDATE users SET is_active = ? WHERE id = ?").run(isActive ? 1 : 0, user.id);
+  await getPool().execute("UPDATE users SET is_active = ? WHERE id = ?",
+    [isActive ? 1 : 0, user.id]);
   return getUserById(user.id);
 }
 
-function setUserPoints(email, points) {
+async function setUserPoints(email, points) {
   const norm = String(email || "").trim().toLowerCase();
-  const user = findUserByEmail(norm);
+  const user = await findUserByEmail(norm);
   if (!user) throw new Error("Không tìm thấy tài khoản");
 
   const next = Math.max(0, Math.floor(Number(points) || 0));
-  getDb().prepare("UPDATE users SET points = ? WHERE id = ?").run(next, user.id);
+  await getPool().execute("UPDATE users SET points = ? WHERE id = ?", [next, user.id]);
   return getUserById(user.id);
 }
 
-/** Chỉ trừ điểm cho kết quả có số điện thoại hợp lệ */
-function chargePoints(userId, phoneCount) {
+async function updateOwnProfile(userId, profile = {}) {
+  const fullName = String(profile.fullName || "").trim();
+  const phone = String(profile.phone || "").replace(/\D/g, "");
+  const currentPassword = String(profile.currentPassword || "");
+  const newPassword = String(profile.newPassword || "");
+  if (!fullName) throw new Error("Tên không được để trống");
+  if (phone.length < 9) throw new Error("SĐT không hợp lệ");
+
+  const pool = getPool();
+  const [userRows] = await pool.execute("SELECT * FROM users WHERE id = ? LIMIT 1", [userId]);
+  const user = userRows[0];
+  if (!user) throw new Error("Không tìm thấy tài khoản");
+  const [dup] = await pool.execute(
+    "SELECT id FROM users WHERE phone = ? AND id != ? LIMIT 1",
+    [phone, userId]
+  );
+  if (dup.length) throw new Error("SĐT đã tồn tại");
+
+  const wantsPasswordChange = !!(currentPassword || newPassword);
+  if (wantsPasswordChange) {
+    if (!currentPassword) throw new Error("Vui lòng nhập mật khẩu hiện tại");
+    if (!verifyPassword(currentPassword, user.password_hash)) {
+      throw new Error("Mật khẩu hiện tại không đúng");
+    }
+    if (newPassword.length < 6) throw new Error("Mật khẩu mới tối thiểu 6 ký tự");
+    await pool.execute(
+      "UPDATE users SET full_name = ?, phone = ?, password_hash = ? WHERE id = ?",
+      [fullName, phone, hashPassword(newPassword), userId]
+    );
+  } else {
+    await pool.execute(
+      "UPDATE users SET full_name = ?, phone = ? WHERE id = ?",
+      [fullName, phone, userId]
+    );
+  }
+  return getUserById(userId);
+}
+
+async function adminUpdateUserProfile(email, profile = {}) {
+  const norm = String(email || "").trim().toLowerCase();
+  const user = await findUserByEmail(norm);
+  if (!user) throw new Error("Không tìm thấy tài khoản");
+  if (user.role === "admin") throw new Error("Không sửa hồ sơ tài khoản admin tại đây");
+  const fullName = String(profile.fullName || "").trim();
+  const phone = String(profile.phone || "").replace(/\D/g, "");
+  const newPassword = String(profile.newPassword || "");
+  if (!fullName) throw new Error("Tên không được để trống");
+  if (phone.length < 9) throw new Error("SĐT không hợp lệ");
+
+  const pool = getPool();
+  const [dup] = await pool.execute(
+    "SELECT id FROM users WHERE phone = ? AND id != ? LIMIT 1",
+    [phone, user.id]
+  );
+  if (dup.length) throw new Error("SĐT đã tồn tại");
+
+  if (newPassword) {
+    if (newPassword.length < 6) throw new Error("Mật khẩu mới tối thiểu 6 ký tự");
+    await pool.execute(
+      "UPDATE users SET full_name = ?, phone = ?, password_hash = ? WHERE id = ?",
+      [fullName, phone, hashPassword(newPassword), user.id]
+    );
+  } else {
+    await pool.execute(
+      "UPDATE users SET full_name = ?, phone = ? WHERE id = ?",
+      [fullName, phone, user.id]
+    );
+  }
+  return getUserById(user.id);
+}
+
+async function chargePoints(userId, phoneCount) {
   const count = Math.max(0, Math.floor(Number(phoneCount) || 0));
-  const database = getDb();
-  const user = database.prepare("SELECT * FROM users WHERE id = ?").get(userId);
+  const pool = getPool();
+  const [rows] = await pool.execute("SELECT * FROM users WHERE id = ?", [userId]);
+  const user = rows[0];
   if (!user) throw new Error("Tài khoản không tồn tại");
   if (user.is_active === 0) throw new Error("Tài khoản đã bị khóa");
 
-  const available = user.points || 0;
-  const charged = Math.min(available, count);
-  const remaining = available - charged;
+  const creditPerPointRaw = await getSetting("credit_per_point", "1");
+  const creditPerPoint = Math.max(0.1, Number(creditPerPointRaw) || 1);
+  const available = Math.max(0, user.points || 0);
+  const maxAllowedByPoints = Math.floor(available * creditPerPoint);
+  const allowedCount = Math.min(count, maxAllowedByPoints);
+  const charged = Math.min(available, Math.ceil(allowedCount / creditPerPoint));
+  const remaining = Math.max(0, available - charged);
 
-  database.prepare("UPDATE users SET points = ? WHERE id = ?").run(remaining, userId);
-
+  await pool.execute("UPDATE users SET points = ? WHERE id = ?", [remaining, userId]);
   return {
-    user: getUserById(userId),
+    user: await getUserById(userId),
     charged,
-    allowedCount: charged,
+    allowedCount,
     phoneCount: count,
     totalFound: count,
     remaining,
-    chargeRule: "phone_only"
+    chargeRule: "credit_per_point",
+    creditPerPoint
   };
 }
 
-function logoutToken(token) {
+async function logoutToken(token) {
   if (!token) return;
-  getDb().prepare("DELETE FROM tokens WHERE token = ?").run(token);
-}
-
-function deletePackageOrder(orderId) {
-  const database = getDb();
-  const order = database.prepare("SELECT * FROM package_orders WHERE id = ?").get(orderId);
-  if (!order) throw new Error("Không tìm thấy đơn");
-  database.prepare("DELETE FROM package_orders WHERE id = ?").run(orderId);
-  return { message: "Đã xóa yêu cầu mua gói" };
-}
-
-function cancelPackageOrder(orderId, userId) {
-  const database = getDb();
-  const order = database
-    .prepare("SELECT * FROM package_orders WHERE id = ? AND user_id = ? AND status = 'pending'")
-    .get(orderId, userId);
-  if (!order) throw new Error("Không tìm thấy đơn chờ thanh toán");
-
-  database
-    .prepare(
-      `UPDATE package_orders SET status = 'cancelled', reviewed_at = ?
-       WHERE id = ? AND status = 'pending'`
-    )
-    .run(new Date().toISOString(), orderId);
-
-  return {
-    order: getPackageOrderById(orderId),
-    message: "Đã hủy đơn — bạn có thể chọn gói khác"
-  };
+  await getPool().execute("DELETE FROM tokens WHERE token = ?", [token]);
 }
 
 module.exports = {
@@ -487,12 +577,17 @@ module.exports = {
   addPoints,
   assignPackage,
   requestPackagePurchase,
+  confirmPayment,
   listPackageOrders,
+  getPackageOrderById,
   approvePackageOrder,
   rejectPackageOrder,
   deletePackageOrder,
   cancelPackageOrder,
   setUserActive,
   setUserPoints,
-  chargePoints
+  updateOwnProfile,
+  adminUpdateUserProfile,
+  chargePoints,
+  acceptTerms
 };

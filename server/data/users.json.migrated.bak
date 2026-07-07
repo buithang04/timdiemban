@@ -1,0 +1,16 @@
+[
+  {
+    "id": "u_1782102004546_b4de04c5",
+    "email": "xthg04@gmail.com",
+    "passwordHash": "f5134d7037c444c60a44c4c43ca1c366:8ec1f70fbced478eedf289c783ed4b214a5e0c77fa2e4623fe79c88d9e32b35bfea827a59d4d84cefc4bcfaba8e3b79b6f171b590bbca2b521ba565810344e86",
+    "points": 1e+34,
+    "createdAt": "2026-06-22T04:20:04.619Z"
+  },
+  {
+    "id": "u_1782197689754_76f86070",
+    "email": "xthg041@gmail.com",
+    "passwordHash": "f4aa2c285f4f26c8598e3b448c08089b:efb76cb39662c2031719b90bfe84ccd469fc87b150c271543f3adbfde937fc052db2806b585087f2cb0f042a2ff9b4d969a8418489a1a7b1ed71adc1af6af459",
+    "points": 230,
+    "createdAt": "2026-06-23T06:54:49.830Z"
+  }
+]

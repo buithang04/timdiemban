@@ -12,6 +12,14 @@ const els = {
   adminUserBar: document.getElementById("adminUserBar"),
   adminUserEmail: document.getElementById("adminUserEmail"),
   adminLogoutBtn: document.getElementById("adminLogoutBtn"),
+  editUserModal: document.getElementById("editUserModal"),
+  editUserForm: document.getElementById("editUserForm"),
+  editUserEmail: document.getElementById("editUserEmail"),
+  editUserFullName: document.getElementById("editUserFullName"),
+  editUserPhone: document.getElementById("editUserPhone"),
+  editUserNewPassword: document.getElementById("editUserNewPassword"),
+  editUserConfirmPassword: document.getElementById("editUserConfirmPassword"),
+  editUserMsg: document.getElementById("editUserMsg"),
   createUserForm: document.getElementById("createUserForm"),
   createUserMsg: document.getElementById("createUserMsg"),
   adminResetForm: document.getElementById("adminResetForm"),
@@ -29,11 +37,13 @@ const els = {
 
 let packages = [];
 let currentOrderFilter = "pending";
+let editingUserEmail = "";
 
 const ADMIN_PANEL_TITLES = {
   users: "Quản lý tài khoản",
   orders: "Gói & lịch sử đơn hàng",
-  vietqr: "Cấu hình VietQR"
+  vietqr: "Cấu hình VietQR",
+  config: "Cấu hình hệ thống"
 };
 
 function switchAdminPanel(panelId) {
@@ -150,6 +160,23 @@ function escapeHtml(str) {
   return d.innerHTML;
 }
 
+function openEditUserModal({ email, fullName, phone }) {
+  editingUserEmail = String(email || "").trim();
+  if (!editingUserEmail || !els.editUserModal) return;
+  if (els.editUserEmail) els.editUserEmail.value = editingUserEmail;
+  if (els.editUserFullName) els.editUserFullName.value = fullName || "";
+  if (els.editUserPhone) els.editUserPhone.value = phone || "";
+  if (els.editUserNewPassword) els.editUserNewPassword.value = "";
+  if (els.editUserConfirmPassword) els.editUserConfirmPassword.value = "";
+  if (els.editUserMsg) els.editUserMsg.classList.add("hidden");
+  els.editUserModal.classList.remove("hidden");
+}
+
+function closeEditUserModal() {
+  if (els.editUserModal) els.editUserModal.classList.add("hidden");
+  editingUserEmail = "";
+}
+
 function fillPackageSelects(list) {
   packages = list || [];
   const opts = packages
@@ -248,7 +275,7 @@ async function loadUsers() {
   if (!users.length) {
     els.usersBody.innerHTML = `
       <tr class="admin-table-empty">
-        <td colspan="7">Chưa có tài khoản — tạo tài khoản ở form phía trên</td>
+        <td colspan="9">Chưa có tài khoản — tạo tài khoản ở form phía trên</td>
       </tr>`;
     return;
   }
@@ -263,7 +290,9 @@ async function loadUsers() {
       const toggleLabel = u.isActive ? "Khóa" : "Mở khóa";
       return `
     <tr data-email="${escapeHtml(u.email)}">
+      <td>${escapeHtml(u.fullName || "—")}</td>
       <td>${escapeHtml(u.email)}</td>
+      <td>${escapeHtml(u.phone || "—")}</td>
       <td class="col-points"><strong>${Number(u.points).toLocaleString("vi-VN")}</strong></td>
       <td>${pkg}</td>
       <td title="${escapeHtml(expiry.title)}">${expiry.html}</td>
@@ -271,8 +300,9 @@ async function loadUsers() {
       <td>${status}</td>
       <td class="col-actions">
         <div class="admin-row-actions">
+        <button type="button" class="admin-btn admin-btn-secondary btn-sm" data-action="edit-profile">Sửa thông tin</button>
         <button type="button" class="admin-btn admin-btn-secondary btn-sm" data-action="reset-pw">Đặt MK</button>
-        <button type="button" class="admin-btn admin-btn-secondary btn-sm" data-action="add-pts">+Điểm</button>
+        <button type="button" class="admin-btn admin-btn-secondary btn-sm" data-action="add-pts">+Credit</button>
         <button type="button" class="admin-btn admin-btn-secondary btn-sm" data-action="toggle">${toggleLabel}</button>
         </div>
       </td>
@@ -288,7 +318,7 @@ async function unlockAdmin(adminUser) {
   if (els.adminUserBar) els.adminUserBar.classList.remove("hidden");
   if (els.adminUserEmail) els.adminUserEmail.textContent = adminUser?.email || "";
   switchAdminPanel("users");
-  await Promise.all([loadUsers(), loadVietqrConfig()]);
+  await Promise.all([loadUsers(), loadVietqrConfig(), loadSystemConfig()]);
 }
 
 els.adminGateForm?.addEventListener("submit", async (e) => {
@@ -325,6 +355,8 @@ els.createUserForm?.addEventListener("submit", async (e) => {
   e.preventDefault();
   try {
     const body = {
+      fullName: document.getElementById("newFullName").value.trim(),
+      phone: document.getElementById("newPhone").value.trim(),
       email: document.getElementById("newEmail").value.trim(),
       password: document.getElementById("newPassword").value,
       packageId: els.newPackageId?.value || null
@@ -441,6 +473,53 @@ els.usersBody?.addEventListener("click", async (e) => {
       alert(err.message);
     }
   }
+
+  if (btn.dataset.action === "edit-profile") {
+    const currentName = row.children[0]?.textContent?.trim() || "";
+    const currentPhone = row.children[2]?.textContent?.trim() || "";
+    openEditUserModal({ email, fullName: currentName, phone: currentPhone });
+  }
+});
+
+els.editUserModal?.addEventListener("click", (e) => {
+  if (e.target === els.editUserModal) closeEditUserModal();
+});
+
+els.editUserForm?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  if (!editingUserEmail) return;
+  if (els.editUserMsg) els.editUserMsg.classList.add("hidden");
+  const newPassword = els.editUserNewPassword?.value || "";
+  const confirmPassword = els.editUserConfirmPassword?.value || "";
+  if ((newPassword || confirmPassword) && newPassword !== confirmPassword) {
+    if (els.editUserMsg) {
+      els.editUserMsg.textContent = "Mật khẩu mới nhập lại không khớp";
+      els.editUserMsg.classList.remove("hidden");
+    }
+    return;
+  }
+  try {
+    const data = await adminFetch("/api/admin/users/update-profile", {
+      method: "POST",
+      body: JSON.stringify({
+        email: editingUserEmail,
+        fullName: els.editUserFullName?.value?.trim() || "",
+        phone: els.editUserPhone?.value?.trim() || "",
+        newPassword
+      })
+    });
+    await loadUsers();
+    if (els.editUserMsg) {
+      els.editUserMsg.textContent = data.message || "Đã cập nhật thông tin";
+      els.editUserMsg.classList.remove("hidden");
+    }
+    setTimeout(() => closeEditUserModal(), 450);
+  } catch (err) {
+    if (els.editUserMsg) {
+      els.editUserMsg.textContent = err.message || "Cập nhật thất bại";
+      els.editUserMsg.classList.remove("hidden");
+    }
+  }
 });
 
 els.ordersBody?.addEventListener("click", async (e) => {
@@ -451,7 +530,7 @@ els.ordersBody?.addEventListener("click", async (e) => {
   if (!orderId) return;
 
   if (btn.dataset.action === "approve-order") {
-    if (!confirm("Duyệt yêu cầu này và cộng điểm cho user?")) return;
+    if (!confirm("Duyệt yêu cầu này và cộng credit cho user?")) return;
     try {
       const data = await adminFetch(`/api/admin/package/orders/${orderId}/approve`, {
         method: "POST"
@@ -556,6 +635,32 @@ async function loadVietqrConfig() {
   }
 }
 
+async function loadSystemConfig() {
+  try {
+    const data = await adminFetch("/api/admin/system-config");
+    const el = document.getElementById("cfgCreditPerPoint");
+    if (el) el.value = data.creditPerPoint ?? 1;
+    const smtp = data.smtp || {};
+    const setVal = (id, v) => {
+      const x = document.getElementById(id);
+      if (x) x.value = v ?? "";
+    };
+    setVal("smtpHost", smtp.host);
+    setVal("smtpHostBackup", smtp.hostBackup);
+    setVal("smtpPort", smtp.port || 465);
+    setVal("smtpSecureMode", smtp.secureMode || "ssl");
+    setVal("smtpUsername", smtp.username);
+    setVal("smtpPassword", "");
+    setVal("smtpFromEmail", smtp.fromEmail);
+    setVal("smtpFromName", smtp.fromName);
+    setVal("smtpClientHostname", smtp.clientHostname);
+    setVal("smtpHelo", smtp.helo);
+    setVal("smtpRerouteAddress", smtp.rerouteAddress);
+  } catch {
+    // ignore
+  }
+}
+
 document.getElementById("vietqrForm")?.addEventListener("submit", async (e) => {
   e.preventDefault();
   const msg = document.getElementById("vietqrMsg");
@@ -608,6 +713,66 @@ document.getElementById("vietqrTestBtn")?.addEventListener("click", async () => 
   } catch (err) {
     preview?.classList.add("hidden");
     if (msg) { msg.textContent = err.message; msg.className = "admin-msg admin-msg-err"; msg.classList.remove("hidden"); }
+  }
+});
+
+document.getElementById("systemConfigForm")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const msg = document.getElementById("systemConfigMsg");
+  const creditPerPoint = Number(document.getElementById("cfgCreditPerPoint")?.value || 1);
+  const smtp = {
+    host: document.getElementById("smtpHost")?.value?.trim() || "",
+    hostBackup: document.getElementById("smtpHostBackup")?.value?.trim() || "",
+    port: Number(document.getElementById("smtpPort")?.value || 465),
+    secureMode: document.getElementById("smtpSecureMode")?.value || "ssl",
+    username: document.getElementById("smtpUsername")?.value?.trim() || "",
+    password: document.getElementById("smtpPassword")?.value || "",
+    fromEmail: document.getElementById("smtpFromEmail")?.value?.trim() || "",
+    fromName: document.getElementById("smtpFromName")?.value?.trim() || "",
+    clientHostname: document.getElementById("smtpClientHostname")?.value?.trim() || "",
+    helo: document.getElementById("smtpHelo")?.value?.trim() || "",
+    rerouteAddress: document.getElementById("smtpRerouteAddress")?.value?.trim() || ""
+  };
+  try {
+    const data = await adminFetch("/api/admin/system-config", {
+      method: "POST",
+      body: JSON.stringify({ creditPerPoint, smtp })
+    });
+    if (msg) {
+      msg.textContent = data.message || `Đã lưu: ${data.creditPerPoint} credit / 1 điểm`;
+      msg.className = "admin-msg admin-msg-ok";
+      msg.classList.remove("hidden");
+    }
+    await loadSystemConfig();
+    setTimeout(() => msg?.classList.add("hidden"), 5000);
+  } catch (err) {
+    if (msg) {
+      msg.textContent = err.message;
+      msg.className = "admin-msg admin-msg-err";
+      msg.classList.remove("hidden");
+    }
+  }
+});
+
+document.getElementById("smtpTestBtn")?.addEventListener("click", async () => {
+  const msg = document.getElementById("systemConfigMsg");
+  const to = document.getElementById("smtpTestTo")?.value?.trim() || "";
+  try {
+    const data = await adminFetch("/api/admin/system-config/test-mail", {
+      method: "POST",
+      body: JSON.stringify({ to })
+    });
+    if (msg) {
+      msg.textContent = data.message || "Gửi mail test thành công";
+      msg.className = "admin-msg admin-msg-ok";
+      msg.classList.remove("hidden");
+    }
+  } catch (err) {
+    if (msg) {
+      msg.textContent = err.message || "Gửi mail test thất bại";
+      msg.className = "admin-msg admin-msg-err";
+      msg.classList.remove("hidden");
+    }
   }
 });
 

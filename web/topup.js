@@ -1,5 +1,5 @@
 /**
- * topup.js — trang Nạp Điểm (/nap-diem)
+ * topup.js — trang Nạp Credit (/nap-diem)
  */
 (function () {
   const AUTH_KEY = "timdiemban_token";
@@ -49,6 +49,10 @@
 
   function getToken() {
     return localStorage.getItem(AUTH_KEY) || "";
+  }
+
+  function clearSessionInExtension() {
+    window.postMessage({ source: "timdiemban-web", type: "LOGOUT", payload: {} }, window.location.origin);
   }
 
   async function apiReq(path, opts = {}) {
@@ -149,7 +153,7 @@
     bindPackageGrid();
     const grid = $("packagesGrid");
     if (!grid || !availablePackages.length) {
-      if (grid) grid.innerHTML = "<p style='color:#6b7280;padding:16px'>Hiện chưa có gói điểm nào.</p>";
+      if (grid) grid.innerHTML = "<p style='color:#6b7280;padding:16px'>Hiện chưa có gói credit nào.</p>";
       return;
     }
 
@@ -166,7 +170,7 @@
           ${isPopular ? '<span class="topup-pkg-popular-badge">Phổ biến nhất</span>' : ""}
           <div class="topup-pkg-name">${pkg.name}</div>
           <div class="topup-pkg-points">${formatPts(pkg.points)}</div>
-          <div class="topup-pkg-points-label">điểm tìm kiếm</div>
+          <div class="topup-pkg-points-label">credit tìm kiếm</div>
           <div class="topup-pkg-price">${priceStr}</div>
           <div class="topup-pkg-expire">Thời hạn: ${expStr}</div>
           <button type="button" class="topup-pkg-btn" ${hasPending ? "disabled" : ""} data-pkg-id="${pkg.id}">
@@ -195,7 +199,7 @@
             : "Chờ admin cấu hình VietQR để thanh toán";
         const date = new Date(o.createdAt).toLocaleString("vi-VN");
         return `<div class="topup-pending-row">
-          <span><strong>${o.packageName || "Gói điểm"}</strong> (+${formatPts(o.points)} điểm) — ${label} · ${date}</span>
+          <span><strong>${o.packageName || "Gói credit"}</strong> (+${formatPts(o.points)} credit) — ${label} · ${date}</span>
           <button type="button" class="topup-order-cancel" data-order-id="${o.id}">Hủy đơn</button>
         </div>`;
       })
@@ -263,7 +267,7 @@
         return `
         <div class="topup-order-row">
           <div class="topup-order-info">
-            <div class="topup-order-name">${o.packageName || "Gói điểm"} — +${formatPts(o.points)} điểm</div>
+            <div class="topup-order-name">${o.packageName || "Gói credit"} — +${formatPts(o.points)} credit</div>
             <div class="topup-order-meta">
               ${o.paymentAmount ? `${Number(o.paymentAmount).toLocaleString("vi-VN")}đ · ` : ""}
               Đặt lúc ${date}
@@ -367,8 +371,8 @@
     const amount = paymentInfo?.amount ?? order.paymentAmount ?? 0;
     const note = paymentInfo?.note || order.id || "—";
 
-    $("topupPkgName").textContent = order.packageName || "Gói điểm";
-    $("topupPkgDesc").textContent = `Gói ${formatPts(order.points)} điểm · Thời hạn 1 năm`;
+    $("topupPkgName").textContent = order.packageName || "Gói credit";
+    $("topupPkgDesc").textContent = `Gói ${formatPts(order.points)} credit · Thời hạn 1 năm`;
     $("topupLinePrice").textContent = formatMoney(amount);
     $("topupTotal").textContent = formatMoney(amount);
     $("topupOrderId").textContent = order.id || "—";
@@ -447,6 +451,9 @@
       alert("Chưa có thông tin thanh toán — admin cần cấu hình VietQR trước.");
       return;
     }
+    if (!window.confirm("Xác nhận bạn đã hoàn tất chuyển khoản cho đơn hàng này?")) {
+      return;
+    }
     const btn = $("topupConfirmBtn");
     if (btn) {
       btn.disabled = true;
@@ -457,11 +464,15 @@
       const data = await apiReq(`/api/packages/orders/${activeOrder.id}/confirm-payment`, { method: "POST" });
       const msg = $("topupMsg");
       if (msg) {
-        msg.textContent = data.message || "Đã xác nhận — admin sẽ duyệt sớm!";
+        msg.textContent =
+          (data.message || "Đã xác nhận — admin sẽ duyệt sớm!") + " Tự quay về trang tìm kiếm sau 3 giây…";
         msg.className = "topup-msg topup-msg-ok";
       }
       setConfirmBtnVisible(false);
       await loadOrders();
+      setTimeout(() => {
+        window.location.replace("/");
+      }, 3000);
     } catch (err) {
       const msg = $("topupMsg");
       if (msg) {
@@ -487,6 +498,10 @@
     try {
       const data = await apiReq("/api/auth/me");
       currentUser = data.user || null;
+      if (currentUser && !currentUser.termsAccepted) {
+        window.location.replace("/login");
+        return;
+      }
     } catch {
       localStorage.removeItem(AUTH_KEY);
       currentUser = null;
@@ -535,11 +550,13 @@
     if (currentUser) {
       apiReq("/api/logout", { method: "POST" }).catch(() => {});
       localStorage.removeItem(AUTH_KEY);
+      clearSessionInExtension();
       currentUser = null;
       updateHeaderUI();
       showLoginGate();
+      window.location.replace("/login");
     } else {
-      showAuthModal();
+      window.location.replace("/login");
     }
   }
 

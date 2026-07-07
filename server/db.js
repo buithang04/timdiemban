@@ -1,192 +1,252 @@
-const fs = require("fs");
-const path = require("path");
+/**
+ * db.js — MySQL (mysql2/promise)
+ */
+const mysql = require("mysql2/promise");
 const crypto = require("crypto");
-const Database = require("better-sqlite3");
-
-const DATA_DIR = path.join(__dirname, "data");
-const DB_PATH = path.join(DATA_DIR, "timdiemban.db");
-const LEGACY_USERS = path.join(DATA_DIR, "users.json");
 
 const PACKAGES = [
-  { id: "pkg_3000", name: "Gói 3.000 điểm", points: 3000 },
-  { id: "pkg_5000", name: "Gói 5.000 điểm", points: 5000 },
-  { id: "pkg_10000", name: "Gói 10.000 điểm", points: 10000 }
+  { id: "pkg_starter", name: "Gói Starter", points: 30000, price: 2000000, expire_days: 30 },
+  { id: "pkg_basic", name: "Gói Basic", points: 60000, price: 3200000, expire_days: 60 },
+  { id: "pkg_advanced", name: "Gói Advanced", points: 150000, price: 6750000, expire_days: 120 }
 ];
 
-let db;
+let pool = null;
 
-function getDb() {
-  if (!db) db = openDb();
-  return db;
+function getPool() {
+  if (!pool) throw new Error("MySQL chưa được khởi tạo — gọi initDb() trước");
+  return pool;
 }
 
-function openDb() {
-  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+async function initDb() {
+  if (pool) return pool;
 
-  const database = new Database(DB_PATH);
-  database.pragma("journal_mode = WAL");
-  database.pragma("foreign_keys = ON");
+  pool = mysql.createPool({
+    host:     process.env.MYSQL_HOST     || "localhost",
+    port:     Number(process.env.MYSQL_PORT)  || 3306,
+    user:     process.env.MYSQL_USER     || "root",
+    password: process.env.MYSQL_PASSWORD || "",
+    database: process.env.MYSQL_DATABASE || "timdiemban",
+    waitForConnections: true,
+    connectionLimit: 10,
+    charset: "utf8mb4"
+  });
 
-  database.exec(`
-    CREATE TABLE IF NOT EXISTS packages (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      points INTEGER NOT NULL UNIQUE,
-      is_active INTEGER NOT NULL DEFAULT 1,
-      created_at TEXT NOT NULL
+  // Tự động tạo database nếu chưa có
+  const tmpPool = mysql.createPool({
+    host:     process.env.MYSQL_HOST     || "localhost",
+    port:     Number(process.env.MYSQL_PORT)  || 3306,
+    user:     process.env.MYSQL_USER     || "root",
+    password: process.env.MYSQL_PASSWORD || "",
+    waitForConnections: true,
+    connectionLimit: 2,
+    charset: "utf8mb4"
+  });
+  const dbName = process.env.MYSQL_DATABASE || "timdiemban";
+  try {
+    await tmpPool.execute(
+      `CREATE DATABASE IF NOT EXISTS \`${dbName}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`
     );
-
-    CREATE TABLE IF NOT EXISTS users (
-      id TEXT PRIMARY KEY,
-      email TEXT NOT NULL UNIQUE,
-      password_hash TEXT NOT NULL,
-      role TEXT NOT NULL DEFAULT 'user',
-      points INTEGER NOT NULL DEFAULT 0,
-      package_id TEXT REFERENCES packages(id),
-      package_expires_at TEXT,
-      is_active INTEGER NOT NULL DEFAULT 1,
-      created_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS tokens (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      token TEXT NOT NULL UNIQUE,
-      type TEXT NOT NULL,
-      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      expires_at INTEGER NOT NULL,
-      created_at TEXT NOT NULL
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_tokens_token ON tokens(token);
-    CREATE INDEX IF NOT EXISTS idx_tokens_user ON tokens(user_id);
-    CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
-
-    CREATE TABLE IF NOT EXISTS package_orders (
-      id TEXT PRIMARY KEY,
-      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      package_id TEXT NOT NULL REFERENCES packages(id),
-      points INTEGER NOT NULL,
-      status TEXT NOT NULL DEFAULT 'pending',
-      admin_id TEXT REFERENCES users(id),
-      admin_note TEXT,
-      created_at TEXT NOT NULL,
-      reviewed_at TEXT
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_package_orders_status ON package_orders(status);
-    CREATE INDEX IF NOT EXISTS idx_package_orders_user ON package_orders(user_id);
-
-    CREATE TABLE IF NOT EXISTS settings (
-      key TEXT PRIMARY KEY,
-      value TEXT,
-      updated_at TEXT NOT NULL
-    );
-  `);
-
-  seedPackages(database);
-  seedDefaultAdmin(database);
-  migrateUsersSchema(database);
-  migrateLegacyUsers(database);
-
-  return database;
-}
-
-function migrateUsersSchema(database) {
-  const cols = database.pragma("table_info(users)");
-  if (!cols.some((c) => c.name === "package_expires_at")) {
-    database.exec("ALTER TABLE users ADD COLUMN package_expires_at TEXT");
+  } finally {
+    await tmpPool.end().catch(() => {});
   }
-  const rows = database
-    .prepare(
-      `SELECT u.id, u.created_at, p.expire_days
-       FROM users u
-       INNER JOIN packages p ON p.id = u.package_id
-       WHERE u.package_expires_at IS NULL`
-    )
-    .all();
-  const upd = database.prepare("UPDATE users SET package_expires_at = ? WHERE id = ?");
+
+  await createTables();
+  await seedPackages();
+  await seedDefaultAdmin();
+  await migrateUsersSchema();
+
+  return pool;
+}
+
+async function migrateUsersSchema() {
+  try {
+    await pool.execute(
+      "ALTER TABLE users ADD COLUMN package_expires_at VARCHAR(64) DEFAULT NULL"
+    );
+  } catch (e) {
+    if (!/duplicate column/i.test(e.message)) throw e;
+  }
+  try {
+    await pool.execute(
+      "ALTER TABLE users ADD COLUMN full_name VARCHAR(255) DEFAULT NULL"
+    );
+  } catch (e) {
+    if (!/duplicate column/i.test(e.message)) throw e;
+  }
+  try {
+    await pool.execute(
+      "ALTER TABLE users ADD COLUMN phone VARCHAR(32) DEFAULT NULL"
+    );
+  } catch (e) {
+    if (!/duplicate column/i.test(e.message)) throw e;
+  }
+  try {
+    await pool.execute(
+      "ALTER TABLE users ADD COLUMN accepted_terms_at VARCHAR(64) DEFAULT NULL"
+    );
+  } catch (e) {
+    if (!/duplicate column/i.test(e.message)) throw e;
+  }
+  try {
+    await pool.execute(
+      "ALTER TABLE users ADD COLUMN accepted_terms_version VARCHAR(32) DEFAULT NULL"
+    );
+  } catch (e) {
+    if (!/duplicate column/i.test(e.message)) throw e;
+  }
+  const [rows] = await pool.execute(
+    `SELECT u.id, u.created_at, p.expire_days
+     FROM users u
+     INNER JOIN packages p ON p.id = u.package_id
+     WHERE u.package_expires_at IS NULL`
+  );
   for (const r of rows) {
     const base = new Date(r.created_at);
     const exp = new Date(base);
     exp.setDate(exp.getDate() + Math.max(1, Number(r.expire_days) || 365));
-    upd.run(exp.toISOString(), r.id);
+    await pool.execute("UPDATE users SET package_expires_at = ? WHERE id = ?", [
+      exp.toISOString(),
+      r.id
+    ]);
   }
 }
 
-function seedPackages(database) {
-  const insert = database.prepare(`
-    INSERT OR IGNORE INTO packages (id, name, points, is_active, created_at)
-    VALUES (@id, @name, @points, 1, @created_at)
-  `);
+async function createTables() {
+  const conn = await pool.getConnection();
+  try {
+    await conn.execute(`
+      CREATE TABLE IF NOT EXISTS packages (
+        id          VARCHAR(64)  NOT NULL PRIMARY KEY,
+        name        VARCHAR(255) NOT NULL,
+        points      INT          NOT NULL,
+        price       INT          NOT NULL DEFAULT 0,
+        expire_days INT          NOT NULL DEFAULT 30,
+        is_active   TINYINT      NOT NULL DEFAULT 1,
+        created_at  VARCHAR(64)  NOT NULL,
+        UNIQUE KEY uq_points (points)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+
+    await conn.execute(`
+      CREATE TABLE IF NOT EXISTS users (
+        id            VARCHAR(64)   NOT NULL PRIMARY KEY,
+        full_name     VARCHAR(255)  DEFAULT NULL,
+        email         VARCHAR(255)  NOT NULL,
+        phone         VARCHAR(32)   DEFAULT NULL,
+        password_hash VARCHAR(512)  NOT NULL,
+        role          VARCHAR(20)   NOT NULL DEFAULT 'user',
+        points        INT           NOT NULL DEFAULT 0,
+        package_id    VARCHAR(64)   REFERENCES packages(id),
+        package_expires_at VARCHAR(64) DEFAULT NULL,
+        accepted_terms_at VARCHAR(64) DEFAULT NULL,
+        accepted_terms_version VARCHAR(32) DEFAULT NULL,
+        is_active     TINYINT       NOT NULL DEFAULT 1,
+        created_at    VARCHAR(64)   NOT NULL,
+        UNIQUE KEY uq_email (email),
+        UNIQUE KEY uq_phone (phone)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+
+    await conn.execute(`
+      CREATE TABLE IF NOT EXISTS tokens (
+        id         BIGINT AUTO_INCREMENT PRIMARY KEY,
+        token      VARCHAR(128) NOT NULL,
+        type       VARCHAR(32)  NOT NULL,
+        user_id    VARCHAR(64)  NOT NULL,
+        expires_at BIGINT       NOT NULL,
+        created_at VARCHAR(64)  NOT NULL,
+        UNIQUE KEY uq_token (token),
+        KEY idx_user (user_id),
+        CONSTRAINT fk_tokens_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+
+    await conn.execute(`
+      CREATE TABLE IF NOT EXISTS package_orders (
+        id                   VARCHAR(64)  NOT NULL PRIMARY KEY,
+        user_id              VARCHAR(64)  NOT NULL,
+        package_id           VARCHAR(64)  NOT NULL,
+        points               INT          NOT NULL,
+        payment_amount       INT          NOT NULL DEFAULT 0,
+        status               VARCHAR(20)  NOT NULL DEFAULT 'pending',
+        payment_confirmed    TINYINT      NOT NULL DEFAULT 0,
+        payment_confirmed_at VARCHAR(64)  DEFAULT NULL,
+        admin_id             VARCHAR(64)  DEFAULT NULL,
+        admin_note           TEXT         DEFAULT NULL,
+        created_at           VARCHAR(64)  NOT NULL,
+        reviewed_at          VARCHAR(64)  DEFAULT NULL,
+        KEY idx_status (status),
+        KEY idx_user_id (user_id),
+        CONSTRAINT fk_po_user    FOREIGN KEY (user_id)    REFERENCES users(id)    ON DELETE CASCADE,
+        CONSTRAINT fk_po_pkg     FOREIGN KEY (package_id) REFERENCES packages(id),
+        CONSTRAINT fk_po_admin   FOREIGN KEY (admin_id)   REFERENCES users(id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+
+    await conn.execute(`
+      CREATE TABLE IF NOT EXISTS settings (
+        \`key\`     VARCHAR(255) NOT NULL PRIMARY KEY,
+        value      TEXT         DEFAULT NULL,
+        updated_at VARCHAR(64)  NOT NULL
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+  } finally {
+    conn.release();
+  }
+}
+
+async function seedPackages() {
   const now = new Date().toISOString();
   for (const pkg of PACKAGES) {
-    insert.run({ ...pkg, created_at: now });
+    await pool.execute(
+      `INSERT INTO packages (id, name, points, price, expire_days, is_active, created_at)
+       VALUES (?, ?, ?, ?, ?, 1, ?)
+       ON DUPLICATE KEY UPDATE name=VALUES(name), points=VALUES(points), price=VALUES(price), expire_days=VALUES(expire_days)`,
+      [pkg.id, pkg.name, pkg.points, pkg.price, pkg.expire_days, now]
+    );
+  }
+  const keepIds = PACKAGES.map((p) => p.id);
+  if (keepIds.length) {
+    const marks = keepIds.map(() => "?").join(", ");
+    await pool.execute(
+      `UPDATE packages SET is_active = 0 WHERE id NOT IN (${marks})`,
+      keepIds
+    );
   }
 }
 
-function seedDefaultAdmin(database) {
-  const envEmail = process.env.ADMIN_EMAIL?.trim().toLowerCase();
-  const envPassword = process.env.ADMIN_PASSWORD;
-  const email = envEmail || "admin@timdiemban.local";
-  const password = envPassword || "Admin@123456";
-  const existing = database.prepare("SELECT id, email FROM users WHERE role = 'admin' LIMIT 1").get();
+async function seedDefaultAdmin() {
+  const envEmail = (process.env.ADMIN_EMAIL || "").trim().toLowerCase() || "admin@timdiemban.local";
+  const envPassword = process.env.ADMIN_PASSWORD || "Admin@123456";
 
-  if (existing) {
-    if (envEmail && envEmail !== existing.email) {
-      const taken = database.prepare("SELECT id FROM users WHERE email = ? AND id != ?").get(envEmail, existing.id);
-      if (taken) throw new Error(`ADMIN_EMAIL "${envEmail}" đã được dùng bởi tài khoản khác`);
-      database.prepare("UPDATE users SET email = ? WHERE id = ?").run(envEmail, existing.id);
-      console.log(`[DB] Đã đổi email admin → ${envEmail}`);
-    }
-    if (envPassword) {
-      database.prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(hashPassword(envPassword), existing.id);
-      console.log("[DB] Đã cập nhật mật khẩu admin từ biến môi trường ADMIN_PASSWORD");
+  const [rows] = await pool.execute("SELECT id, email FROM users WHERE role = 'admin' LIMIT 1");
+
+  if (rows.length) {
+    const existing = rows[0];
+    if (envEmail !== existing.email) {
+      const [taken] = await pool.execute(
+        "SELECT id FROM users WHERE email = ? AND id != ?",
+        [envEmail, existing.id]
+      );
+      if (!taken.length) {
+        await pool.execute("UPDATE users SET email = ? WHERE id = ?", [envEmail, existing.id]);
+        console.log(`[DB] Đã đổi email admin → ${envEmail}`);
+      }
     }
     return;
   }
 
-  const id = `u_admin_${crypto.randomBytes(4).toString("hex")}`;
-  database
-    .prepare(
-      `INSERT INTO users (id, email, password_hash, role, points, is_active, created_at)
-       VALUES (?, ?, ?, 'admin', 0, 1, ?)`
-    )
-    .run(id, email, hashPassword(password), new Date().toISOString());
-
-  console.log(`[DB] Tài khoản admin mặc định: ${email} / ${password}`);
+  const id = newId("u_admin");
+  await pool.execute(
+    `INSERT INTO users (id, email, password_hash, role, points, is_active, created_at)
+     VALUES (?, ?, ?, 'admin', 0, 1, ?)`,
+    [id, envEmail, hashPassword(envPassword), new Date().toISOString()]
+  );
+  console.log(`[DB] Tài khoản admin mặc định: ${envEmail} / ${envPassword}`);
   console.log("[DB] Đổi mật khẩu ngay sau lần đăng nhập đầu.");
 }
 
-function migrateLegacyUsers(database) {
-  if (!fs.existsSync(LEGACY_USERS)) return;
-  try {
-    const legacy = JSON.parse(fs.readFileSync(LEGACY_USERS, "utf8"));
-    if (!Array.isArray(legacy) || !legacy.length) return;
-
-    const insert = database.prepare(`
-      INSERT OR IGNORE INTO users (id, email, password_hash, role, points, is_active, created_at)
-      VALUES (?, ?, ?, 'user', ?, 1, ?)
-    `);
-    let migrated = 0;
-    for (const u of legacy) {
-      if (!u.email || !u.passwordHash) continue;
-      const r = insert.run(
-        u.id || `u_${Date.now()}_${crypto.randomBytes(4).toString("hex")}`,
-        String(u.email).trim().toLowerCase(),
-        u.passwordHash,
-        Math.max(0, Math.floor(Number(u.points) || 0)),
-        u.createdAt || new Date().toISOString()
-      );
-      if (r.changes) migrated++;
-    }
-    if (migrated > 0) {
-      fs.renameSync(LEGACY_USERS, LEGACY_USERS + ".migrated.bak");
-      console.log(`[DB] Đã chuyển ${migrated} user từ users.json → SQLite`);
-    }
-  } catch (err) {
-    console.warn("[DB] migrate users.json:", err.message);
-  }
-}
+// ——— Helpers ———
 
 function hashPassword(password) {
   const salt = crypto.randomBytes(16).toString("hex");
@@ -198,7 +258,11 @@ function verifyPassword(password, stored) {
   const [salt, hash] = String(stored).split(":");
   if (!salt || !hash) return false;
   const check = crypto.pbkdf2Sync(password, salt, 100000, 64, "sha512").toString("hex");
-  return crypto.timingSafeEqual(Buffer.from(hash, "hex"), Buffer.from(check, "hex"));
+  try {
+    return crypto.timingSafeEqual(Buffer.from(hash, "hex"), Buffer.from(check, "hex"));
+  } catch {
+    return false;
+  }
 }
 
 function newId(prefix = "u") {
@@ -212,88 +276,97 @@ function newToken() {
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const RESET_TTL_MS = 60 * 60 * 1000;
 
-function purgeExpiredTokens(database) {
-  database.prepare("DELETE FROM tokens WHERE expires_at <= ?").run(Date.now());
+async function purgeExpiredTokens() {
+  await pool.execute("DELETE FROM tokens WHERE expires_at <= ?", [Date.now()]);
 }
 
-function createSessionToken(database, userId) {
-  purgeExpiredTokens(database);
+async function createSessionToken(userId) {
+  await purgeExpiredTokens();
   const token = newToken();
   const now = Date.now();
-  database
-    .prepare(
-      `INSERT INTO tokens (token, type, user_id, expires_at, created_at)
-       VALUES (?, 'session', ?, ?, ?)`
-    )
-    .run(token, userId, now + SESSION_TTL_MS, new Date(now).toISOString());
+  await pool.execute(
+    `INSERT INTO tokens (token, type, user_id, expires_at, created_at) VALUES (?, 'session', ?, ?, ?)`,
+    [token, userId, now + SESSION_TTL_MS, new Date(now).toISOString()]
+  );
   return token;
 }
 
-function getTokenRow(token) {
+async function getTokenRow(token) {
   if (!token) return null;
-  const database = getDb();
-  purgeExpiredTokens(database);
-  return database
-    .prepare(
-      `SELECT t.*, u.email, u.role, u.points, u.is_active, u.package_id, u.created_at AS user_created_at,
-              p.name AS package_name
-       FROM tokens t
-       JOIN users u ON u.id = t.user_id
-       LEFT JOIN packages p ON p.id = u.package_id
-       WHERE t.token = ? AND t.expires_at > ?`
-    )
-    .get(token, Date.now());
+  await purgeExpiredTokens();
+  const [rows] = await pool.execute(
+    `SELECT t.*, u.email, u.role, u.points, u.is_active, u.package_id, u.created_at AS user_created_at,
+            p.name AS package_name
+     FROM tokens t
+     JOIN users u ON u.id = t.user_id
+     LEFT JOIN packages p ON p.id = u.package_id
+     WHERE t.token = ? AND t.expires_at > ?`,
+    [token, Date.now()]
+  );
+  return rows[0] || null;
 }
 
 function sanitizeUser(row) {
   if (!row) return null;
   return {
     id: row.id || row.user_id,
+    fullName: row.full_name || "",
     email: row.email,
+    phone: row.phone || "",
     role: row.role || "user",
     points: row.points ?? 0,
     packageId: row.package_id || null,
     packageName: row.package_name || null,
     packageExpiresAt: row.package_expires_at || null,
+    termsAccepted: !!row.accepted_terms_at,
+    acceptedTermsAt: row.accepted_terms_at || null,
+    acceptedTermsVersion: row.accepted_terms_version || null,
     isActive: row.is_active !== 0,
     createdAt: row.created_at || row.user_created_at
   };
 }
 
-function getUserById(id) {
-  const row = getDb()
-    .prepare(
-      `SELECT u.*, p.name AS package_name
-       FROM users u
-       LEFT JOIN packages p ON p.id = u.package_id
-       WHERE u.id = ?`
-    )
-    .get(id);
-  return row ? sanitizeUser(row) : null;
+async function getUserById(id) {
+  const [rows] = await pool.execute(
+    `SELECT u.*, p.name AS package_name
+     FROM users u
+     LEFT JOIN packages p ON p.id = u.package_id
+     WHERE u.id = ?`,
+    [id]
+  );
+  return rows[0] ? sanitizeUser(rows[0]) : null;
 }
 
-function listPackages() {
-  return getDb()
-    .prepare("SELECT id, name, points FROM packages WHERE is_active = 1 ORDER BY points ASC")
-    .all();
+async function listPackages() {
+  const [rows] = await pool.execute(
+    "SELECT id, name, points, price, expire_days FROM packages WHERE is_active = 1 ORDER BY points ASC"
+  );
+  return rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    points: r.points,
+    price: r.price,
+    expireDays: r.expire_days
+  }));
 }
 
-function getSetting(key, fallback = null) {
-  const row = getDb().prepare("SELECT value FROM settings WHERE key = ?").get(key);
-  return row ? row.value : fallback;
+async function getSetting(key, fallback = null) {
+  const [rows] = await pool.execute("SELECT value FROM settings WHERE `key` = ?", [key]);
+  return rows[0] ? rows[0].value : fallback;
 }
 
-function setSetting(key, value) {
-  getDb()
-    .prepare(
-      `INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)
-       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
-    )
-    .run(key, value == null ? null : String(value), new Date().toISOString());
+async function setSetting(key, value) {
+  const now = new Date().toISOString();
+  await pool.execute(
+    `INSERT INTO settings (\`key\`, value, updated_at) VALUES (?, ?, ?)
+     ON DUPLICATE KEY UPDATE value = VALUES(value), updated_at = VALUES(updated_at)`,
+    [key, value == null ? null : String(value), now]
+  );
 }
 
 module.exports = {
-  getDb,
+  initDb,
+  getPool,
   PACKAGES,
   hashPassword,
   verifyPassword,

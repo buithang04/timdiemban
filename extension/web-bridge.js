@@ -118,6 +118,13 @@
       chrome.runtime.sendMessage({ action: "SAVE_SESSION", data: payload });
       return;
     }
+    if (type === "LOGOUT") {
+      chrome.runtime.sendMessage({ action: "SAVE_SESSION", data: { token: "", user: null } });
+      try {
+        localStorage.removeItem("timdiemban_token");
+      } catch {}
+      return;
+    }
 
     if (type === "GET_MAPS_CENTER") {
       chrome.runtime.sendMessage({ action: "GET_MAPS_CENTER" }, (resp) => {

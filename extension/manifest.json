@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "Tim Diem Ban - Google Maps Scraper",
+  "name": "findmap - Google Maps Scraper",
   "version": "1.7.32",
   "description": "Cào dữ liệu Google Maps — điều khiển từ http://localhost:3000",
   "permissions": [
@@ -19,7 +19,7 @@
   ],
   "action": {
     "default_popup": "popup.html",
-    "default_title": "Tim Diem Ban"
+    "default_title": "findmap"
   },
   "background": {
     "service_worker": "background.js"

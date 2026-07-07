@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Tim Điểm Bán</title>
+  <title>findmap</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
@@ -11,14 +11,23 @@
   <base href="/" />
   <link rel="stylesheet" href="/style.css" />
   <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+  <script>
+    try {
+      if (!localStorage.getItem("timdiemban_token")) {
+        window.location.replace("/login");
+      }
+    } catch {
+      window.location.replace("/login");
+    }
+  </script>
 </head>
 <body class="page-winmap wm-console">
   <!-- Sidebar -->
   <aside class="wm-sidebar">
     <div class="wm-sidebar-brand">
-      <div class="wm-sidebar-logo">C</div>
+      <div class="wm-sidebar-logo"><img src="/assets/findmap-logo/logo-chatplus-findmap-svg.svg" alt="findmap logo" /></div>
       <div>
-        <div class="wm-sidebar-title">Chatplus</div>
+        <div class="wm-sidebar-title">findmap</div>
         <div class="wm-sidebar-sub">Tìm điểm</div>
       </div>
     </div>
@@ -72,26 +81,30 @@
     <header class="wm-header">
       <div class="wm-header-left">
         <div class="wm-header-stats">
-          <h1 class="wm-header-title">Tìm Điểm Bán</h1>
+          <h1 class="wm-header-title">findmap</h1>
           <div class="wm-header-statline">
-            <span class="wm-hstat"><strong id="pkgPointsHdr">-</strong> điểm trong hệ thống</span>
+            <span class="wm-hstat"><strong id="pkgPointsHdr">-</strong> credit</span>
             <span class="wm-hstat-sep">·</span>
             <span class="wm-hstat">Quán có SĐT: <strong id="statUsedHdr">0</strong></span>
             <span class="wm-hstat-sep">·</span>
-            <span class="wm-hstat">Còn lại: <strong id="infoPointsHdr">-</strong></span>
-            <span class="wm-hstat wm-hstat-muted">(1 điểm / điểm tìm thấy)</span>
+            <span class="wm-hstat">Credit còn lại: <strong id="infoPointsHdr">-</strong></span>
+            <span class="wm-hstat wm-hstat-muted">(trừ theo credit cấu hình hệ thống)</span>
           </div>
         </div>
       </div>
       <div class="wm-header-right">
         <span id="connStatus" class="conn-status conn-top">Chờ extension…</span>
         <button type="button" id="loginBtn" class="wm-btn wm-btn-outline wm-header-login hidden">Đăng nhập</button>
-        <div id="headerUserBlock" class="wm-header-user hidden">
+        <div id="headerUserBlock" class="wm-header-user hidden" style="position:relative">
           <div class="wm-header-user-info">
             <span id="headerUserName" class="wm-header-user-name">User</span>
             <span id="headerUserRole" class="wm-header-user-role">Thành viên</span>
           </div>
-          <div id="headerUserAvatar" class="wm-header-avatar">U</div>
+          <button type="button" id="headerUserAvatar" class="wm-header-avatar" title="Mở menu tài khoản">U</button>
+          <div id="headerUserMenu" class="auth-modal-box hidden" style="position:absolute;top:52px;right:0;min-width:180px;padding:8px;z-index:40">
+            <button type="button" id="openProfileBtn" class="wm-btn wm-btn-outline wm-btn-sm" style="width:100%;margin-bottom:6px">Hồ sơ</button>
+            <button type="button" id="headerLogoutBtn" class="wm-btn wm-btn-outline wm-btn-sm" style="width:100%">Đăng xuất</button>
+          </div>
         </div>
       </div>
     </header>
@@ -309,6 +322,28 @@
         <button type="submit" class="btn btn-primary auth-submit">Đăng nhập</button>
       </form>
       <p class="auth-switch"><a href="/quen-mat-khau" class="link-btn">Quên mật khẩu?</a></p>
+    </div>
+  </div>
+
+  <div id="profileModal" class="auth-modal hidden">
+    <div class="auth-modal-box">
+      <h2>Hồ sơ tài khoản</h2>
+      <form id="profileForm">
+        <label for="profileEmail">Email</label>
+        <input type="email" id="profileEmail" readonly />
+        <label for="profileFullName">Họ và tên</label>
+        <input type="text" id="profileFullName" required placeholder="Nguyễn Văn A" />
+        <label for="profilePhone">Số điện thoại</label>
+        <input type="tel" id="profilePhone" required placeholder="0912345678" />
+        <label for="profileCurrentPassword">Mật khẩu hiện tại (nếu muốn đổi mật khẩu)</label>
+        <input type="password" id="profileCurrentPassword" placeholder="Nhập mật khẩu hiện tại" />
+        <label for="profileNewPassword">Mật khẩu mới</label>
+        <input type="password" id="profileNewPassword" minlength="6" placeholder="Tối thiểu 6 ký tự" />
+        <label for="profileConfirmPassword">Nhập lại mật khẩu mới</label>
+        <input type="password" id="profileConfirmPassword" minlength="6" placeholder="Nhập lại mật khẩu mới" />
+        <p id="profileMsg" class="auth-error hidden"></p>
+        <button type="submit" class="btn btn-primary auth-submit">Lưu thay đổi</button>
+      </form>
     </div>
   </div>
 

@@ -469,6 +469,19 @@
     els.mapsFocusModal?.classList.add("hidden");
   }
 
+  function getShownResultCount() {
+    return parseInt(document.getElementById("infoTotal")?.textContent || "0", 10) || 0;
+  }
+
+  function shouldShowMapsIssueModal(status) {
+    if (!status) return false;
+    if (status.stalled) return true;
+    const extCount = Number(status.mergedCount || 0);
+    const shown = getShownResultCount();
+    // Chỉ coi là thiếu khi chênh lệch đủ lớn để tránh false positive lúc realtime.
+    return extCount > 0 && extCount - shown >= 5;
+  }
+
   function setSearchRunning(running) {
     searchRunning = running;
     if (!running) {
@@ -655,7 +668,7 @@
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         window.removeEventListener("message", onMsg);
-        reject(new Error("Extension không phản hồi — kiểm tra đã cài và bật Tim Điểm Bán"));
+        reject(new Error("Extension không phản hồi — kiểm tra đã cài và bật findmap"));
       }, 8000);
 
       function onMsg(event) {
@@ -725,7 +738,8 @@
       setSearchRunning(true);
       if (status.mapsAutoFocus != null) syncMapsAutoFocusCheckbox(!!status.mapsAutoFocus);
       if (status.mapsAutoReopen != null) syncMapsAutoReopenCheckbox(!!status.mapsAutoReopen);
-      showMapsFocusModal();
+      if (shouldShowMapsIssueModal(status)) showMapsFocusModal();
+      else hideMapsFocusModal();
       maybeRequestSearchSync(status);
       if (isExtensionSearchAlive(status) || status.stalled) {
         touchSearchProgress();
@@ -738,6 +752,10 @@
             `Đang khôi phục — vùng ${(status.gridIndex || 0) + 1}/${status.totalCells} · ${status.mergedCount || 0} quán`
           );
         }
+        showSearchStatus(
+          "Phát hiện tab Maps có dấu hiệu treo / chậm phản hồi. Hãy chuyển sang tab Google Maps để tiếp tục ổn định.",
+          "info"
+        );
       } else if (status.totalCells) {
         updateSearchProgress(
           Math.round(((status.gridIndex || 0) / status.totalCells) * 95),
@@ -755,7 +773,7 @@
         window.removeEventListener("message", onMsg);
         reject(
           new Error(
-            `Extension không phản hồi — mở ${(window.TIMDIEMBAN_CONFIG?.APP_ORIGIN || window.location.origin).replace(/\/$/, "")}, reload extension Tim Điểm Bán rồi thử lại`
+            `Extension không phản hồi — mở ${(window.TIMDIEMBAN_CONFIG?.APP_ORIGIN || window.location.origin).replace(/\/$/, "")}, reload extension findmap rồi thử lại`
           )
         );
       }, 30000);
@@ -799,7 +817,7 @@
       return;
     }
     if (extUp === null && !window.TimDiemBanExtVersion?.getStatus?.()?.bridgeOk) {
-      showSearchStatus("Chưa kết nối extension — cài/reload Tim Điểm Bán.", "error");
+      showSearchStatus("Chưa kết nối extension — cài/reload findmap.", "error");
       return;
     }
 
@@ -867,7 +885,6 @@
 
       try {
         await requestStartSearch(searchParams);
-        showMapsFocusModal();
         const autoFocusHint = searchParams.mapsAutoFocus
           ? `Extension sẽ tự chuyển sang tab Maps mỗi ${getMapsAutoFocusMinutes()} phút nếu bạn rời tab.`
           : "Hãy chuyển sang tab Google Maps và giữ tab đó mở.";
@@ -912,7 +929,7 @@
       const cells = event.data.payload?.searchParams?.gridCells;
       updateSearchProgress(2, cells ? `Lưới ${cells} ô — đang mở Google Maps...` : "Đang mở Google Maps...");
       setSearchRunning(true);
-      showMapsFocusModal();
+      hideMapsFocusModal();
       armSearchWatchdog();
       return;
     }
@@ -922,6 +939,8 @@
       armSearchWatchdog();
       const { percent, text } = event.data.payload || {};
       if (text) updateSearchProgress(percent || 0, text);
+      const maybeStatus = event.data.payload || {};
+      if (shouldShowMapsIssueModal(maybeStatus)) showMapsFocusModal();
       return;
     }
 
