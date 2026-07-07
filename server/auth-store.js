@@ -536,11 +536,11 @@ async function chargePoints(userId, phoneCount) {
   if (user.is_active === 0) throw new Error("Tài khoản đã bị khóa");
 
   const creditPerPointRaw = await getSetting("credit_per_point", "1");
-  const creditPerPoint = Math.max(0.1, Number(creditPerPointRaw) || 1);
+  const creditPerPoint = Math.max(0.1, Number(creditPerPointRaw) || 1); // cost credit per phone
   const available = Math.max(0, user.points || 0);
-  const maxAllowedByPoints = Math.floor(available * creditPerPoint);
+  const maxAllowedByPoints = Math.floor(available / creditPerPoint);
   const allowedCount = Math.min(count, maxAllowedByPoints);
-  const charged = Math.min(available, Math.ceil(allowedCount / creditPerPoint));
+  const charged = Math.min(available, Math.ceil(allowedCount * creditPerPoint));
   const remaining = Math.max(0, available - charged);
 
   await pool.execute("UPDATE users SET points = ? WHERE id = ?", [remaining, userId]);
