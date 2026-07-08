@@ -85,13 +85,16 @@ function getExtensionManifestVersion() {
 }
 
 const app = express();
-const PORT = 3000;
+const PORT = Number(process.env.PORT || process.env.APP_PORT || 3000);
 app.set("json escape", true);
 
 const appConfig = require(path.join(__dirname, "..", "config", "app-config.js"));
-const appOrigin = String(appConfig.APP_ORIGIN || "").replace(/\/$/, "") || `http://localhost:${PORT}`;
+const appOrigin = String(process.env.APP_ORIGIN || appConfig.APP_ORIGIN || "")
+  .replace(/\/$/, "") || `http://localhost:${PORT}`;
 const allowedOrigins = new Set([
   appOrigin,
+  `http://localhost:${PORT}`,
+  `http://127.0.0.1:${PORT}`,
   "http://localhost:3000",
   "http://127.0.0.1:3000"
 ]);
@@ -1096,8 +1099,8 @@ const server = app.listen(PORT, () => {
 server.on("error", (err) => {
   if (err.code === "EADDRINUSE") {
     console.error(`Port ${PORT} đang được dùng. Dừng server cũ:`);
-    console.error(`  netstat -ano | findstr :${PORT}`);
-    console.error("  taskkill /PID <số_PID> /F");
+    console.error(`  sudo ss -ltnp | grep ':${PORT}'`);
+console.error(`  kill <PID>`);
     process.exit(1);
   }
   throw err;
