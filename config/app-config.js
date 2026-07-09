@@ -8,7 +8,7 @@
  * Sau khi đổi: chạy `npm start` (tự sync manifest extension) rồi reload extension Chrome.
  */
 const TIMDIEMBAN_CONFIG = {
-  APP_ORIGIN: "http://localhost:3000",
+  APP_ORIGIN: "https://findmap.app.chatplus.io.vn",
   MAPS_AUTO_FOCUS_MINUTES: 2,
   MAPS_AUTO_REOPEN_MAX: 5
 };

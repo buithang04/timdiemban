@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "findmap - Google Maps Scraper",
   "version": "1.7.32",
-  "description": "Cào dữ liệu Google Maps — điều khiển từ http://localhost:3000",
+  "description": "Cào dữ liệu Google Maps — điều khiển từ https://findmap.app.chatplus.io.vn",
   "permissions": [
     "activeTab",
     "tabs",
@@ -14,8 +14,7 @@
   ],
   "host_permissions": [
     "https://www.google.com/maps/*",
-    "http://localhost:3000/*",
-    "http://127.0.0.1:3000/*"
+    "https://findmap.app.chatplus.io.vn/*"
   ],
   "action": {
     "default_popup": "popup.html",
@@ -37,8 +36,7 @@
     },
     {
       "matches": [
-        "http://localhost:3000/*",
-        "http://127.0.0.1:3000/*"
+        "https://findmap.app.chatplus.io.vn/*"
       ],
       "js": [
         "web-bridge.js"
