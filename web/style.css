@@ -1465,6 +1465,19 @@ body.wm-console .wm-app {
   display: block;
 }
 
+.wm-sidebar-logo-full {
+  width: 100%;
+  height: auto;
+  min-height: 0;
+  overflow: visible;
+}
+
+.wm-sidebar-logo-full img {
+  width: 100%;
+  max-width: 168px;
+  height: auto;
+}
+
 .wm-sidebar-title {
   font-size: 28px;
   font-weight: 800;
