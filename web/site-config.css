@@ -1,6 +1,20 @@
+/* Trang cấu hình site — cuộn theo trang, không cuộn trong khung */
+body.page-site-config .wm-app {
+  overflow: visible;
+  min-height: auto;
+}
+
+body.page-site-config {
+  min-height: 100vh;
+  height: auto;
+}
+
 .wm-site-config-main {
-  padding: 1.25rem 1.5rem 2rem;
-  max-width: 1100px;
+  padding: 1.25rem 1.5rem 2.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  flex: 1;
 }
 
 .wm-header-sub {
@@ -10,24 +24,11 @@
   font-weight: 400;
 }
 
-.wm-site-config-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 1.25rem;
-  margin-top: 1rem;
-}
-
-@media (max-width: 900px) {
-  .wm-site-config-grid {
-    grid-template-columns: 1fr;
-  }
-}
-
 .wm-config-card {
   background: var(--wm-surface, #fff);
   border: 1px solid var(--wm-border, #e2e8f0);
   border-radius: 12px;
-  padding: 1rem 1.1rem;
+  padding: 1rem 1.15rem 1.15rem;
 }
 
 .wm-config-card h2 {
@@ -43,6 +44,24 @@
   margin: 0 0 0.85rem;
   font-size: 0.8rem;
   color: var(--wm-muted, #64748b);
+}
+
+.wm-config-hint-tight {
+  margin-bottom: 0 !important;
+}
+
+.wm-config-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.75rem;
+}
+
+.wm-config-actions-head {
+  margin-top: 0;
+  flex-shrink: 0;
 }
 
 .wm-config-field {
@@ -65,6 +84,26 @@
   border-radius: 8px;
   font: inherit;
   font-size: 0.88rem;
+  box-sizing: border-box;
+}
+
+.wm-config-url-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+}
+
+.wm-config-meta-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.65rem;
+}
+
+@media (max-width: 800px) {
+  .wm-config-url-row,
+  .wm-config-meta-row {
+    grid-template-columns: 1fr;
+  }
 }
 
 .wm-config-actions {
@@ -74,92 +113,77 @@
   margin-top: 0.5rem;
 }
 
-.wm-field-palette {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.45rem;
-  min-height: 2.5rem;
-  padding: 0.5rem;
-  border: 1px dashed var(--wm-border, #cbd5e1);
-  border-radius: 8px;
-  background: #f8fafc;
+/* Bảng map trường — hiển thị hết, không scroll nội bộ */
+.wm-mapping-table-wrap {
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  overflow: visible;
 }
 
-.wm-field-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
-  padding: 0.3rem 0.55rem;
-  border-radius: 999px;
-  background: #e0ecff;
-  color: #1d4ed8;
-  font-size: 0.78rem;
-  font-weight: 600;
-  cursor: grab;
-  user-select: none;
-  border: 1px solid #bfdbfe;
+.wm-mapping-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.86rem;
 }
 
-.wm-field-chip:active {
-  cursor: grabbing;
+.wm-mapping-table thead tr {
+  background: #f1f5f9;
 }
 
-.wm-field-chip code {
-  font-size: 0.72rem;
-  opacity: 0.85;
+.wm-mapping-table th {
+  text-align: left;
+  padding: 0.55rem 0.75rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #475569;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  border-bottom: 1px solid #e2e8f0;
 }
 
-.wm-mapping-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  min-height: 120px;
+.wm-mapping-table td {
+  padding: 0.4rem 0.75rem;
+  border-bottom: 1px solid #f1f5f9;
+  vertical-align: middle;
 }
 
-.wm-mapping-row {
-  display: grid;
-  grid-template-columns: 1fr 28px 1fr 32px;
-  gap: 0.4rem;
-  align-items: center;
+.wm-mapping-table tbody tr:last-child td {
+  border-bottom: none;
 }
 
-.wm-mapping-row input {
-  padding: 0.45rem 0.55rem;
-  border: 1px solid var(--wm-border, #cbd5e1);
-  border-radius: 8px;
-  font-size: 0.82rem;
+.wm-mapping-table tbody tr:nth-child(even) {
+  background: #fafbfc;
 }
 
-.wm-mapping-drop {
-  min-height: 36px;
-  display: flex;
-  align-items: center;
-  padding: 0.35rem 0.5rem;
-  border: 2px dashed #cbd5e1;
-  border-radius: 8px;
-  background: #fff;
-  font-size: 0.78rem;
-  color: #94a3b8;
-  transition: border-color 0.15s, background 0.15s;
-}
-
-.wm-mapping-drop.has-value {
-  border-style: solid;
-  border-color: #93c5fd;
-  background: #eff6ff;
-  color: #1e40af;
-  font-weight: 600;
-}
-
-.wm-mapping-drop.drag-over {
-  border-color: #2563eb;
-  background: #dbeafe;
-}
-
-.wm-mapping-arrow {
+.wm-mapping-table .col-arrow {
+  width: 36px;
   text-align: center;
   color: #94a3b8;
   font-weight: 700;
+}
+
+.wm-mapping-table .col-action {
+  width: 44px;
+  text-align: center;
+}
+
+.wm-mapping-select,
+.wm-mapping-target {
+  width: 100%;
+  padding: 0.45rem 0.55rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 0.84rem;
+  background: #fff;
+  box-sizing: border-box;
+}
+
+.wm-mapping-select:focus,
+.wm-mapping-target:focus {
+  outline: none;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15);
 }
 
 .wm-mapping-remove {
@@ -179,17 +203,20 @@
 }
 
 .wm-curl-preview {
+  margin: 0;
   width: 100%;
-  min-height: 220px;
+  box-sizing: border-box;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.75rem;
-  line-height: 1.45;
-  padding: 0.75rem;
-  border: 1px solid var(--wm-border, #cbd5e1);
+  font-size: 0.76rem;
+  line-height: 1.5;
+  padding: 0.85rem 1rem;
+  border: 1px solid #334155;
   border-radius: 8px;
   background: #0f172a;
   color: #e2e8f0;
-  resize: vertical;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow: visible;
 }
 
 .wm-config-status {
@@ -205,18 +232,6 @@
 
 .wm-config-status.error {
   color: #b91c1c;
-}
-
-.wm-config-meta-row {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 0.65rem;
-}
-
-@media (max-width: 700px) {
-  .wm-config-meta-row {
-    grid-template-columns: 1fr;
-  }
 }
 
 .wm-toolbar-btn-send {

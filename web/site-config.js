@@ -12,7 +12,6 @@
     configured: false
   };
   let pushConfig = PC.parsePushConfig(null);
-  let dragSource = null;
 
   const $ = (id) => document.getElementById(id);
 
@@ -42,101 +41,79 @@
     return PC.FIELD_LABELS[field] || field;
   }
 
-  function renderPalette() {
-    const box = $("fieldPalette");
-    if (!box) return;
-    box.innerHTML = "";
+  function buildSourceOptions(selected = "") {
+    const opts = ['<option value="">— Chọn trường —</option>'];
     PC.SOURCE_FIELDS.forEach((field) => {
-      const chip = document.createElement("span");
-      chip.className = "wm-field-chip";
-      chip.draggable = true;
-      chip.dataset.field = field;
-      chip.innerHTML = `${chipLabel(field)} <code>${field}</code>`;
-      chip.addEventListener("dragstart", (e) => {
-        dragSource = field;
-        e.dataTransfer?.setData("text/plain", field);
-        e.dataTransfer.effectAllowed = "copy";
-      });
-      chip.addEventListener("dragend", () => {
-        dragSource = null;
-      });
-      box.appendChild(chip);
+      const sel = field === selected ? " selected" : "";
+      opts.push(`<option value="${field}"${sel}>${chipLabel(field)} (${field})</option>`);
     });
+    return opts.join("");
   }
 
   function createMappingRow(mapping = { source: "", target: "" }) {
-    const row = document.createElement("div");
-    row.className = "wm-mapping-row";
+    const tr = document.createElement("tr");
+    tr.className = "wm-mapping-row";
 
+    const tdSource = document.createElement("td");
+    const sourceSelect = document.createElement("select");
+    sourceSelect.className = "wm-mapping-select";
+    sourceSelect.innerHTML = buildSourceOptions(mapping.source || "");
+    sourceSelect.addEventListener("change", () => {
+      const targetInput = tr.querySelector(".wm-mapping-target");
+      if (targetInput && !targetInput.value.trim() && sourceSelect.value) {
+        targetInput.value = sourceSelect.value;
+      }
+      updateCurlPreview();
+    });
+    tdSource.appendChild(sourceSelect);
+
+    const tdArrow = document.createElement("td");
+    tdArrow.className = "col-arrow";
+    tdArrow.textContent = "→";
+
+    const tdTarget = document.createElement("td");
     const targetInput = document.createElement("input");
     targetInput.type = "text";
+    targetInput.className = "wm-mapping-target";
     targetInput.placeholder = "Tên trường API đích";
     targetInput.value = mapping.target || "";
     targetInput.addEventListener("input", updateCurlPreview);
+    tdTarget.appendChild(targetInput);
 
-    const arrow = document.createElement("div");
-    arrow.className = "wm-mapping-arrow";
-    arrow.textContent = "←";
-
-    const drop = document.createElement("div");
-    drop.className = "wm-mapping-drop";
-    drop.dataset.role = "drop";
-    if (mapping.source) {
-      drop.classList.add("has-value");
-      drop.textContent = `${chipLabel(mapping.source)} (${mapping.source})`;
-      drop.dataset.source = mapping.source;
-    } else {
-      drop.textContent = "Kéo trường Findmap vào đây";
-    }
-
-    drop.addEventListener("dragover", (e) => {
-      e.preventDefault();
-      drop.classList.add("drag-over");
-    });
-    drop.addEventListener("dragleave", () => drop.classList.remove("drag-over"));
-    drop.addEventListener("drop", (e) => {
-      e.preventDefault();
-      drop.classList.remove("drag-over");
-      const field = e.dataTransfer?.getData("text/plain") || dragSource;
-      if (!field) return;
-      drop.dataset.source = field;
-      drop.classList.add("has-value");
-      drop.textContent = `${chipLabel(field)} (${field})`;
-      if (!targetInput.value.trim()) targetInput.value = field;
-      updateCurlPreview();
-    });
-
+    const tdAction = document.createElement("td");
+    tdAction.className = "col-action";
     const removeBtn = document.createElement("button");
     removeBtn.type = "button";
     removeBtn.className = "wm-mapping-remove";
     removeBtn.title = "Xóa dòng";
     removeBtn.textContent = "×";
     removeBtn.addEventListener("click", () => {
-      row.remove();
+      tr.remove();
       updateCurlPreview();
     });
+    tdAction.appendChild(removeBtn);
 
-    row.appendChild(targetInput);
-    row.appendChild(arrow);
-    row.appendChild(drop);
-    row.appendChild(removeBtn);
-    return row;
+    tr.appendChild(tdSource);
+    tr.appendChild(tdArrow);
+    tr.appendChild(tdTarget);
+    tr.appendChild(tdAction);
+    return tr;
   }
 
   function renderMappings() {
     const list = $("mappingList");
     if (!list) return;
     list.innerHTML = "";
-    pushConfig.mappings.forEach((m) => list.appendChild(createMappingRow(m)));
-    if (!pushConfig.mappings.length) list.appendChild(createMappingRow());
+    const rows = pushConfig.mappings.length ? pushConfig.mappings : [{ source: "", target: "" }];
+    rows.forEach((m) => list.appendChild(createMappingRow(m)));
   }
 
   function collectPushConfig() {
     const rows = $("mappingList")?.querySelectorAll(".wm-mapping-row") || [];
     const mappings = [];
     rows.forEach((row) => {
-      const target = row.querySelector("input")?.value?.trim();
-      const source = row.querySelector("[data-role=drop]")?.dataset.source || "";
+      const target = row.querySelector(".wm-mapping-target")?.value?.trim();
+      const source = row.querySelector(".wm-mapping-select")?.value || "";
       if (target && source) mappings.push({ source, target });
     });
     return {
@@ -153,7 +130,7 @@
     const url = ($("winmapSite")?.value || siteState.url || "").trim();
     const tokenInput = ($("winmapToken")?.value || "").trim();
     const tokenHint = tokenInput || (siteState.hasToken ? "***" : "");
-    preview.value = PC.buildCurlPreview({
+    preview.textContent = PC.buildCurlPreview({
       url,
       token: tokenHint,
       pushConfig: collectPushConfig(),
@@ -198,7 +175,7 @@
       return;
     }
     if (!cfg.mappings.length) {
-      setStatus("Thêm ít nhất một dòng map trường dữ liệu.", "error");
+      setStatus("Chọn ít nhất một dòng map trường dữ liệu.", "error");
       return;
     }
     const btn = $("saveSiteBtn");
@@ -254,21 +231,6 @@
     }
   }
 
-  function bindMappingListDnD() {
-    const list = $("mappingList");
-    if (!list) return;
-    list.addEventListener("dragover", (e) => e.preventDefault());
-    list.addEventListener("drop", (e) => {
-      if (e.target.closest(".wm-mapping-drop")) return;
-      e.preventDefault();
-      const field = e.dataTransfer?.getData("text/plain") || dragSource;
-      if (!field) return;
-      const row = createMappingRow({ source: field, target: field });
-      list.appendChild(row);
-      updateCurlPreview();
-    });
-  }
-
   function bindAuth() {
     $("sidebarLogoutBtn")?.addEventListener("click", () => {
       apiReq("/api/logout", { method: "POST" }).catch(() => {});
@@ -278,9 +240,7 @@
   }
 
   function init() {
-    renderPalette();
     renderMappings();
-    bindMappingListDnD();
     bindAuth();
 
     $("saveSiteBtn")?.addEventListener("click", saveSite);

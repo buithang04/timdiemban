@@ -24,7 +24,7 @@
     }
   </script>
 </head>
-<body class="page-winmap wm-console">
+<body class="page-winmap wm-console page-site-config">
   <aside class="wm-sidebar">
     <div class="wm-sidebar-brand">
       <div class="wm-sidebar-logo wm-sidebar-logo-full">
@@ -60,22 +60,24 @@
     <header class="wm-header">
       <div class="wm-header-left">
         <h1 class="wm-header-title">Cấu hình site nhận dữ liệu</h1>
-        <p class="wm-header-sub">Lưu riêng theo tài khoản — kéo thả trường Findmap sang tên trường API đích</p>
+        <p class="wm-header-sub">Chọn trường Findmap → đặt tên trường API đích. Xem CURL mẫu bên dưới.</p>
       </div>
     </header>
 
     <main class="wm-site-config-main">
       <section class="wm-config-card">
         <h2>Site nhận dữ liệu</h2>
-        <p class="wm-config-hint">Nhập URL site (Winmap hoặc webhook) và Bearer token. Bấm Test để kiểm tra kết nối trước khi gửi từ trang kết quả.</p>
+        <p class="wm-config-hint">Nhập URL site (Winmap hoặc webhook) và Bearer token. Bấm Test trước khi gửi từ trang kết quả.</p>
 
-        <div class="wm-config-field">
-          <label for="winmapSite">URL site</label>
-          <input type="text" id="winmapSite" placeholder="vd: newcode.winmap.vn hoặc https://newcode.winmap.vn/" autocomplete="off" />
-        </div>
-        <div class="wm-config-field">
-          <label for="winmapToken">Bearer token</label>
-          <input type="password" id="winmapToken" placeholder="Để trống = giữ token cũ" autocomplete="off" />
+        <div class="wm-config-url-row">
+          <div class="wm-config-field wm-config-field-grow">
+            <label for="winmapSite">URL site</label>
+            <input type="text" id="winmapSite" placeholder="vd: newcode.winmap.vn" autocomplete="off" />
+          </div>
+          <div class="wm-config-field wm-config-field-grow">
+            <label for="winmapToken">Bearer token</label>
+            <input type="password" id="winmapToken" placeholder="Để trống = giữ token cũ" autocomplete="off" />
+          </div>
         </div>
 
         <div class="wm-config-meta-row">
@@ -103,30 +105,38 @@
         <span id="configStatus" class="wm-config-status"></span>
       </section>
 
-      <div class="wm-site-config-grid">
-        <section class="wm-config-card">
-          <h2>Map trường dữ liệu</h2>
-          <p class="wm-config-hint">Kéo trường từ Findmap (bên dưới) vào ô bên phải mỗi dòng. Cột trái là tên trường API đích.</p>
-
-          <div class="wm-config-field">
-            <label>Trường Findmap (kéo thả)</label>
-            <div id="fieldPalette" class="wm-field-palette"></div>
+      <section class="wm-config-card">
+        <div class="wm-config-card-head">
+          <div>
+            <h2>Map trường dữ liệu</h2>
+            <p class="wm-config-hint wm-config-hint-tight">Mỗi dòng: chọn trường từ Findmap, nhập tên trường API nhận dữ liệu.</p>
           </div>
-
-          <div id="mappingList" class="wm-mapping-list"></div>
-
-          <div class="wm-config-actions">
+          <div class="wm-config-actions wm-config-actions-head">
             <button type="button" id="addMappingBtn" class="wm-btn wm-btn-outline-blue wm-btn-sm">+ Thêm dòng</button>
             <button type="button" id="resetMappingBtn" class="wm-btn wm-btn-outline-blue wm-btn-sm">Khôi phục mặc định</button>
           </div>
-        </section>
+        </div>
 
-        <section class="wm-config-card">
-          <h2>Xem trước CURL</h2>
-          <p class="wm-config-hint">Mẫu lệnh curl tương ứng cấu hình hiện tại (1 điểm mẫu).</p>
-          <textarea id="curlPreview" class="wm-curl-preview" readonly spellcheck="false"></textarea>
-        </section>
-      </div>
+        <div class="wm-mapping-table-wrap">
+          <table class="wm-mapping-table">
+            <thead>
+              <tr>
+                <th class="col-source">Trường Findmap</th>
+                <th class="col-arrow" aria-hidden="true"></th>
+                <th class="col-target">Trường API đích</th>
+                <th class="col-action" aria-hidden="true"></th>
+              </tr>
+            </thead>
+            <tbody id="mappingList"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="wm-config-card">
+        <h2>Xem trước CURL</h2>
+        <p class="wm-config-hint">Mẫu lệnh curl với 1 điểm mẫu — cập nhật tự động khi bạn sửa map trường.</p>
+        <pre id="curlPreview" class="wm-curl-preview"></pre>
+      </section>
     </main>
   </div>
 

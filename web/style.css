@@ -1534,6 +1534,46 @@ body.wm-console .wm-app {
   pointer-events: none;
 }
 
+.wm-sidebar-send {
+  margin-top: auto;
+  padding: 12px 8px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.wm-sidebar-send-btn {
+  width: 100%;
+  padding: 12px 14px;
+  font-size: 14px;
+  font-weight: 700;
+  border-radius: 10px;
+}
+
+.wm-sidebar-send-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.wm-sidebar-send-hint {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.35;
+  color: #64748b;
+  text-align: center;
+}
+
+.wm-sidebar-send-hint a {
+  color: #0037b0;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.wm-sidebar-send-hint a:hover {
+  text-decoration: underline;
+}
+
 .wm-sidebar-foot {
   border-top: 1px solid #c4c5d7;
   padding-top: 24px;
