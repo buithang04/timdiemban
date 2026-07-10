@@ -2022,8 +2022,8 @@ function maybeRequestSyncIfBehind(mergedCount) {
     );
   };
 
-  // Lệch càng lớn → bù càng gấp (không chờ 6s)
-  const waitMs = gap >= 20 ? 800 : gap >= 5 ? 1200 : 2000;
+  // Lệch càng lớn → bù càng gấp
+  const waitMs = gap >= 20 ? 400 : gap >= 5 ? 700 : 1200;
   const elapsed = Date.now() - lastSyncRequestAt;
   if (elapsed >= waitMs) {
     fire();
@@ -2034,24 +2034,28 @@ function maybeRequestSyncIfBehind(mergedCount) {
 }
 
 function updateUnifiedCountUI(mergedCount) {
-  if (mergedCount != null && mergedCount >= 0) extensionMergedCount = mergedCount;
+  if (mergedCount != null && Number(mergedCount) >= 0) {
+    // Luôn lấy max — tránh progress/item cũ làm tụt số extension
+    extensionMergedCount = Math.max(extensionMergedCount, Number(mergedCount));
+  }
   const tableCount = currentData.length;
   const ext = extensionMergedCount;
-  const inSync = currentSearch?.status !== "running" || ext <= 0 || tableCount === ext;
+  const inSync = currentSearch?.status !== "running" || ext <= 0 || tableCount >= ext;
+  const behind = currentSearch?.status === "running" && ext > tableCount;
 
   if (els.infoTotal) els.infoTotal.textContent = String(tableCount);
   if (els.resultsBadge && currentSearch?.status === "running" && ext > 0) {
-    els.resultsBadge.textContent = inSync
-      ? `${tableCount} QUÁN (Maps = Web ✓)`
-      : `${tableCount} / ${ext} QUÁN — đang bù…`;
-    els.resultsBadge.classList.toggle("wm-results-badge-warn", !inSync);
+    els.resultsBadge.textContent = behind
+      ? `${tableCount} / ${ext} QUÁN — đang bù…`
+      : `${tableCount} QUÁN (Maps = Web ✓)`;
+    els.resultsBadge.classList.toggle("wm-results-badge-warn", behind);
   }
 
   if (currentSearch?.status === "running" && ext > 0) {
-    if (inSync) {
-      setConnStatus(`Đồng bộ OK — ${tableCount} quán (Maps = Web)`, "connected");
-    } else {
+    if (behind) {
       setConnStatus(`Đang bù: bảng ${tableCount} / extension ${ext} quán`, "error");
+    } else {
+      setConnStatus(`Đồng bộ OK — ${tableCount} quán (Maps = Web)`, "connected");
     }
   }
 }
@@ -2096,13 +2100,15 @@ function applyExtensionDataSync(type, payload = {}) {
   if (type === "progress") {
     if (currentSearch) currentSearch.status = "running";
     setInfoStatus('<span class="status-badge status-running">Đang tìm</span>');
+    if (payload.mergedCount != null) {
+      extensionMergedCount = Math.max(extensionMergedCount, Number(payload.mergedCount) || 0);
+    }
     if (payload.text) {
-      const ext = payload.mergedCount ?? extensionMergedCount;
+      const ext = extensionMergedCount;
       const n = currentData.length;
-      liveProgressText =
-        ext > 0 && currentSearch?.status === "running"
-          ? `${payload.text} · Tổng ${n}${ext !== n ? `/${ext}` : ""} quán (Maps=Web)`
-          : payload.text;
+      const syncLabel =
+        ext > 0 ? (n >= ext ? "Maps=Web ✓" : `bảng ${n}/${ext} — đang bù`) : "";
+      liveProgressText = syncLabel ? `${payload.text} · ${syncLabel}` : payload.text;
       setLiveProgress(liveProgressText, payload.percent || 0);
       if (currentData.length === 0 && els.loadingState) {
         const loadMsg = els.loadingState.querySelector("span");
@@ -2110,6 +2116,7 @@ function applyExtensionDataSync(type, payload = {}) {
       }
     }
     updateUnifiedCountUI(payload.mergedCount);
+    maybeRequestSyncIfBehind(extensionMergedCount);
     updateView();
     return;
   }
@@ -2125,14 +2132,17 @@ function applyExtensionDataSync(type, payload = {}) {
     scheduleChargeNewPhones();
     saveResultsToStorage(true);
     updateView();
-    updateUnifiedCountUI(payload.mergedCount);
     if (payload.mergedCount != null) {
+      extensionMergedCount = Math.max(extensionMergedCount, Number(payload.mergedCount) || 0);
       window.dispatchEvent(
-        new CustomEvent("timdiemban:merged-count", { detail: { count: payload.mergedCount } })
+        new CustomEvent("timdiemban:merged-count", { detail: { count: extensionMergedCount } })
       );
     }
-    maybeRequestSyncIfBehind(payload.mergedCount);
-    updateUnifiedCountUI(payload.mergedCount);
+    updateUnifiedCountUI(extensionMergedCount);
+    // Lệch ngay sau item → bù snapshot, không chờ debounce dài
+    if (extensionMergedCount > currentData.length) {
+      maybeRequestSyncIfBehind(extensionMergedCount);
+    }
     return;
   }
 

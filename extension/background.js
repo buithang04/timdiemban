@@ -67,7 +67,7 @@ function scheduleItemDeliveryCheck() {
     itemDeliveryCheckTimer = null;
     if (!scrapeState.running) return;
     reconcileWebCountWithExtension("item_check").catch(() => {});
-  }, 1200);
+  }, 800);
 }
 
 async function readWebTabStats(tabId) {
@@ -595,7 +595,10 @@ async function deliverDataToWebTab(tabId, type, payload) {
   return !!(result && result.delivered);
 }
 
-/** Gửi từng quán — bù snapshot khi gửi thất bại hoặc web chưa nhận đủ */
+let itemSyncBackoffUntil = 0;
+let itemsSinceLastForceSync = 0;
+
+/** Gửi từng quán — chỉ full-sync khi gửi thất bại thật; lệch số thì reconcile có nhịp */
 function sendItemToWeb(webUrl, result, searchParams) {
   const mergedCount = getFinalResultsList().length;
   return sendToWebPage(webUrl, "item", {
@@ -603,12 +606,20 @@ function sendItemToWeb(webUrl, result, searchParams) {
     searchParams: currentSearch || searchParams,
     mergedCount
   }).then(async (ok) => {
-    if (!ok) {
-      await pushSyncSnapshotToWeb("Bù sync sau item...", 0);
-      await reconcileWebCountWithExtension("after_item_fail");
-    } else {
-      scheduleItemDeliveryCheck();
+    itemsSinceLastForceSync += 1;
+    // Mỗi 8 quán hoặc khi gửi lỗi → ép snapshot đầy đủ (tránh lệch tích lũy)
+    const now = Date.now();
+    if (!ok || itemsSinceLastForceSync >= 8) {
+      if (now >= itemSyncBackoffUntil) {
+        itemSyncBackoffUntil = now + 1200;
+        itemsSinceLastForceSync = 0;
+        await pushSyncSnapshotToWeb(
+          ok ? `Đồng bộ định kỳ — ${mergedCount} quán` : "Bù sync sau item lỗi...",
+          0
+        );
+      }
     }
+    scheduleItemDeliveryCheck();
     return ok;
   });
 }
@@ -718,28 +729,30 @@ async function sendToWebPage(webUrl, type, payload, options = {}) {
           ? payload?.total ?? payload?.results?.length
           : null;
 
-  // Sync/complete bắt buộc verify số dòng trên bảng — không tin "đã gửi" suông
+  // Chỉ sync/complete mới bắt buộc khớp số dòng.
+  // Item: KHÔNG fail vì web còn thiếu tổng — nếu fail sẽ spam sync và lệch càng lớn.
   if (ok && tab.id && expectCount != null && (type === "sync" || type === "complete")) {
     let verified = false;
-    for (let v = 0; v < 3 && !verified; v++) {
+    for (let v = 0; v < 4 && !verified; v++) {
       const check = await verifyWebReceived(tab.id, expectCount, searchId);
       if (check.ok) {
         verified = true;
         break;
       }
-      // Nếu chỉ vào queue / bridge mà chưa ingest — thử inject lại
-      if (!deliveredToIngest) {
+      if (!deliveredToIngest || v > 0) {
         try {
           deliveredToIngest = await deliverDataToWebTab(tab.id, type, payload);
         } catch {}
       }
-      await sleep(120 * (v + 1));
+      await sleep(150 * (v + 1));
     }
     if (!verified) ok = false;
-  } else if (ok && tab.id && type === "item" && expectCount != null) {
+  } else if (ok && tab.id && type === "item") {
+    // Chỉ đánh dấu lệch để bù snapshot — không coi item đã ingest là thất bại
     const check = await verifyWebReceived(tab.id, null, searchId);
-    if (check.stats && (check.stats.count ?? 0) < expectCount) {
-      ok = false;
+    const webCount = check.stats?.count ?? 0;
+    if (expectCount != null && webCount < expectCount) {
+      scheduleItemDeliveryCheck();
     }
   }
 
@@ -2427,10 +2440,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const cellIdx = scrapeState.gridIndex || 0;
     const cells = scrapeState.totalCells || 1;
     const pct = calcProgressPercent(cellIdx, cells, 0.35);
-    updateMapsShield(
-      `Bước ${cellIdx + 1}/${cells} — đã gửi ${total} quán · ${merged.name || ""}`.slice(0, 120),
-      Math.max(pct, 2)
-    );
+    // Throttle text overlay: tối đa ~2 lần/giây
+    if (!scrapeState._lastShieldItemAt || Date.now() - scrapeState._lastShieldItemAt > 450) {
+      scrapeState._lastShieldItemAt = Date.now();
+      updateMapsShield(
+        `Bước ${cellIdx + 1}/${cells} — đã gửi ${total} quán · ${merged.name || ""}`.slice(0, 120),
+        Math.max(pct, 2)
+      );
+    }
 
     // Không fire-and-forget — chờ gửi xong để bù sync khi fail
     sendItemToWeb(params.webUrl, merged, params).catch(() => {});

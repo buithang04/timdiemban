@@ -3454,8 +3454,11 @@
       return null;
     }
 
-    const pct = calcProgressPercent(cellIndex, totalCells, Math.min(uniqueIndex / 40, 0.9));
-    const posLabel = totalInCell > 0 ? `#${uniqueIndex}/${totalInCell} vùng này` : `#${uniqueIndex}`;
+    const pct = calcProgressPercent(cellIndex, totalCells, Math.min(uniqueIndex / Math.max(totalInCell, 1), 0.9));
+    const posLabel =
+      totalInCell > 0
+        ? `ô này ${uniqueIndex}/${totalInCell}`
+        : `ô này #${uniqueIndex}`;
     sendProgress(
       pct,
       `Bước ${cellIndex + 1}/${totalCells} — ${cellLabel || "Tâm"} | ${posLabel}: ${data.name}${data.phone ? " ✓SĐT" : ""}`
