@@ -87,6 +87,35 @@ body.page-site-config {
   box-sizing: border-box;
 }
 
+.wm-url-mode-hint,
+.wm-resolved-url-hint {
+  margin: 0.35rem 0 0;
+  font-size: 0.75rem;
+  color: #64748b;
+  line-height: 1.4;
+}
+
+.wm-url-mode-hint code,
+.wm-resolved-url-hint code {
+  font-size: 0.72rem;
+  background: #f1f5f9;
+  padding: 0.1rem 0.3rem;
+  border-radius: 4px;
+}
+
+.wm-resolved-url-hint {
+  color: #1d4ed8;
+  font-weight: 500;
+}
+
+.wm-resolved-url-hint.hidden {
+  display: none;
+}
+
+.wm-config-field-grow {
+  flex: 1;
+}
+
 .wm-config-url-row {
   display: grid;
   grid-template-columns: 1fr 1fr;

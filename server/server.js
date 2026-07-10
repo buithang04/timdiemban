@@ -899,36 +899,40 @@ async function getWinmapSite(userId) {
   return { url, token, label, pushConfig };
 }
 
-function siteHost(url) {
+function siteHost(url, urlMode = "winmap") {
   try {
-    return new URL(resolveImportUrl(url)).host;
+    return new URL(resolveImportUrl(url, urlMode)).host;
   } catch {
     return "";
   }
 }
 
-/** Cấu hình site nhận dữ liệu — dùng cho nút "Lưu site" và "Gửi về site". Riêng theo từng tài khoản. */
+/** Cấu hình site nhận dữ liệu — dùng cho nút "Gửi về site". Riêng theo từng tài khoản. */
 app.get("/api/points/site", requireAuth, async (req, res) => {
   const site = await getWinmapSite(req.user.id);
+  const urlMode = site.pushConfig?.urlMode || "winmap";
   res.json({
     url: site.url,
     label: site.label,
-    host: siteHost(site.url),
-    importUrl: site.url ? resolveImportUrl(site.url) : "",
+    host: siteHost(site.url, urlMode),
+    importUrl: site.url ? resolveImportUrl(site.url, urlMode) : "",
     hasToken: Boolean(site.token),
     configured: Boolean(site.url && site.token),
     pushConfig: site.pushConfig
   });
 });
 
-/** Lưu site trả dữ liệu (domain + Bearer token của winmap) — riêng cho tài khoản đang đăng nhập. */
+/** Lưu site nhận dữ liệu — Winmap hoặc webhook/API tùy chỉnh. */
 app.post("/api/points/site", requireAuth, async (req, res) => {
   try {
     const { url, token, label, pushConfig } = req.body || {};
     const cleanUrl = String(url || "").trim();
-    if (!cleanUrl) return res.status(400).json({ error: "Thiếu địa chỉ site (vd: demo.winmap.vn)" });
+    if (!cleanUrl) return res.status(400).json({ error: "Thiếu địa chỉ site (vd: demo.winmap.vn hoặc https://api.example.com/hook)" });
 
-    const importUrl = resolveImportUrl(cleanUrl);
+    const { parsePushConfig } = require("./push-config");
+    const cfg = pushConfig && typeof pushConfig === "object" ? parsePushConfig(pushConfig) : null;
+    const urlMode = cfg?.urlMode || "winmap";
+    const importUrl = resolveImportUrl(cleanUrl, urlMode);
     try {
       // eslint-disable-next-line no-new
       new URL(importUrl);
@@ -942,19 +946,19 @@ app.post("/api/points/site", requireAuth, async (req, res) => {
     if (typeof token === "string" && token.trim() !== "") {
       await setSetting(`winmap_site_token:${uid}`, token.trim());
     }
-    if (pushConfig && typeof pushConfig === "object") {
-      const { parsePushConfig } = require("./push-config");
-      await setSetting(`winmap_site_push_config:${uid}`, JSON.stringify(parsePushConfig(pushConfig)));
+    if (cfg) {
+      await setSetting(`winmap_site_push_config:${uid}`, JSON.stringify(cfg));
     }
 
     const site = await getWinmapSite(uid);
+    const savedMode = site.pushConfig?.urlMode || "winmap";
     res.json({
       ok: true,
-      message: `Đã lưu site ${siteHost(cleanUrl)}`,
+      message: `Đã lưu site ${siteHost(cleanUrl, savedMode)}`,
       url: site.url,
       label: site.label,
-      host: siteHost(site.url),
-      importUrl,
+      host: siteHost(site.url, savedMode),
+      importUrl: resolveImportUrl(site.url, savedMode),
       hasToken: Boolean(site.token),
       configured: Boolean(site.url && site.token),
       pushConfig: site.pushConfig
@@ -964,22 +968,31 @@ app.post("/api/points/site", requireAuth, async (req, res) => {
   }
 });
 
-/** Chẩn đoán kết nối sang Winmap — không gửi dữ liệu thật. */
+/** Chẩn đoán kết nối sang site nhận — không gửi dữ liệu thật. */
 app.get("/api/points/ping", requireAuth, async (req, res) => {
   const saved = await getWinmapSite(req.user.id);
   const rawUrl = (req.query.url && String(req.query.url).trim()) || saved.url;
   const token  = (req.query.token && String(req.query.token).trim()) || saved.token;
+  const urlMode = req.query.urlMode === "custom" ? "custom" : (saved.pushConfig?.urlMode || "winmap");
 
   if (!rawUrl) {
-    return res.json({ ok: false, configured: false, message: "Chưa lưu site. Nhập địa chỉ và token rồi bấm 'Lưu site'." });
+    return res.json({ ok: false, configured: false, message: "Chưa lưu site. Nhập địa chỉ và token rồi bấm Lưu." });
   }
 
-  const { clean: importUrl, fallback: fallbackUrl } = resolveImportUrls(rawUrl);
+  const { clean: importUrl, fallback: fallbackUrl } = resolveImportUrls(rawUrl, { urlMode });
 
-  const report = { configured: Boolean(rawUrl && token), importUrl, fallbackUrl, steps: [] };
+  const report = { configured: Boolean(rawUrl && token), importUrl, fallbackUrl, urlMode, steps: [] };
 
-  // Thử GET tới base URL trước để xem server có sống không
-  const baseUrl = importUrl.replace(/\/api\/points\/import$/i, "");
+  let baseUrl;
+  if (urlMode === "custom") {
+    try {
+      baseUrl = new URL(importUrl).origin;
+    } catch {
+      baseUrl = importUrl;
+    }
+  } else {
+    baseUrl = importUrl.replace(/\/api\/points\/import$/i, "");
+  }
   try {
     const r = await fetch(baseUrl, { method: "GET", signal: AbortSignal.timeout(5000) });
     report.steps.push({ url: baseUrl, status: r.status, ok: r.status < 500 });
@@ -1008,7 +1021,7 @@ app.get("/api/points/ping", requireAuth, async (req, res) => {
 
       if (r.status === 403) {
         return res.json({ ok: false, ...report, usedUrl: tryUrl,
-          message: `403 Forbidden — token không khớp. Kiểm tra token trong ⚙ Cấu hình API TimDiemBan bên Winmap. URL: ${tryUrl}` });
+          message: `403 Forbidden — token không khớp hoặc không có quyền. URL: ${tryUrl}` });
       }
       if (r.status === 404 && tryUrl === importUrl) {
         report.steps.push({ note: "Clean URL 404, thử fallback ?q= ..." });
@@ -1045,7 +1058,7 @@ app.post("/api/points/push", requireAuth, async (req, res) => {
     if (result.failed > 0 && result.pushed === 0) {
       return res.status(502).json({ error: result.message || "Gửi thất bại", ...result });
     }
-    res.json({ ok: true, host: siteHost(target.url), ...result });
+    res.json({ ok: true, host: siteHost(target.url, saved.pushConfig?.urlMode), ...result });
   } catch (err) {
     res.status(500).json({ error: err.message || "Lỗi gửi điểm" });
   }
@@ -1053,11 +1066,12 @@ app.post("/api/points/push", requireAuth, async (req, res) => {
 
 app.get("/api/points/push-config", requireAuth, async (req, res) => {
   const site = await getWinmapSite(req.user.id);
+  const urlMode = site.pushConfig?.urlMode || "winmap";
   res.json({
     configured: Boolean(site.url && site.token),
     url: site.url,
-    host: siteHost(site.url),
-    importUrl: site.url ? resolveImportUrl(site.url) : "",
+    host: siteHost(site.url, urlMode),
+    importUrl: site.url ? resolveImportUrl(site.url, urlMode) : "",
     hasToken: Boolean(site.token),
     pushConfig: site.pushConfig
   });

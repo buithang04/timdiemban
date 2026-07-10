@@ -108,6 +108,48 @@
     rows.forEach((m) => list.appendChild(createMappingRow(m)));
   }
 
+  function getUrlMode() {
+    return $("siteUrlMode")?.value === "custom" ? "custom" : "winmap";
+  }
+
+  function updateUrlModeUI() {
+    const mode = getUrlMode();
+    const input = $("winmapSite");
+    const hint = $("urlModeHint");
+    if (input) {
+      input.placeholder =
+        mode === "custom"
+          ? "vd: https://api.example.com/v1/leads/import"
+          : "vd: newcode.winmap.vn";
+    }
+    if (hint) {
+      hint.innerHTML =
+        mode === "custom"
+          ? "API tùy chỉnh: nhập <strong>URL endpoint đầy đủ</strong> (path + query nếu có). Hệ thống gọi đúng URL này, không thêm <code>/api/points/import</code>."
+          : "Winmap: nhập domain (vd <code>demo.winmap.vn</code>) — hệ thống tự gọi <code>…/api/points/import</code>.";
+    }
+    updateResolvedUrlHint();
+    updateCurlPreview();
+  }
+
+  function updateResolvedUrlHint() {
+    const el = $("resolvedUrlHint");
+    if (!el) return;
+    const raw = ($("winmapSite")?.value || siteState.url || "").trim();
+    if (!raw) {
+      el.classList.add("hidden");
+      el.textContent = "";
+      return;
+    }
+    const resolved = PC.resolveImportUrl(raw, getUrlMode());
+    if (getUrlMode() === "custom" || resolved === raw || resolved.replace(/\/+$/, "") === raw.replace(/\/+$/, "")) {
+      el.innerHTML = `URL gửi thực tế: <code>${resolved}</code>`;
+    } else {
+      el.innerHTML = `URL gửi thực tế: <code>${resolved}</code> (từ <code>${raw}</code>)`;
+    }
+    el.classList.remove("hidden");
+  }
+
   function collectPushConfig() {
     const rows = $("mappingList")?.querySelectorAll(".wm-mapping-row") || [];
     const mappings = [];
@@ -120,6 +162,7 @@
       method: $("pushMethod")?.value === "PUT" ? "PUT" : "POST",
       sourceTag: ($("sourceTag")?.value || "timdiemban").trim() || "timdiemban",
       pointsKey: ($("pointsKey")?.value || "points").trim() || "points",
+      urlMode: getUrlMode(),
       mappings
     };
   }
@@ -136,6 +179,7 @@
       pushConfig: collectPushConfig(),
       samplePoint: PC.SAMPLE_POINT
     });
+    updateResolvedUrlHint();
   }
 
   async function loadSite() {
@@ -152,6 +196,8 @@
       if ($("pushMethod")) $("pushMethod").value = pushConfig.method || "POST";
       if ($("sourceTag")) $("sourceTag").value = pushConfig.sourceTag || "timdiemban";
       if ($("pointsKey")) $("pointsKey").value = pushConfig.pointsKey || "points";
+      if ($("siteUrlMode")) $("siteUrlMode").value = pushConfig.urlMode === "custom" ? "custom" : "winmap";
+      updateUrlModeUI();
       renderMappings();
       if (siteState.configured) {
         setStatus(`Site: ${siteState.host} (đã có token)`, "connected");
@@ -217,7 +263,7 @@
     if (btn) btn.disabled = true;
     setStatus("Đang test kết nối…", "");
     try {
-      const params = new URLSearchParams({ url });
+      const params = new URLSearchParams({ url, urlMode: getUrlMode() });
       const data = await apiReq(`/api/points/ping?${params}`);
       if (data.ok) {
         setStatus(`✓ Kết nối OK — ${data.usedUrl || data.importUrl}`, "connected");
@@ -242,6 +288,7 @@
   function init() {
     renderMappings();
     bindAuth();
+    updateUrlModeUI();
 
     $("saveSiteBtn")?.addEventListener("click", saveSite);
     $("pingSiteBtn")?.addEventListener("click", pingSite);
@@ -254,6 +301,8 @@
       renderMappings();
       updateCurlPreview();
     });
+
+    $("siteUrlMode")?.addEventListener("change", updateUrlModeUI);
 
     ["winmapSite", "winmapToken", "sourceTag", "pointsKey", "pushMethod"].forEach((id) => {
       $(id)?.addEventListener("input", updateCurlPreview);

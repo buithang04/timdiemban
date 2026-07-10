@@ -6,31 +6,33 @@
  *   $env:WINMAP_PUSH_TOKEN = "optional-bearer-token"
  */
 /**
- * Chuẩn hóa URL nhận dữ liệu của Winmap.
- * Nhận vào domain hoặc URL bất kỳ (vd "demo.winmap.vn", "https://demo.winmap.vn",
- * "https://demo.winmap.vn/") → trả về "https://demo.winmap.vn/api/points/import".
- * Nếu đã trỏ sẵn tới /api/points/import thì giữ nguyên.
+ * Chuẩn hóa URL endpoint nhận dữ liệu.
+ * @param {string} input URL hoặc domain người dùng nhập
+ * @param {"winmap"|"custom"} urlMode winmap = tự thêm /api/points/import; custom = dùng đúng URL đã nhập
  */
-function resolveImportUrl(input) {
+function resolveImportUrl(input, urlMode = "winmap") {
   let raw = String(input || "").trim();
   if (!raw) return "";
   if (!/^https?:\/\//i.test(raw)) {
-    // localhost và IP nội bộ → http; domain thật → https
-    const isLocal = /^(localhost|127\.0\.0\.1|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)(:\d+)?$/i.test(raw.split("/")[0]);
+    const host = raw.split("/")[0].split("?")[0];
+    const isLocal = /^(localhost|127\.0\.0\.1|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)(:\d+)?$/i.test(host);
     raw = (isLocal ? "http://" : "https://") + raw;
   }
-  raw = raw.replace(/\/+$/, "");
-  if (/\/api\/points\/import$/i.test(raw)) return raw;
-  return raw + "/api/points/import";
+  if (urlMode === "custom") return raw;
+
+  const trimmed = raw.replace(/\/+$/, "");
+  if (/\/api\/points\/import$/i.test(trimmed)) return trimmed;
+  return trimmed + "/api/points/import";
 }
 
 /**
- * Trả về URL gốc (clean URL) và URL fallback (?q=) cho Drupal không bật Clean URLs.
+ * Trả về URL gốc và URL fallback (?q=) — chỉ áp dụng cho Winmap/Drupal.
  */
-function resolveImportUrls(input) {
-  const clean = resolveImportUrl(input);
+function resolveImportUrls(input, options = {}) {
+  const urlMode = options.urlMode === "custom" ? "custom" : "winmap";
+  const clean = resolveImportUrl(input, urlMode);
   if (!clean) return { clean: "", fallback: "" };
-  // Xây dựng ?q= fallback: base + ?q=api/points/import
+  if (urlMode === "custom") return { clean, fallback: "" };
   const base = clean.replace(/\/api\/points\/import$/i, "");
   const fallback = base + "/?q=api/points/import";
   return { clean, fallback };
@@ -59,7 +61,8 @@ async function pushPointsExternal(points, options = {}) {
   const rawUrl = options.url || process.env.WINMAP_PUSH_URL || "";
   const token = String(options.token || process.env.WINMAP_PUSH_TOKEN || "").trim();
   const pushConfig = options.pushConfig ? parsePushConfig(options.pushConfig) : null;
-  const { clean: url, fallback: urlFallback } = resolveImportUrls(rawUrl);
+  const urlMode = pushConfig?.urlMode || "winmap";
+  const { clean: url, fallback: urlFallback } = resolveImportUrls(rawUrl, { urlMode });
 
   const normalized = (points || []).map(normalizePoint).filter((p) => p.name);
 
@@ -105,7 +108,7 @@ async function pushPointsExternal(points, options = {}) {
       if (status === 403) {
         return {
           pushed: 0, failed: normalized.length, mode: "error", results: [],
-          message: `403 Forbidden — token không khớp hoặc chưa đặt token bên Winmap. URL: ${tryUrl}`
+          message: `403 Forbidden — token không khớp hoặc không có quyền. URL: ${tryUrl}`
         };
       }
       if (!ok) {

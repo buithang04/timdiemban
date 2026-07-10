@@ -21,6 +21,7 @@ const DEFAULT_PUSH_CONFIG = {
   method: "POST",
   sourceTag: "timdiemban",
   pointsKey: "points",
+  urlMode: "winmap",
   mappings: [
     { source: "name", target: "name" },
     { source: "address", target: "address" },
@@ -61,6 +62,7 @@ function parsePushConfig(raw) {
     method: data.method === "PUT" ? "PUT" : "POST",
     sourceTag: String(data.sourceTag || DEFAULT_PUSH_CONFIG.sourceTag),
     pointsKey: String(data.pointsKey || DEFAULT_PUSH_CONFIG.pointsKey).trim() || "points",
+    urlMode: data.urlMode === "custom" ? "custom" : "winmap",
     mappings: mappings.length ? mappings : DEFAULT_PUSH_CONFIG.mappings.map((m) => ({ ...m }))
   };
 }

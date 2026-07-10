@@ -67,12 +67,22 @@
     <main class="wm-site-config-main">
       <section class="wm-config-card">
         <h2>Site nhận dữ liệu</h2>
-        <p class="wm-config-hint">Nhập URL site (Winmap hoặc webhook) và Bearer token. Bấm Test trước khi gửi từ trang kết quả.</p>
+        <p class="wm-config-hint">Chọn loại site, nhập URL đầy đủ nếu không phải Winmap. Map trường JSON theo API đích.</p>
+
+        <div class="wm-config-field">
+          <label for="siteUrlMode">Loại site</label>
+          <select id="siteUrlMode">
+            <option value="winmap">Winmap — chỉ cần domain, tự thêm <code>/api/points/import</code></option>
+            <option value="custom">Webhook / API khác — dùng đúng URL endpoint đã nhập</option>
+          </select>
+        </div>
 
         <div class="wm-config-url-row">
           <div class="wm-config-field wm-config-field-grow">
             <label for="winmapSite">URL site</label>
             <input type="text" id="winmapSite" placeholder="vd: newcode.winmap.vn" autocomplete="off" />
+            <p id="urlModeHint" class="wm-url-mode-hint">Winmap: nhập domain (vd <code>demo.winmap.vn</code>) — hệ thống gọi <code>…/api/points/import</code>.</p>
+            <p id="resolvedUrlHint" class="wm-resolved-url-hint hidden"></p>
           </div>
           <div class="wm-config-field wm-config-field-grow">
             <label for="winmapToken">Bearer token</label>

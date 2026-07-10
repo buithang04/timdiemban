@@ -51,6 +51,7 @@
     method: "POST",
     sourceTag: "timdiemban",
     pointsKey: "points",
+    urlMode: "winmap",
     mappings: SOURCE_FIELDS.map((f) => ({ source: f, target: f }))
   };
 
@@ -83,6 +84,7 @@
       method: data.method === "PUT" ? "PUT" : "POST",
       sourceTag: String(data.sourceTag || DEFAULT_PUSH_CONFIG.sourceTag),
       pointsKey: String(data.pointsKey || DEFAULT_PUSH_CONFIG.pointsKey).trim() || "points",
+      urlMode: data.urlMode === "custom" ? "custom" : "winmap",
       mappings: mappings.length ? mappings : DEFAULT_PUSH_CONFIG.mappings.map((m) => ({ ...m }))
     };
   }
@@ -105,23 +107,24 @@
     return body;
   }
 
-  function resolveImportUrl(input) {
+  function resolveImportUrl(input, urlMode = "winmap") {
     let raw = String(input || "").trim();
     if (!raw) return "";
     if (!/^https?:\/\//i.test(raw)) {
-      const host = raw.split("/")[0];
+      const host = raw.split("/")[0].split("?")[0];
       const isLocal = /^(localhost|127\.0\.0\.1|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)(:\d+)?$/i.test(host);
       raw = (isLocal ? "http://" : "https://") + raw;
     }
-    raw = raw.replace(/\/+$/, "");
-    if (/\/api\/points\/import$/i.test(raw)) return raw;
-    return raw + "/api/points/import";
+    if (urlMode === "custom") return raw;
+    const trimmed = raw.replace(/\/+$/, "");
+    if (/\/api\/points\/import$/i.test(trimmed)) return trimmed;
+    return trimmed + "/api/points/import";
   }
 
   function buildCurlPreview({ url, token, pushConfig, samplePoint }) {
-    const importUrl = resolveImportUrl(url);
-    if (!importUrl) return "# Nhập URL site để xem CURL mẫu";
     const cfg = parsePushConfig(pushConfig);
+    const importUrl = resolveImportUrl(url, cfg.urlMode);
+    if (!importUrl) return "# Nhập URL site để xem CURL mẫu";
     const body = buildPushBody([samplePoint || SAMPLE_POINT], cfg);
     const lines = [
       `curl -X ${cfg.method} '${importUrl}' \\`,
