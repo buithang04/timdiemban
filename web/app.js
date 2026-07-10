@@ -118,12 +118,7 @@ const els = {
   clearBtn: document.getElementById("clearBtn"),
   resetBtn: document.getElementById("resetBtn"),
   rescanBtn: document.getElementById("rescanBtn"),
-  winmapSite: document.getElementById("winmapSite"),
-  winmapToken: document.getElementById("winmapToken"),
-  saveSiteBtn: document.getElementById("saveSiteBtn"),
-  pingSiteBtn: document.getElementById("pingSiteBtn"),
   sendSiteBtn: document.getElementById("sendSiteBtn"),
-  winmapSiteStatus: document.getElementById("winmapSiteStatus"),
   searchFilter: document.getElementById("searchFilter"),
   filterCount: document.getElementById("filterCount"),
   resultsBadge: document.getElementById("resultsBadge"),
@@ -1702,7 +1697,7 @@ function updateSendSiteButton() {
     : "Gửi về site";
   els.sendSiteBtn.disabled = !sendCount || !winmapSite.configured;
   els.sendSiteBtn.title = !winmapSite.configured
-    ? "Chưa lưu site + token nhận dữ liệu"
+    ? "Chưa cấu hình site — vào Cấu hình site để lưu URL + token"
     : !sendCount
       ? "Chưa có dữ liệu để gửi"
       : `Gửi ${sendCount} điểm về ${host}`;
@@ -1820,15 +1815,11 @@ function rescanMissingRows() {
 }
 
 function setWinmapStatus(text, type = "") {
-  if (!els.winmapSiteStatus) return;
-  els.winmapSiteStatus.textContent = text || "";
-  els.winmapSiteStatus.className = `wm-winmap-status ${type}`;
+  if (text) setConnStatus(text, type === "error" ? "error" : type === "connected" ? "connected" : "");
 }
 
 function clearWinmapSiteForm() {
   winmapSite = { url: "", host: "", label: "", hasToken: false, configured: false };
-  if (els.winmapSite) els.winmapSite.value = "";
-  if (els.winmapToken) els.winmapToken.value = "";
   setWinmapStatus("", "");
   updateSendSiteButton();
 }
@@ -1847,67 +1838,19 @@ async function loadWinmapSite() {
       hasToken: Boolean(data.hasToken),
       configured: Boolean(data.configured)
     };
-    if (els.winmapSite && document.activeElement !== els.winmapSite) {
-      els.winmapSite.value = winmapSite.url;
-    }
-    if (winmapSite.url && !winmapSite.hasToken) {
-      setWinmapStatus("Đã lưu site nhưng thiếu token — nhập token rồi Lưu site.", "error");
-    } else if (winmapSite.configured) {
-      setWinmapStatus(`Site: ${winmapSite.host} (đã có token)`, "connected");
-    } else {
-      setWinmapStatus("Chưa cấu hình site nhận dữ liệu.", "");
-    }
   } catch {
     /* im lặng — chưa đăng nhập hoặc server cũ */
   }
   updateSendSiteButton();
 }
 
-async function saveWinmapSite() {
-  if (!getAuthToken()) {
-    showAuthModal();
-    return;
-  }
-  const url = (els.winmapSite?.value || "").trim();
-  const token = (els.winmapToken?.value || "").trim();
-  if (!url) {
-    setWinmapStatus("Nhập địa chỉ site (vd: demo.winmap.vn).", "error");
-    return;
-  }
-  if (els.saveSiteBtn) els.saveSiteBtn.disabled = true;
-  try {
-    const data = await apiRequest("/api/points/site", {
-      method: "POST",
-      body: JSON.stringify({ url, token })
-    });
-    winmapSite = {
-      url: data.url || "",
-      host: data.host || "",
-      label: data.label || "",
-      hasToken: Boolean(data.hasToken),
-      configured: Boolean(data.configured)
-    };
-    if (els.winmapToken) els.winmapToken.value = "";
-    setWinmapStatus(
-      winmapSite.hasToken
-        ? `${data.message} — sẵn sàng gửi.`
-        : `${data.message} — còn thiếu token, hãy nhập token.`,
-      winmapSite.hasToken ? "connected" : "error"
-    );
-    setConnStatus(data.message || "Đã lưu site", "connected");
-  } catch (err) {
-    setWinmapStatus(err.message, "error");
-  } finally {
-    if (els.saveSiteBtn) els.saveSiteBtn.disabled = false;
-    updateSendSiteButton();
-  }
-}
-
 async function sendAllToWinmapSite() {
   const snapshot = getRowsToSend();
   if (!snapshot.length) return;
   if (!winmapSite.configured) {
-    setWinmapStatus("Chưa lưu site + token. Nhập rồi bấm 'Lưu site'.", "error");
+    const msg = "Chưa cấu hình site + token. Vào trang Cấu hình site để thiết lập.";
+    setWinmapStatus(msg, "error");
+    showErrorBanner("Chưa cấu hình site nhận dữ liệu", msg);
     return;
   }
   const total = snapshot.length;
@@ -1945,32 +1888,6 @@ async function sendAllToWinmapSite() {
     showErrorBanner(`Gửi về ${host} thất bại`, err.message);
   } finally {
     updateSendSiteButton();
-  }
-}
-
-async function pingWinmapSite() {
-  if (!getAuthToken()) { showAuthModal(); return; }
-  const url = (els.winmapSite?.value || "").trim() || winmapSite.url;
-  if (!url) {
-    setWinmapStatus("Nhập địa chỉ site trước khi test.", "error");
-    return;
-  }
-  if (els.pingSiteBtn) els.pingSiteBtn.disabled = true;
-  setWinmapStatus("Đang test kết nối…", "");
-  try {
-    const params = new URLSearchParams({ url });
-    const data = await apiRequest(`/api/points/ping?${params}`);
-    if (data.ok) {
-      setWinmapStatus(`✓ Kết nối OK — ${data.usedUrl || data.importUrl}`, "connected");
-    } else {
-      setWinmapStatus(`✗ ${data.message}`, "error");
-      showErrorBanner("Test kết nối thất bại", data.message + (data.importUrl ? `\nURL thử: ${data.importUrl}` : ""));
-    }
-  } catch (err) {
-    setWinmapStatus(`✗ ${err.message}`, "error");
-    showErrorBanner("Test kết nối lỗi", err.message);
-  } finally {
-    if (els.pingSiteBtn) els.pingSiteBtn.disabled = false;
   }
 }
 
@@ -2554,8 +2471,6 @@ els.resetBtn?.addEventListener("click", () => {
   setConnStatus("Đã làm mới — sẵn sàng tìm mới", "");
 });
 els.rescanBtn?.addEventListener("click", rescanMissingRows);
-els.saveSiteBtn?.addEventListener("click", saveWinmapSite);
-els.pingSiteBtn?.addEventListener("click", pingWinmapSite);
 els.sendSiteBtn?.addEventListener("click", sendAllToWinmapSite);
 
 els.resultsBody?.addEventListener("click", (e) => {

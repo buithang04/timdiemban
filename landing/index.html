@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Findmap — Tìm điểm bán thông minh</title>
+  <meta name="description" content="Findmap giúp doanh nghiệp tìm điểm bán trên Google Maps, gom kết quả về một chỗ, quản lý điểm sử dụng và xuất danh sách dễ dàng." />
+  <link rel="icon" href="./assets/favicon.svg" type="image/svg+xml" />
+  <link rel="icon" href="./assets/favicon-48.png" type="image/png" sizes="48x48" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800&family=Manrope:wght@700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="container topbar-inner">
+      <a class="brand" href="#top" aria-label="Findmap">
+        <img src="./assets/logo.svg" alt="Findmap" />
+      </a>
+      <button class="menu-toggle" id="menuToggle" aria-label="Mở menu">☰</button>
+      <nav class="nav" id="mainNav">
+        <a href="#he-thong">Hệ thống</a>
+        <a href="#muc-tieu">Mục tiêu</a>
+        <a href="#ket-qua">Kết quả</a>
+        <a href="#chinh-sach">Chính sách</a>
+        <a href="#quy-dinh">Quy định</a>
+        <a class="btn btn-primary" href="https://findmap.app.chatplus.io.vn/" target="_blank" rel="noopener">Đăng nhập</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="top">
+    <section class="hero">
+      <div class="container hero-grid">
+        <div>
+          <p class="hero-brand">Findmap</p>
+          <h1>Tìm điểm bán trên bản đồ — dễ bắt đầu ngay từ lần đầu</h1>
+          <p>
+            Findmap giúp bạn tìm cửa hàng, quán, điểm bán quanh một khu vực trên Google Maps,
+            gom danh sách về một bảng, trừ điểm sử dụng rõ ràng và xuất file để đội bán hàng dùng tiếp.
+          </p>
+          <div class="hero-actions">
+            <a class="btn btn-primary" href="https://findmap.app.chatplus.io.vn/" target="_blank" rel="noopener">Bắt đầu dùng Findmap</a>
+            <a class="btn btn-ghost" href="#he-thong">Xem cách hoạt động</a>
+          </div>
+        </div>
+        <aside class="hero-panel" aria-label="Luồng sử dụng nhanh">
+          <h3>4 bước để bắt đầu</h3>
+          <ol class="flow-list">
+            <li>
+              <span class="step-num">1</span>
+              <div>
+                <strong>Đăng nhập & đồng ý điều khoản</strong>
+                <span>Tài khoản được cấp điểm sử dụng theo gói của bạn.</span>
+              </div>
+            </li>
+            <li>
+              <span class="step-num">2</span>
+              <div>
+                <strong>Cài tiện ích Findmap trên Chrome</strong>
+                <span>Cài xong, mở lại tiện ích và vào trang Findmap để làm việc.</span>
+              </div>
+            </li>
+            <li>
+              <span class="step-num">3</span>
+              <div>
+                <strong>Chọn khu vực tìm kiếm</strong>
+                <span>Chọn vị trí tâm, bán kính và từ khóa cần tìm (ví dụ: quán cà phê).</span>
+              </div>
+            </li>
+            <li>
+              <span class="step-num">4</span>
+              <div>
+                <strong>Giữ Google Maps mở khi đang tìm</strong>
+                <span>Kết quả tự hiện trên bảng — có thể xuất Excel khi xong.</span>
+              </div>
+            </li>
+          </ol>
+        </aside>
+      </div>
+    </section>
+
+    <section class="section section-alt" id="he-thong">
+      <div class="container">
+        <div class="section-head reveal">
+          <span class="eyebrow">Hệ thống</span>
+          <h2>Findmap gồm những gì?</h2>
+          <p>
+            Ba phần làm việc cùng nhau: trang web để điều khiển tìm kiếm, tiện ích Chrome để lấy dữ liệu
+            trên Google Maps, và tài khoản để quản lý điểm sử dụng.
+          </p>
+        </div>
+        <div class="cards">
+          <article class="card reveal">
+            <div class="card-icon">🌐</div>
+            <h3>Trang Findmap</h3>
+            <p>Nhập từ khóa, chọn bán kính, theo dõi tiến độ và xem / lọc / xuất danh sách điểm bán.</p>
+          </article>
+          <article class="card reveal">
+            <div class="card-icon green">🧩</div>
+            <h3>Tiện ích Chrome</h3>
+            <p>Làm việc trên Google Maps: lấy tên, số điện thoại, địa chỉ và vị trí, rồi đưa về trang Findmap.</p>
+          </article>
+          <article class="card reveal">
+            <div class="card-icon">🔐</div>
+            <h3>Tài khoản & điểm</h3>
+            <p>Đăng nhập, cập nhật hồ sơ, nạp điểm sử dụng; quản trị viên cấp tài khoản và theo dõi dùng chung.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="muc-tieu">
+      <div class="container">
+        <div class="section-head reveal">
+          <span class="eyebrow">Mục tiêu</span>
+          <h2>Vì sao dùng Findmap?</h2>
+          <p>Giảm thời gian đi khảo sát thủ công, có danh sách điểm bán gọn gàng để đội bán hàng dùng ngay.</p>
+        </div>
+        <div class="split">
+          <div class="panel blue reveal">
+            <h3>Findmap giúp gì?</h3>
+            <ul class="checklist">
+              <li>Tìm điểm bán theo khu vực trên Google Maps nhanh hơn làm tay.</li>
+              <li>Gom kết quả về một bảng duy nhất, dễ kiểm tra và xuất file.</li>
+              <li>Kiểm soát chi phí qua điểm sử dụng — trừ rõ ràng theo số điểm có số điện thoại.</li>
+              <li>Có thể gửi danh sách sang hệ thống khác (ví dụ Winmap) khi đã được cấu hình.</li>
+            </ul>
+          </div>
+          <div class="panel green reveal">
+            <h3>Ai nên dùng?</h3>
+            <ul class="checklist">
+              <li>Đội bán hàng cần mở rộng điểm bán trên địa bàn.</li>
+              <li>Doanh nghiệp phân phối muốn có nguồn điểm bán để đưa vào hệ thống nội bộ.</li>
+              <li>Người quản lý cần cấp tài khoản, điểm sử dụng và theo dõi mức dùng.</li>
+              <li>Người mới: làm theo 4 bước ở trên là đủ để chạy được lần đầu.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section section-alt" id="ket-qua">
+      <div class="container">
+        <div class="section-head reveal">
+          <span class="eyebrow">Kết quả</span>
+          <h2>Bạn nhận được gì sau mỗi lần tìm?</h2>
+          <p>Mỗi điểm bán trong bảng đều có thông tin để kiểm tra, lọc và xuất — không chỉ nhìn trên bản đồ.</p>
+        </div>
+        <div class="cards">
+          <article class="card reveal">
+            <div class="card-icon">📍</div>
+            <h3>Thông tin điểm bán</h3>
+            <p>Tên, địa chỉ, số điện thoại, đánh giá, vị trí trên bản đồ và khoảng cách tới chỗ bạn chọn tìm.</p>
+          </article>
+          <article class="card reveal">
+            <div class="card-icon green">📊</div>
+            <h3>Theo dõi & bổ sung</h3>
+            <p>Biết danh sách đã khớp với dữ liệu trên Maps; có thể tìm lại những điểm còn thiếu số điện thoại hoặc địa chỉ.</p>
+          </article>
+          <article class="card reveal">
+            <div class="card-icon">📤</div>
+            <h3>Xuất & gửi đi</h3>
+            <p>Xuất Excel để dùng ngay; khi cần có thể gửi danh sách sang hệ thống khác đã được kết nối.</p>
+          </article>
+        </div>
+        <div class="stats reveal">
+          <div class="stat">
+            <strong>1</strong>
+            <span>Một trang để điều khiển toàn bộ tìm kiếm</span>
+          </div>
+          <div class="stat">
+            <strong>Maps</strong>
+            <span>Tiện ích lấy dữ liệu theo khu vực bạn chọn</span>
+          </div>
+          <div class="stat">
+            <strong>Điểm</strong>
+            <span>Trừ điểm sử dụng rõ ràng, dễ theo dõi</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="chinh-sach">
+      <div class="container">
+        <div class="section-head reveal">
+          <span class="eyebrow">Chính sách</span>
+          <h2>ĐIỀU KHOẢN SỬ DỤNG VÀ CHÍNH SÁCH BẢO MẬT DỮ LIỆU CÁ NHÂN</h2>
+          <p>(Áp dụng cho người sử dụng Phần mềm Tìm kiếm điểm bán Findmap.Chatplus)</p>
+        </div>
+        <div class="terms-wrap reveal" id="termsWrap">
+        <article class="terms-doc" id="termsDoc">
+          <p>
+            Chào mừng bạn đến với Findmap.Chatplus! Trước khi bắt đầu sử dụng các dịch vụ tìm kiếm điểm bán, định vị và xem đánh giá, bạn vui lòng đọc kỹ và xác nhận đồng ý với các điều khoản dưới đây. Việc bạn nhấn nút "Tôi đồng ý" đồng nghĩa với việc bạn đã đọc, hiểu rõ và cam kết tuân thủ toàn bộ các quy định này.
+          </p>
+
+          <h3>PHẦN I: ĐIỀU KHOẢN SỬ DỤNG DỊCH VỤ (TERMS OF USE)</h3>
+          <h4>1. Chấp thuận Điều khoản và Tích hợp dịch vụ của Bên thứ ba</h4>
+          <p>Phần mềm Findmap.Chatplus cung cấp giải pháp tìm kiếm điểm bán dựa trên việc tích hợp giao diện lập trình ứng dụng (API) của Google Maps Platform.</p>
+          <p>Bằng việc sử dụng ứng dụng này, ngoài việc tuân thủ các điều khoản tại đây, bạn đồng ý bị ràng buộc pháp lý bởi:</p>
+          <ul>
+            <li>Điều khoản dịch vụ bổ sung của Google Maps/Google Earth (có thể truy cập tại địa chỉ do Google cung cấp).</li>
+            <li>Chính sách bảo mật của Google.</li>
+          </ul>
+          <h4>2. Bản quyền và Sở hữu trí tuệ</h4>
+          <p>Mọi thông tin bản đồ, dữ liệu vị trí, hình ảnh gạch bản đồ (map tiles), nhãn địa điểm, tên doanh nghiệp, số điện thoại và ý kiến đánh giá hiển thị trên ứng dụng được cung cấp bởi Google Maps Platform và các đối tác cấp phép của Google. Google bảo lưu toàn bộ quyền sở hữu trí tuệ đối với các nội dung này.</p>
+          <p>Bạn cam kết KHÔNG thực hiện các hành vi sau:</p>
+          <ul>
+            <li>Sử dụng bất kỳ công cụ tự động, robot, hoặc công nghệ nào để quét (scraping), tải xuống hàng loạt (bulk download), lưu trữ trái phép hoặc trích xuất dữ liệu địa điểm từ ứng dụng nhằm xây dựng cơ sở dữ liệu riêng hoặc sử dụng ngoài phạm vi ứng dụng.</li>
+            <li>Che giấu, xóa bỏ hoặc thay đổi bất kỳ logo, chỉ dẫn bản quyền, nhãn hiệu hoặc thông báo pháp lý nào của Công Ty TNHH An Đức Tâm và Google hiển thị trên giao diện.</li>
+          </ul>
+          <h4>3. Tuân thủ Quy định về Bản đồ và Chủ quyền Quốc gia Việt Nam</h4>
+          <p>Bản đồ sử dụng trong phần mềm tuân thủ nghiêm ngặt Luật Đo đạc và Bản đồ Việt Nam cũng như Nghị định 18/2020/NĐ-CP.</p>
+          <p>Người dùng cam kết không sử dụng ứng dụng để thực hiện, chia sẻ hoặc tuyên truyền các hình ảnh bản đồ sai lệch chủ quyền quốc gia của nước Cộng hòa Xã hội Chủ nghĩa Việt Nam (bao gồm nhưng không giới hạn ở chủ quyền đối với hai quần đảo Hoàng Sa và Trường Sa).</p>
+
+          <h3>PHẦN II: CHÍNH SÁCH BẢO MẬT VÀ ĐỒNG Ý XỬ LÝ DỮ LIỆU CÁ NHÂN</h3>
+          <p>(Ban hành tuân thủ Nghị định 13/2023/NĐ-CP về bảo vệ dữ liệu cá nhân)</p>
+          <p>Bằng văn bản này, Công Ty TNHH An Đức Tâm (sau đây gọi là "Chúng tôi" - đóng vai trò là Bên Kiểm soát và Xử lý dữ liệu cá nhân) thực hiện thông báo và xin sự đồng ý của bạn về việc xử lý dữ liệu cá nhân như sau:</p>
+          <h4>1. Các loại dữ liệu cá nhân được xử lý</h4>
+          <p>Chúng tôi sẽ thu thập và xử lý các dữ liệu sau đây của bạn trong quá trình bạn trải nghiệm ứng dụng:</p>
+          <ul>
+            <li>Dữ liệu cá nhân cơ bản: Họ và tên hiển thị, ảnh đại diện (nếu bạn liên kết tài khoản), số điện thoại liên hệ, thông tin tài khoản số của cá nhân khi đăng ký ứng dụng, địa chỉ IP và thông tin định danh thiết bị di động.</li>
+            <li>Dữ liệu cá nhân nhạy cảm: Dữ liệu về vị trí thực tế của bạn thông qua dịch vụ định vị GPS (được thu thập để tính toán khoảng cách và đề xuất các điểm bán gần bạn nhất).</li>
+          </ul>
+          <h4>2. Mục đích xử lý dữ liệu</h4>
+          <p>Chúng tôi xử lý dữ liệu của bạn nhằm các mục đích cụ thể sau:</p>
+          <ul>
+            <li>Xác định vị trí hiện tại của bạn để hiển thị chính xác các điểm bán hàng xung quanh trên bản đồ.</li>
+            <li>Hỗ trợ bạn thực hiện cuộc gọi liên hệ trực tiếp đến điểm bán khi bạn có nhu cầu.</li>
+            <li>Hiển thị đúng ngôn ngữ, khu vực và cải thiện trải nghiệm giao diện người dùng.</li>
+            <li>Đảm bảo an toàn hệ thống, phòng ngừa các hành vi giả mạo hoặc tấn công bảo mật ứng dụng.</li>
+          </ul>
+          <h4>3. Cách thức và Tổ chức liên quan đến việc xử lý dữ liệu</h4>
+          <p>Cách thức xử lý: Dữ liệu vị trí (GPS) của bạn được ứng dụng ghi nhận theo thời gian thực khi được cấp quyền. Chúng tôi không lưu trữ tĩnh dữ liệu vị trí này trên máy chủ của chúng tôi mà chỉ truyền gửi an toàn dưới dạng các tham số mã hóa để gọi API của Google Maps nhằm trả về danh sách điểm bán.</p>
+          <p>Tổ chức có liên quan: Để cung cấp tính năng bản đồ, dữ liệu tọa độ định vị của bạn sẽ được gửi đến đối tác cung cấp hạ tầng là Google LLC (Google Maps Platform) để xử lý kỹ thuật theo đúng chính sách bảo mật của Google.</p>
+          <h4>4. Thời gian xử lý và lưu trữ dữ liệu</h4>
+          <p>Dữ liệu vị trí nhạy cảm (GPS) chỉ được xử lý tạm thời trong phiên làm việc của ứng dụng và sẽ tự động xóa ngay khi bạn tắt ứng dụng.</p>
+          <p>Các dữ liệu cá nhân cơ bản khác (tài khoản, cài đặt) sẽ được lưu trữ và xử lý kể từ thời điểm bạn đồng ý cho đến khi bạn yêu cầu xóa tài khoản hoặc khi ứng dụng chấm dứt hoạt động hoàn toàn theo quy định pháp luật.</p>
+          <h4>5. Rủi ro, thiệt hại không mong muốn có thể xảy ra</h4>
+          <p>Mặc dù chúng tôi áp dụng các biện pháp kỹ thuật và an ninh mạng tối đa, việc truyền tải dữ liệu trên môi trường internet luôn tiềm ẩn những rủi ro bất khả kháng như: sự cố đường truyền internet quốc tế gây gián đoạn dịch vụ định vị, hoặc các nguy cơ bị tấn công mạng ngoài tầm kiểm soát. Trong trường hợp phát sinh sự cố, chúng tôi cam kết phối hợp với các cơ quan chức năng để khắc phục và giảm thiểu tối đa thiệt hại cho bạn.</p>
+          <h4>6. Quyền và nghĩa vụ của bạn (Chủ thể dữ liệu)</h4>
+          <p>Theo quy định pháp luật Việt Nam, bạn có các quyền và nghĩa vụ sau:</p>
+          <ul>
+            <li>Quyền của bạn: Quyền được biết, quyền đồng ý hoặc không đồng ý xử lý dữ liệu; quyền truy cập, chỉnh sửa hoặc yêu cầu xóa dữ liệu cá nhân của mình; quyền rút lại sự đồng ý; quyền hạn chế xử lý dữ liệu và quyền khiếu nại, tố cáo theo quy định của pháp luật.</li>
+            <li>Cách thức thực hiện quyền: Bạn có thể tự bật/tắt quyền truy cập vị trí (GPS) trong phần cài đặt thiết bị của mình, hoặc liên hệ trực tiếp với bộ phận chăm sóc khách hàng của chúng tôi qua Email: [Email hỗ trợ của bạn] để yêu cầu xóa dữ liệu cá nhân. Chúng tôi sẽ phản hồi và giải quyết yêu cầu xóa dữ liệu của bạn trong vòng 72 giờ làm việc.</li>
+            <li>Nghĩa vụ của bạn: Cung cấp đầy đủ, chính xác dữ liệu cá nhân khi đồng ý cho phép xử lý và tự bảo vệ dữ liệu cá nhân của mình.</li>
+          </ul>
+
+          <h3>PHẦN III: XÁC NHẬN ĐỒNG Ý CỦA NGƯỜI DÙNG</h3>
+          <p>Bằng cách tích chọn vào các ô dưới đây và nhấn nút "Tôi đồng ý", bạn xác nhận rằng bạn đã trên 15 tuổi (hoặc có sự đồng ý của cha mẹ/người giám hộ hợp pháp), đã đọc, hiểu rõ toàn bộ nội dung của Điều khoản sử dụng và Chính sách bảo mật dữ liệu nêu trên.</p>
+        </article>
+        <button type="button" class="terms-toggle" id="termsToggle" aria-expanded="false">Xem thêm</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="section section-alt" id="quy-dinh">
+      <div class="container">
+        <div class="section-head reveal">
+          <span class="eyebrow">Quy định vận hành</span>
+          <h2>Quy tắc để tìm ổn định & đúng mục đích</h2>
+          <p>Làm đúng các quy định dưới đây giúp kết quả đủ, danh sách khớp, và dùng đúng mục đích.</p>
+        </div>
+        <div class="policy-grid">
+          <article class="policy reveal">
+            <h3>Khi đang tìm</h3>
+            <ol>
+              <li>Giữ cửa sổ Google Maps mở — đừng đóng khi đang chạy.</li>
+              <li>Không bấm lung tung trên Maps khi hệ thống đang lấy dữ liệu (trừ khi được hướng dẫn).</li>
+              <li>Theo dõi trạng thái trên trang Findmap; nếu thiếu dữ liệu, quay lại tab Maps để hệ thống bổ sung.</li>
+              <li>Đủ điểm sử dụng trước khi tìm — hết điểm có thể giới hạn số điểm bán có số điện thoại.</li>
+            </ol>
+          </article>
+          <article class="policy reveal">
+            <h3>Pháp lý & bản đồ</h3>
+            <ol>
+              <li>Không dùng ứng dụng để tuyên truyền bản đồ sai lệch chủ quyền Việt Nam.</li>
+              <li>Không che / xóa logo, bản quyền của Findmap hoặc Google trên giao diện.</li>
+              <li>Vị trí của bạn chỉ dùng tạm trong phiên để tìm điểm gần — theo chính sách đã đồng ý.</li>
+              <li>Người quản lý chịu trách nhiệm cấp tài khoản, điểm sử dụng và vận hành đúng quy trình công ty.</li>
+            </ol>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="cta">
+      <div class="container">
+        <div class="cta-box reveal">
+          <div>
+            <h2>Sẵn sàng dùng Findmap?</h2>
+            <p>Đăng nhập, cài tiện ích Chrome, chọn khu vực cần tìm — hệ thống sẽ dẫn bạn từng bước.</p>
+          </div>
+          <div class="cta-actions">
+            <a class="btn btn-primary" href="https://findmap.app.chatplus.io.vn/" target="_blank" rel="noopener">Đăng nhập ngay</a>
+            <a class="btn btn-ghost" href="#he-thong">Xem lại hệ thống</a>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="container footer-inner">
+      <div class="footer-company">
+        <div class="footer-company-card">
+          <strong class="footer-company-name">Công Ty TNHH An Đức Tâm</strong>
+          <p>
+            <span class="footer-ico" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16v12H4z"/><path d="m4 7 8 6 8-6"/></svg>
+            </span>
+            <a href="mailto:business@chatplus.vn">business@chatplus.vn</a>
+          </p>
+          <p>
+            <span class="footer-ico" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 21s7-5.2 7-11a7 7 0 1 0-14 0c0 5.8 7 11 7 11z"/><circle cx="12" cy="10" r="2.5"/></svg>
+            </span>
+            Tầng 5, số 88 Tô Vĩnh Diện, Khương Trung, Thanh Xuân, Hà Nội
+          </p>
+          <p>
+            <span class="footer-ico" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="3.5"/><path d="M5 20c1.5-3.5 4-5 7-5s5.5 1.5 7 5"/></svg>
+            </span>
+            Đặng Văn Trường
+          </p>
+          <p>
+            <span class="footer-ico" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6.5 4.5h3l1.2 4-2 1.2a12 12 0 0 0 5.6 5.6l1.2-2 4 1.2v3A2 2 0 0 1 17.5 19.5 13 13 0 0 1 4.5 6.5a2 2 0 0 1 2-2z"/></svg>
+            </span>
+            <a href="tel:0987501771">0987 501 771</a>
+          </p>
+        </div>
+        <p class="footer-copy">© Copyright 2026 ChatPlus</p>
+      </div>
+      <div class="footer-links">
+        <a href="#chinh-sach">Chính sách</a>
+        <a href="#quy-dinh">Quy định</a>
+        <a href="https://findmap.app.chatplus.io.vn/" target="_blank" rel="noopener">Đăng nhập</a>
+      </div>
+    </div>
+  </footer>
+
+  <script src="./script.js"></script>
+</body>
+</html>

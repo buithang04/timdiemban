@@ -45,17 +45,20 @@ function resolveImportUrls(input) {
 /**
  * Thử POST tới một URL cụ thể; trả về { ok, data, status, usedUrl } hoặc ném lỗi.
  */
-async function tryPost(url, headers, body) {
-  const res = await fetch(url, { method: "POST", headers, body });
+async function tryPost(url, headers, body, method = "POST") {
+  const res = await fetch(url, { method, headers, body });
   const text = await res.text();
   let data = {};
   try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text.slice(0, 500) }; }
   return { ok: res.ok, status: res.status, data, usedUrl: url };
 }
 
+const { buildPushBody, parsePushConfig } = require("./push-config");
+
 async function pushPointsExternal(points, options = {}) {
   const rawUrl = options.url || process.env.WINMAP_PUSH_URL || "";
   const token = String(options.token || process.env.WINMAP_PUSH_TOKEN || "").trim();
+  const pushConfig = options.pushConfig ? parsePushConfig(options.pushConfig) : null;
   const { clean: url, fallback: urlFallback } = resolveImportUrls(rawUrl);
 
   const normalized = (points || []).map(normalizePoint).filter((p) => p.name);
@@ -81,7 +84,9 @@ async function pushPointsExternal(points, options = {}) {
 
   const headers = { "Content-Type": "application/json", Accept: "application/json" };
   if (token) headers.Authorization = `Bearer ${token}`;
-  const batchBody = JSON.stringify({ points: normalized, source: "timdiemban" });
+  const payload = pushConfig ? buildPushBody(normalized, pushConfig) : { points: normalized, source: "timdiemban" };
+  const batchBody = JSON.stringify(payload);
+  const method = pushConfig?.method === "PUT" ? "PUT" : "POST";
 
   let lastErr = null;
   let usedUrl = url;
@@ -90,7 +95,7 @@ async function pushPointsExternal(points, options = {}) {
   for (const tryUrl of [url, urlFallback]) {
     if (!tryUrl) continue;
     try {
-      const { ok, status, data } = await tryPost(tryUrl, headers, batchBody);
+      const { ok, status, data } = await tryPost(tryUrl, headers, batchBody, method);
       usedUrl = tryUrl;
 
       if (status === 404 && tryUrl === url && urlFallback) {
@@ -122,22 +127,28 @@ async function pushPointsExternal(points, options = {}) {
   }
 
   // Nếu batch thất bại, thử gửi từng điểm một
-  return pushPointsOneByOne(usedUrl, token, normalized);
+  return pushPointsOneByOne(usedUrl, token, normalized, pushConfig);
 }
 
-async function pushPointsOneByOne(url, token, points) {
+async function pushPointsOneByOne(url, token, points, pushConfig) {
   const results = [];
   let pushed = 0;
   let failed = 0;
+
+  const method = pushConfig?.method === "PUT" ? "PUT" : "POST";
+  const cfg = pushConfig ? parsePushConfig(pushConfig) : null;
 
   for (const point of points) {
     try {
       const headers = { "Content-Type": "application/json", Accept: "application/json" };
       if (token) headers.Authorization = `Bearer ${token}`;
+      const body = cfg
+        ? { ...buildPushBody([point], cfg)[cfg.pointsKey][0], ...(cfg.sourceTag ? { source: cfg.sourceTag } : {}) }
+        : { ...point, source: "timdiemban" };
       const res = await fetch(url, {
-        method: "POST",
+        method,
         headers,
-        body: JSON.stringify({ ...point, source: "timdiemban" })
+        body: JSON.stringify(body)
       });
       const text = await res.text();
       let data = {};

@@ -893,7 +893,10 @@ async function getWinmapSite(userId) {
   const url = (await getSetting(`winmap_site_url:${userId}`, "")).trim();
   const token = (await getSetting(`winmap_site_token:${userId}`, "")).trim();
   const label = (await getSetting(`winmap_site_label:${userId}`, "")).trim();
-  return { url, token, label };
+  const pushConfigRaw = await getSetting(`winmap_site_push_config:${userId}`, "");
+  const { parsePushConfig } = require("./push-config");
+  const pushConfig = parsePushConfig(pushConfigRaw || null);
+  return { url, token, label, pushConfig };
 }
 
 function siteHost(url) {
@@ -913,14 +916,15 @@ app.get("/api/points/site", requireAuth, async (req, res) => {
     host: siteHost(site.url),
     importUrl: site.url ? resolveImportUrl(site.url) : "",
     hasToken: Boolean(site.token),
-    configured: Boolean(site.url && site.token)
+    configured: Boolean(site.url && site.token),
+    pushConfig: site.pushConfig
   });
 });
 
 /** Lưu site trả dữ liệu (domain + Bearer token của winmap) — riêng cho tài khoản đang đăng nhập. */
 app.post("/api/points/site", requireAuth, async (req, res) => {
   try {
-    const { url, token, label } = req.body || {};
+    const { url, token, label, pushConfig } = req.body || {};
     const cleanUrl = String(url || "").trim();
     if (!cleanUrl) return res.status(400).json({ error: "Thiếu địa chỉ site (vd: demo.winmap.vn)" });
 
@@ -938,6 +942,10 @@ app.post("/api/points/site", requireAuth, async (req, res) => {
     if (typeof token === "string" && token.trim() !== "") {
       await setSetting(`winmap_site_token:${uid}`, token.trim());
     }
+    if (pushConfig && typeof pushConfig === "object") {
+      const { parsePushConfig } = require("./push-config");
+      await setSetting(`winmap_site_push_config:${uid}`, JSON.stringify(parsePushConfig(pushConfig)));
+    }
 
     const site = await getWinmapSite(uid);
     res.json({
@@ -948,7 +956,8 @@ app.post("/api/points/site", requireAuth, async (req, res) => {
       host: siteHost(site.url),
       importUrl,
       hasToken: Boolean(site.token),
-      configured: Boolean(site.url && site.token)
+      configured: Boolean(site.url && site.token),
+      pushConfig: site.pushConfig
     });
   } catch (err) {
     res.status(500).json({ error: err.message || "Lỗi lưu site" });
@@ -1029,7 +1038,8 @@ app.post("/api/points/push", requireAuth, async (req, res) => {
     const saved = await getWinmapSite(req.user.id);
     const target = {
       url: (site && String(site).trim()) || saved.url,
-      token: saved.token
+      token: saved.token,
+      pushConfig: saved.pushConfig
     };
     const result = await pushPointsExternal(points, target);
     if (result.failed > 0 && result.pushed === 0) {
@@ -1044,9 +1054,12 @@ app.post("/api/points/push", requireAuth, async (req, res) => {
 app.get("/api/points/push-config", requireAuth, async (req, res) => {
   const site = await getWinmapSite(req.user.id);
   res.json({
-    configured: Boolean(site.url),
-    url: site.url ? resolveImportUrl(site.url).replace(/\/\/[^/]+/, "//***") : null,
-    host: siteHost(site.url)
+    configured: Boolean(site.url && site.token),
+    url: site.url,
+    host: siteHost(site.url),
+    importUrl: site.url ? resolveImportUrl(site.url) : "",
+    hasToken: Boolean(site.token),
+    pushConfig: site.pushConfig
   });
 });
 
@@ -1061,6 +1074,7 @@ const webPages = {
   "/login": "login.html",
   "/admin": "admin.html",
   "/nap-diem": "nap-diem.html",
+  "/cau-hinh-site": "cau-hinh-site.html",
   "/quen-mat-khau": "quen-mat-khau.html",
   "/dat-lai-mat-khau": "dat-lai-mat-khau.html"
 };
@@ -1074,6 +1088,7 @@ const legacyHtmlRedirects = {
   "/login.html": "/login",
   "/admin.html": "/admin",
   "/nap-diem.html": "/nap-diem",
+  "/cau-hinh-site.html": "/cau-hinh-site",
   "/quen-mat-khau.html": "/quen-mat-khau",
   "/dat-lai-mat-khau.html": "/dat-lai-mat-khau",
   "/index.html": "/"
