@@ -2022,14 +2022,14 @@ function maybeRequestSyncIfBehind(mergedCount) {
     );
   };
 
-  // Lệch càng lớn → bù càng gấp
-  const waitMs = gap >= 20 ? 400 : gap >= 5 ? 700 : 1200;
+  // Lệch → bù ngay (tối đa 1 lần / 0.5–1s)
+  const waitMs = gap >= 10 ? 400 : 700;
   const elapsed = Date.now() - lastSyncRequestAt;
   if (elapsed >= waitMs) {
     fire();
     return;
   }
-  if (syncRequestTimer) return;
+  if (syncRequestTimer) clearTimeout(syncRequestTimer);
   syncRequestTimer = setTimeout(fire, waitMs - elapsed);
 }
 

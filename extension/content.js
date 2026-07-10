@@ -1,7 +1,9 @@
 (function () {
-  if (window.__timDiemBanLoaded) return;
+  // Bump version mỗi lần sửa content — background sẽ reinject nếu Maps còn bản cũ
+  const CONTENT_VERSION = 50;
+  if (window.__timDiemBanLoaded && window.__timDiemBanVersion === CONTENT_VERSION) return;
   window.__timDiemBanLoaded = true;
-  window.__timDiemBanVersion = 41;
+  window.__timDiemBanVersion = CONTENT_VERSION;
 
   let antiThrottleStop = null;
   let scrapeInProgress = false;
@@ -147,7 +149,14 @@
 
   function createShield() {
     // Maps SPA có thể gỡ node khỏi DOM — tạo lại nếu đã bị detach
-    if (shieldEl && document.contains(shieldEl)) return shieldEl;
+    if (shieldEl && document.contains(shieldEl)) {
+      // Đảm bảo title hiện đúng version (biết đã load bản mới)
+      const title = shieldEl.querySelector(".shield-title");
+      if (title && !title.textContent.includes(`v${CONTENT_VERSION}`)) {
+        title.innerHTML = `Đang tìm kiếm tự động <span style="font-size:12px;color:#2563eb;font-weight:600">v${CONTENT_VERSION}</span>`;
+      }
+      return shieldEl;
+    }
     if (shieldEl && !document.contains(shieldEl)) {
       try {
         shieldEl.remove();
@@ -181,7 +190,7 @@
         #timdiemban-shield .shield-hint { margin-top: 10px; font-size: 10px; color: #94a3b8; line-height: 1.4; }
       </style>
       <div class="shield-box">
-        <div class="shield-title">Đang tìm kiếm tự động</div>
+        <div class="shield-title">Đang tìm kiếm tự động <span style="font-size:12px;color:#2563eb;font-weight:600">v${CONTENT_VERSION}</span></div>
         <div class="shield-text" id="timdiemban-shield-text">Vui lòng không thao tác trên trang này...</div>
         <div class="shield-bar-wrap"><div class="shield-bar" id="timdiemban-shield-bar"></div></div>
         <div class="shield-percent" id="timdiemban-shield-percent">0%</div>
@@ -3459,9 +3468,10 @@
       totalInCell > 0
         ? `ô này ${uniqueIndex}/${totalInCell}`
         : `ô này #${uniqueIndex}`;
+    // Hiện tổng unique đã gửi + version để biết đã load bản mới
     sendProgress(
       pct,
-      `Bước ${cellIndex + 1}/${totalCells} — ${cellLabel || "Tâm"} | ${posLabel}: ${data.name}${data.phone ? " ✓SĐT" : ""}`
+      `v${window.__timDiemBanVersion || "?"} · Bước ${cellIndex + 1}/${totalCells} — ${cellLabel || "Tâm"} | ${posLabel}: ${data.name}${data.phone ? " ✓SĐT" : ""}`
     );
     if (!quiet) sendItem(data, searchParams, uniqueIndex, uniqueIndex);
 

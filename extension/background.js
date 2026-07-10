@@ -288,12 +288,22 @@ function updateMapsShield(progressText, percent) {
     webUrl: currentSearch?.webUrl || scrapeState.searchParams?.webUrl,
     webLabel: getWebUrlLabel(currentSearch?.webUrl || scrapeState.searchParams?.webUrl)
   };
-  if (progressText) data.text = String(progressText).slice(0, 120);
+  if (progressText) data.text = String(progressText).slice(0, 140);
   if (percent != null) data.percent = percent;
   if (!data.text && data.percent == null) return;
   chrome.tabs
     .sendMessage(scrapeState.mapsTabId, { action: "SCRAPE_SHIELD_UPDATE", data })
-    .catch(() => {});
+    .catch(() => {
+      // Overlay mất / script cũ — reinject rồi thử lại
+      ensureMapsContentReady(scrapeState.mapsTabId)
+        .then(() =>
+          chrome.tabs.sendMessage(scrapeState.mapsTabId, {
+            action: "SCRAPE_SHIELD_UPDATE",
+            data
+          })
+        )
+        .catch(() => {});
+    });
 }
 
 let reconcileBusy = false;
@@ -607,11 +617,11 @@ function sendItemToWeb(webUrl, result, searchParams) {
     mergedCount
   }).then(async (ok) => {
     itemsSinceLastForceSync += 1;
-    // Mỗi 8 quán hoặc khi gửi lỗi → ép snapshot đầy đủ (tránh lệch tích lũy)
+    // Mỗi 3 quán hoặc khi gửi lỗi → ép snapshot đầy đủ (tránh lệch tích lũy)
     const now = Date.now();
-    if (!ok || itemsSinceLastForceSync >= 8) {
+    if (!ok || itemsSinceLastForceSync >= 3) {
       if (now >= itemSyncBackoffUntil) {
-        itemSyncBackoffUntil = now + 1200;
+        itemSyncBackoffUntil = now + 800;
         itemsSinceLastForceSync = 0;
         await pushSyncSnapshotToWeb(
           ok ? `Đồng bộ định kỳ — ${mergedCount} quán` : "Bù sync sau item lỗi...",
@@ -1740,18 +1750,34 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   scheduleMapsReloadRecovery();
 });
 
+const REQUIRED_CONTENT_VERSION = 50;
+
 async function ensureMapsContentReady(tabId) {
   for (let attempt = 0; attempt < 8; attempt++) {
     try {
       const pong = await chrome.tabs.sendMessage(tabId, { action: "PING" });
-      if (pong?.ok) return true;
+      if (pong?.ok && Number(pong.v || 0) >= REQUIRED_CONTENT_VERSION) return true;
+
+      // Bản cũ: reload tab để content_scripts load lại sạch (tránh listener trùng)
+      if (pong?.ok && Number(pong.v || 0) < REQUIRED_CONTENT_VERSION && attempt === 0) {
+        try {
+          markMapsControlledActivity(45000);
+          await chrome.tabs.reload(tabId);
+          await waitTabComplete(tabId, 25000);
+          await sleep(900);
+        } catch {}
+      }
     } catch {}
+
     try {
       await chrome.scripting.executeScript({
         target: { tabId },
+        world: "MAIN",
         func: () => {
-          delete window.__timDiemBanLoaded;
-          delete window.__timDiemBanVersion;
+          try {
+            delete window.__timDiemBanLoaded;
+            delete window.__timDiemBanVersion;
+          } catch {}
         }
       });
       await chrome.scripting.executeScript({
@@ -1759,9 +1785,14 @@ async function ensureMapsContentReady(tabId) {
         files: ["grid.js", "content.js"]
       });
     } catch {}
-    await sleep(600 + attempt * 200);
+    await sleep(500 + attempt * 150);
   }
-  return false;
+  try {
+    const pong = await chrome.tabs.sendMessage(tabId, { action: "PING" });
+    return !!pong?.ok;
+  } catch {
+    return false;
+  }
 }
 
 async function sendMapsMessage(action, data) {
@@ -2435,17 +2466,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     scheduleLiveSearchBackup(true);
 
-    // Cập nhật overlay Maps theo số quán đã có — tránh nhìn như treo ở 1%
+    // Cập nhật overlay: hiện TỔNG unique đã gửi (không nhầm với # trong ô)
     const total = getFinalResultsList().length;
     const cellIdx = scrapeState.gridIndex || 0;
     const cells = scrapeState.totalCells || 1;
-    const pct = calcProgressPercent(cellIdx, cells, 0.35);
-    // Throttle text overlay: tối đa ~2 lần/giây
-    if (!scrapeState._lastShieldItemAt || Date.now() - scrapeState._lastShieldItemAt > 450) {
+    const pct = calcProgressPercent(cellIdx, cells, Math.min(0.9, 0.2 + (total % 20) * 0.03));
+    if (!scrapeState._lastShieldItemAt || Date.now() - scrapeState._lastShieldItemAt > 400) {
       scrapeState._lastShieldItemAt = Date.now();
       updateMapsShield(
-        `Bước ${cellIdx + 1}/${cells} — đã gửi ${total} quán · ${merged.name || ""}`.slice(0, 120),
-        Math.max(pct, 2)
+        `v50 · Bước ${cellIdx + 1}/${cells} — tổng ${total} quán đã gửi · ${merged.name || ""}`.slice(0, 140),
+        Math.max(pct, 3)
       );
     }
 
