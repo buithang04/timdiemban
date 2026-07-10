@@ -65,6 +65,7 @@
             mergedCount: snap.mergedCount,
             text: `Đồng bộ lại — ${snap.results.length} quán`
           });
+          chrome.storage.local.remove("pendingSearchSync");
         }
       });
     } catch {}

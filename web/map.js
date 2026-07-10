@@ -263,7 +263,8 @@
           new CustomEvent("timdiemban:map-pick-center", { detail: { lat, lng } })
         );
       },
-      () => {}
+      () => {},
+      { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 }
     );
   }
 

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "findmap - Google Maps Scraper",
-  "version": "1.7.32",
+  "version": "1.7.34",
   "description": "Cào dữ liệu Google Maps — điều khiển từ https://findmap.app.chatplus.io.vn",
   "permissions": [
     "activeTab",

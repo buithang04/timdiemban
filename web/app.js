@@ -533,7 +533,19 @@ function mergeApplyResults(rows, search) {
 
 function applyResults(rows, search, replace = false) {
   if (replace) {
-    currentData = processResults(rows, search);
+    // Snapshot từ extension đã dedupe theo địa điểm — chỉ lọc tên lỗi + trùng place id/slug
+    // (không gộp theo SĐT để tránh mất quán khác nhau cùng số tổng đài)
+    const cleaned = (rows || [])
+      .filter((r) => isValidRowName(r.name))
+      .map((r) => normalizeRowCoords({ ...r }));
+    const marked = markResultsRadiusFlags(cleaned, search);
+    const out = [];
+    for (const row of marked) {
+      if (out.some((e) => isSamePlaceRow(e, row))) continue;
+      out.push(row);
+    }
+    out.sort((a, b) => (a.distanceKm ?? 999) - (b.distanceKm ?? 999));
+    currentData = out;
     renderFullTable();
     els.infoTotal.textContent = currentData.length;
     updateStatUsed();
@@ -672,6 +684,14 @@ function clearResultsForNewSearch() {
   sentKeys.clear();
   currentPage = 1;
   awaitingNewSearchResults = false;
+}
+
+function ensureSearchSession(search) {
+  const sid = search?.searchId;
+  if (!sid) return;
+  if (currentSearch?.searchId && currentSearch.searchId !== sid) {
+    clearResultsForNewSearch();
+  }
 }
 
 function dedupeResultRows(rows) {
@@ -825,7 +845,7 @@ async function flushChargeNewPhones() {
   await loadCurrentUser();
   syncSessionToExtension();
 
-  if (paid < newPhones.length) {
+  if (paid < newPhones.length && currentSearch?.status !== "running") {
     currentData = limitRowsByPaidPhones(currentData);
     dedupeCurrentDataKeepFirst();
     saveResultsToStorage();
@@ -1989,25 +2009,28 @@ function maybeRequestSyncIfBehind(mergedCount) {
   if (currentSearch?.status !== "running") return;
   const gap = mergedCount - currentData.length;
   updateUnifiedCountUI(mergedCount);
-  if (gap <= 2) return;
+  if (gap <= 0) return;
 
   const fire = () => {
     lastSyncRequestAt = Date.now();
     syncRequestTimer = null;
     const g = extensionMergedCount - currentData.length;
-    if (g <= 2) return;
+    if (g <= 0) return;
+    window.TimDiemBanDrainQueue?.();
     window.TimDiemBanSearch?.requestSearchSync?.(
       `Bù ${g} quán (ext ${extensionMergedCount}, bảng ${currentData.length})`
     );
   };
 
+  // Lệch càng lớn → bù càng gấp (không chờ 6s)
+  const waitMs = gap >= 20 ? 800 : gap >= 5 ? 1200 : 2000;
   const elapsed = Date.now() - lastSyncRequestAt;
-  if (elapsed >= 6000) {
+  if (elapsed >= waitMs) {
     fire();
     return;
   }
   if (syncRequestTimer) return;
-  syncRequestTimer = setTimeout(fire, 6000 - elapsed);
+  syncRequestTimer = setTimeout(fire, waitMs - elapsed);
 }
 
 function updateUnifiedCountUI(mergedCount) {
@@ -2042,6 +2065,7 @@ function applyExtensionDataSync(type, payload = {}) {
       currentUser = payload.user;
       updateAuthUI();
     }
+    ensureSearchSession(payload.searchParams);
     currentSearch = {
       ...payload.searchParams,
       status: "running",
@@ -2140,6 +2164,7 @@ function applyExtensionDataSync(type, payload = {}) {
 
   if (type === "sync") {
     const search = payload.searchParams || currentSearch;
+    ensureSearchSession(search);
     const syncSearchId = payload.searchParams?.searchId;
     if (payload.searchParams) {
       if (!currentSearch || currentSearch.status !== "running") {
@@ -2165,20 +2190,22 @@ function applyExtensionDataSync(type, payload = {}) {
     }
     if (awaitingNewSearchResults) {
       if (!currentData.length) clearResultsForNewSearch();
-      else awaitingNewSearchResults = false;
+      else if (syncSearchId && syncSearchId === currentSearch?.searchId) {
+        awaitingNewSearchResults = false;
+      } else {
+        clearResultsForNewSearch();
+      }
     }
     const incoming = payload.results || [];
     const extCount = payload.mergedCount ?? incoming.length;
-    const isRunning = currentSearch?.status === "running";
+    // Snapshot từ extension là nguồn đúng — luôn replace, không merge từng dòng
+    // (merge làm lệch ngày càng lớn khi dedupe web ≠ extension)
     if (incoming.length > 0) {
-      if (isRunning) {
-        mergeApplyResults(incoming, search);
-      } else {
-        applyResults(incoming, search, true);
-      }
+      applyResults(incoming, search, true);
     }
     lastSyncIncoming = incoming.length;
     lastSyncApplied = currentData.length;
+    extensionMergedCount = Math.max(extensionMergedCount, extCount, incoming.length);
     if (currentSearch) {
       currentSearch.status = "running";
       setInfoStatus('<span class="status-badge status-running">Đang tìm</span>');
@@ -2214,14 +2241,20 @@ function applyExtensionDataSync(type, payload = {}) {
       completedAt: payload.completedAt,
       startedAt: currentSearch?.startedAt || new Date().toISOString()
     };
-    applyResults(payload.results || [], search, true);
-    dedupeCurrentDataKeepFirst();
+    const incoming = payload.results || [];
+    // Complete: tin danh sách cuối của extension (đã dedupe phía Maps)
+    if (incoming.length > 0) {
+      applyResults(incoming, search, true);
+    } else if (currentData.length === 0) {
+      applyResults([], search, true);
+    }
     renderFullTable();
     window.TimDiemBanMap?.refreshMarkers(currentData);
     window.TimDiemBanMap?.countInOut(currentData);
     hideLiveProgress();
     setConnStatus(`Hoàn tất — ${currentData.length} kết quả`, "connected");
     saveResultsToStorage(true);
+    tryChargePendingSearch().catch(() => {});
     window.dispatchEvent(new CustomEvent("timdiemban:search-finished"));
     updateView();
   }
@@ -2258,7 +2291,7 @@ async function handleExtensionPayload(type, payload) {
   if (type === "search_status") {
     await reconcileStaleSearchState(payload || {});
     const ext = payload?.mergedCount ?? 0;
-    if ((payload?.running || payload?.stalled) && ext > currentData.length + 2) {
+    if ((payload?.running || payload?.stalled) && ext > currentData.length) {
       window.TimDiemBanSearch?.requestSearchSync?.("Đồng bộ sau search_status");
     }
     return;

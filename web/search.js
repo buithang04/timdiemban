@@ -180,9 +180,9 @@
       window.TimDiemBanDrainQueue?.();
       const shown =
         parseInt(document.getElementById("infoTotal")?.textContent || "0", 10) || 0;
-      if (lastKnownMergedCount > 0 && shown < lastKnownMergedCount - 2) {
+      if (lastKnownMergedCount > 0 && shown < lastKnownMergedCount) {
         requestSearchSync(`Bù ${lastKnownMergedCount - shown} quán (poll ${shown}/${lastKnownMergedCount})`);
-      } else if (lastKnownMergedCount > 0 && shown >= lastKnownMergedCount - 2) {
+      } else if (lastKnownMergedCount > 0 && shown >= lastKnownMergedCount) {
         /* đã khớp — không gọi sync */
       } else if (Date.now() - lastPollSyncAt > 30000) {
         lastPollSyncAt = Date.now();
@@ -190,7 +190,7 @@
       }
     };
     tick();
-    searchSyncTimer = setInterval(tick, 3000);
+    searchSyncTimer = setInterval(tick, 1500);
   }
 
   function clearSearchWatchdog() {
@@ -421,11 +421,19 @@
     return normalizeCenterCoords(lat, lng);
   }
 
-  /** Form → bộ nhớ → không gọi GPS nếu đã có tọa độ */
+  /**
+   * Chỉ lấy tọa độ người dùng đã chọn trong phiên này (form / GPS / Maps / chọn tâm).
+   * Không dùng lat/lng phiên tìm kiếm trước.
+   */
   function readCenterFromFormOrCache() {
     const fromForm = readCenterFromForm();
     if (fromForm) return fromForm;
-    if (lastKnownCenter?.lat != null && lastKnownCenter?.lng != null) {
+    if (
+      lastKnownCenter?.lat != null &&
+      lastKnownCenter?.lng != null &&
+      lastKnownCenter.source &&
+      lastKnownCenter.source !== "saved"
+    ) {
       return { lat: lastKnownCenter.lat, lng: lastKnownCenter.lng };
     }
     return null;
@@ -516,13 +524,12 @@
       const raw = localStorage.getItem(LAST_SEARCH_KEY);
       if (!raw) return;
       const s = JSON.parse(raw);
+      // Chỉ khôi phục từ khóa + bán kính — KHÔNG lấy lat/lng phiên cũ
+      // (tọa độ phải lấy GPS/Maps/chọn tâm hiện tại)
       if (s.keyword) els.keyword.value = s.keyword;
       if (s.radius != null) {
         const r = Number(s.radius);
         els.radius.value = r >= 100 ? (r / 1000).toFixed(1).replace(/\.0$/, "") : String(r);
-      }
-      if (s.lat != null && s.lng != null) {
-        setCenterFields(s.lat, s.lng, s.centerSource || "saved", "phiên trước");
       }
     } catch {}
   }
@@ -541,7 +548,7 @@
             accuracy: pos.coords.accuracy
           }),
         (err) => reject(err || new Error("Không lấy được GPS")),
-        { enableHighAccuracy: true, maximumAge: 120000, timeout: 15000 }
+        { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 }
       );
     });
   }
@@ -600,9 +607,11 @@
     }
   }
 
-  async function getOrDetectCenter() {
-    const existing = readCenterFromFormOrCache();
-    if (existing) return existing;
+  async function detectFreshGpsCenter({ force = false } = {}) {
+    if (!force) {
+      const existing = readCenterFromFormOrCache();
+      if (existing) return existing;
+    }
 
     if (centerDetectPromise) return centerDetectPromise;
 
@@ -626,16 +635,20 @@
     return centerDetectPromise;
   }
 
+  async function getOrDetectCenter() {
+    return detectFreshGpsCenter({ force: false });
+  }
+
   async function autoDetectGpsSilent() {
     if (!navigator.geolocation) {
       showSearchStatus("Trình duyệt không hỗ trợ GPS — nhập lat/lng hoặc bấm Chọn tâm.", "error");
       return;
     }
-    if (readCenterFromFormOrCache()) return;
 
+    // Luôn lấy GPS hiện tại khi mở trang — không giữ lat/lng phiên trước
     showSearchStatus("Đang lấy vị trí GPS (tâm tìm kiếm)...", "info");
     try {
-      const center = await getOrDetectCenter();
+      const center = await detectFreshGpsCenter({ force: true });
       window.TimDiemBanMap?.focusPoint?.(center.lat, center.lng);
       console.log("Your current position is:");
       console.log("Latitude : " + center.lat);
@@ -836,13 +849,15 @@
     setFormBusy(true, "search");
 
     try {
-      let center = readCenterFromFormOrCache();
+      // Ưu tiên: form đã có (GPS lần này / chọn tâm / nhập tay).
+      // Nếu trống → lấy GPS hiện tại (không dùng phiên trước).
+      let center = readCenterFromForm();
       if (!center) {
         busyOperation = "gps";
         updateFormControls();
-        showSearchStatus("Chưa có tọa độ — đang lấy GPS...", "info");
+        showSearchStatus("Chưa có tọa độ — đang lấy GPS hiện tại...", "info");
         try {
-          center = await getOrDetectCenter();
+          center = await detectFreshGpsCenter({ force: true });
         } catch (err) {
           showSearchStatus(err.message || "Không lấy được GPS.", "error");
           return;

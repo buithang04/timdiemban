@@ -213,10 +213,14 @@ function generateSearchGrid(centerLat, centerLng, radiusKm) {
 function buildGlobalSeenKeys(places) {
   const keys = new Set();
   for (const p of places) {
+    keys.add(getDedupeKey(p));
     const slug = getPlaceSlugFromRecord(p);
     if (slug) keys.add(`place:${slug}`);
     const cid = p.googlePlaceId || getCanonicalPlaceId(p.mapsUrl || p.href || "");
     if (cid) keys.add(`cid:${String(cid).toLowerCase()}`);
+    const name = normalizeName(p.name);
+    const phone = normalizePhone(p.phone);
+    if (name && phone.length >= 9) keys.add(`np:${name}|${phone}`);
   }
   return [...keys];
 }

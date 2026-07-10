@@ -2001,6 +2001,13 @@
     const name = normalizeName(listData.name);
     const phone = normalizePhone(listData.phone);
     if (name && phone.length >= 9) return `np:${name}|${phone}`;
+    const hrefFull = listData.href || listData.mapsUrl || "";
+    const coordM = hrefFull.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/);
+    if (name && coordM) {
+      return `coord:${name}|${Number(coordM[1]).toFixed(4)}|${Number(coordM[2]).toFixed(4)}`;
+    }
+    const addr = (listData.address || "").trim();
+    if (name && addr.length > 8) return `na:${name}|${addr.slice(0, 60)}`;
     return `name:${name}`;
   }
 
@@ -3834,7 +3841,11 @@
     searchUrl = ""
   ) {
     const seenTrack = new Set(globalSeen);
-    const seenKeys = new Set();
+    const seenKeys = new Set(
+      globalSeen.filter((k) =>
+        /^(np:|na:|coord:|fb:|cid:)/.test(k)
+      )
+    );
     const seenCanonical = new Set(
       globalSeen
         .filter((k) => k.startsWith("cid:"))

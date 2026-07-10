@@ -67,7 +67,7 @@ function scheduleItemDeliveryCheck() {
     itemDeliveryCheckTimer = null;
     if (!scrapeState.running) return;
     reconcileWebCountWithExtension("item_check").catch(() => {});
-  }, 3000);
+  }, 1200);
 }
 
 async function readWebTabStats(tabId) {
@@ -85,20 +85,20 @@ async function readWebTabStats(tabId) {
 }
 
 async function verifyWebReceived(tabId, minCount, searchId) {
-  await sleep(80);
+  await sleep(120);
   const stats = await readWebTabStats(tabId);
   if (!stats) return { ok: false, stats: null, reason: "no_stats" };
+  // searchId lệch khi trang chưa nhận start — không coi là OK
   if (searchId && stats.searchId && stats.searchId !== searchId) {
     return { ok: false, stats, reason: "search_id_mismatch" };
   }
-  const webCount = stats.count ?? 0;
-  const applied = stats.lastSyncApplied ?? webCount;
-  const incoming = stats.lastSyncIncoming;
+  const webCount = Number(stats.count ?? 0);
+  const applied = Number(stats.lastSyncApplied ?? webCount);
   if (minCount != null) {
-    const appliedOk = applied + 2 >= minCount || webCount + 2 >= minCount;
-    const incomingOk = incoming != null && incoming + 2 >= minCount;
-    if (!appliedOk && !incomingOk) {
-      return { ok: false, stats, reason: "count_short", webCount, applied, incoming, minCount };
+    const need = Number(minCount);
+    // Chỉ tin số dòng thực trên bảng — không tin lastSyncIncoming
+    if (webCount < need && applied < need) {
+      return { ok: false, stats, reason: "count_short", webCount, applied, minCount: need };
     }
   }
   return { ok: true, stats, webCount };
@@ -187,10 +187,13 @@ async function scrapeKeepAliveTick() {
   webPushTick += 1;
   const mergedCount = getFinalResultsList().length;
   const now = Date.now();
-  if (mergedCount > 0 && now - lastKeepaliveSyncAt >= 12000) {
+  const behind = mergedCount > lastSyncedMergedCount;
+  // Lệch càng lớn → sync nền càng dày (3s), bình thường 6s
+  const keepaliveMs = behind && mergedCount - lastSyncedMergedCount >= 10 ? 3000 : 6000;
+  if (mergedCount > 0 && now - lastKeepaliveSyncAt >= keepaliveMs) {
     lastKeepaliveSyncAt = now;
-    if (mergedCount > lastSyncedMergedCount) {
-      ensureWebSyncedToResults("Đồng bộ nền...", false).catch(() => {});
+    if (behind) {
+      ensureWebSyncedToResults("Đồng bộ nền (bù lệch)...", true).catch(() => {});
     }
     reconcileWebCountWithExtension("keepalive").catch(() => {});
   }
@@ -320,8 +323,8 @@ async function reconcileWebCountWithExtension(reason = "reconcile") {
       let stats = await readWebTabStats(tab.id);
       let webCount = stats?.count ?? 0;
 
-      if (webCount >= extCount - 1) {
-        if (webCount >= extCount) lastSyncedMergedCount = extCount;
+      if (webCount >= extCount) {
+        lastSyncedMergedCount = extCount;
         return true;
       }
 
@@ -331,8 +334,8 @@ async function reconcileWebCountWithExtension(reason = "reconcile") {
       stats = await readWebTabStats(tab.id);
       webCount = stats?.count ?? 0;
 
-      if (webCount >= extCount - 1) {
-        if (webCount >= extCount) lastSyncedMergedCount = extCount;
+      if (webCount >= extCount) {
+        lastSyncedMergedCount = extCount;
         return true;
       }
       return false;
@@ -545,9 +548,9 @@ async function waitTabComplete(tabId, timeoutMs = 20000) {
 
 const EXT_QUEUE_KEY = "timdiemban_ext_queue";
 
-/** Gửi thẳng vào handler trang — inject đồng bộ, queue + postMessage dự phòng */
+/** Gửi thẳng vào handler trang — trả về true chỉ khi ingest vào bảng thành công */
 async function deliverDataToWebTab(tabId, type, payload) {
-  await chrome.scripting.executeScript({
+  const [{ result }] = await chrome.scripting.executeScript({
     target: { tabId },
     world: "MAIN",
     func: (data, queueKey) => {
@@ -564,23 +567,28 @@ async function deliverDataToWebTab(tabId, type, payload) {
           }
         } catch (e) {
           console.warn("TimDiemBan ingestSync:", e);
+          delivered = false;
         }
       }
       if (!delivered) {
         try {
           const q = JSON.parse(localStorage.getItem(queueKey) || "[]");
           q.push({ type: data.type, payload: data.payload, at: Date.now() });
-          while (q.length > 400) q.shift();
+          while (q.length > 800) q.shift();
           localStorage.setItem(queueKey, JSON.stringify(q));
         } catch {}
-        window.postMessage(
-          { source: "timdiemban-ext", type: data.type, payload: data.payload },
-          window.location.origin
-        );
+        try {
+          window.postMessage(
+            { source: "timdiemban-ext", type: data.type, payload: data.payload },
+            window.location.origin
+          );
+        } catch {}
       }
+      return { delivered };
     },
     args: [{ type, payload }, EXT_QUEUE_KEY]
   });
+  return !!(result && result.delivered);
 }
 
 /** Gửi từng quán — bù snapshot khi gửi thất bại hoặc web chưa nhận đủ */
@@ -664,13 +672,19 @@ async function sendToWebPage(webUrl, type, payload, options = {}) {
 
   const message = { action: "TIMDIEMBAN_DATA", type, payload };
   let ok = false;
+  let deliveredToIngest = false;
 
   if (WEB_DATA_TYPES.has(type)) {
-    ok = await deliverDataToWebTab(tab.id, type, payload)
-      .then(() => true)
-      .catch(() => false);
+    try {
+      deliveredToIngest = await deliverDataToWebTab(tab.id, type, payload);
+      ok = deliveredToIngest;
+    } catch {
+      ok = false;
+      deliveredToIngest = false;
+    }
   }
 
+  // Fallback bridge chỉ khi chưa ingest được vào bảng
   if (!ok) {
     try {
       await chrome.tabs.sendMessage(tab.id, message);
@@ -690,24 +704,37 @@ async function sendToWebPage(webUrl, type, payload, options = {}) {
     }
   }
 
-  let verified = ok;
-  let webStats = null;
   const searchId = payload?.searchParams?.searchId || currentSearch?.searchId;
   const expectCount =
     type === "sync"
       ? payload?.mergedCount ?? payload?.results?.length
       : type === "item"
         ? payload?.mergedCount
-        : null;
+        : type === "complete"
+          ? payload?.total ?? payload?.results?.length
+          : null;
 
-  if (ok && tab.id && expectCount != null && (type === "sync" || type === "item")) {
-    const check = await verifyWebReceived(tab.id, type === "sync" ? expectCount : null, searchId);
-    webStats = check.stats;
-    if (type === "sync") {
-      verified = check.ok;
-      if (!verified) ok = false;
-    } else if (check.stats && expectCount > (check.stats.count ?? 0) + 2) {
-      verified = false;
+  // Sync/complete bắt buộc verify số dòng trên bảng — không tin "đã gửi" suông
+  if (ok && tab.id && expectCount != null && (type === "sync" || type === "complete")) {
+    let verified = false;
+    for (let v = 0; v < 3 && !verified; v++) {
+      const check = await verifyWebReceived(tab.id, expectCount, searchId);
+      if (check.ok) {
+        verified = true;
+        break;
+      }
+      // Nếu chỉ vào queue / bridge mà chưa ingest — thử inject lại
+      if (!deliveredToIngest) {
+        try {
+          deliveredToIngest = await deliverDataToWebTab(tab.id, type, payload);
+        } catch {}
+      }
+      await sleep(120 * (v + 1));
+    }
+    if (!verified) ok = false;
+  } else if (ok && tab.id && type === "item" && expectCount != null) {
+    const check = await verifyWebReceived(tab.id, null, searchId);
+    if (check.stats && (check.stats.count ?? 0) < expectCount) {
       ok = false;
     }
   }
@@ -736,38 +763,79 @@ async function sendToWebPage(webUrl, type, payload, options = {}) {
 
 async function pushSyncSnapshotToWeb(text, percent) {
   if (!currentSearch?.webUrl || !scrapeState.searchParams) return false;
+
+  // Đang bận: chỉ giữ snapshot MỚI NHẤT (luôn lấy getFinalResultsList khi chạy)
   if (pushSyncBusy) {
     pushSyncQueued = { text, percent, at: Date.now() };
     return false;
   }
+
   pushSyncBusy = true;
+  let okFinal = false;
   try {
-    const results = getFinalResultsList();
-    if (!results.length) return false;
-    const payload = {
-      results,
-      searchParams: currentSearch,
-      text: text || `Đồng bộ — tổng ${results.length} quán`,
-      percent: percent ?? 0,
-      mergedCount: results.length
-    };
-    for (let attempt = 0; attempt < 4; attempt++) {
-      const ok = await sendToWebPage(currentSearch.webUrl, "sync", payload);
-      if (ok) {
-        lastSyncedMergedCount = results.length;
-        lastForceSyncAt = Date.now();
-        return true;
+    // Lặp: gửi snapshot hiện tại; nếu có queue mới trong lúc gửi thì gửi tiếp
+    for (let round = 0; round < 4; round++) {
+      const results = getFinalResultsList();
+      if (!results.length) break;
+
+      const payload = {
+        results,
+        searchParams: currentSearch,
+        text: text || `Đồng bộ — tổng ${results.length} quán`,
+        percent: percent ?? 0,
+        mergedCount: results.length
+      };
+
+      let ok = false;
+      for (let attempt = 0; attempt < 4; attempt++) {
+        ok = await sendToWebPage(currentSearch.webUrl, "sync", payload);
+        if (ok) {
+          const tab = scrapeState.webTabId
+            ? await chrome.tabs.get(scrapeState.webTabId).catch(() => null)
+            : await findWebTab(currentSearch.webUrl);
+          if (tab?.id) {
+            const check = await verifyWebReceived(
+              tab.id,
+              results.length,
+              currentSearch.searchId
+            );
+            if (check.ok) {
+              lastSyncedMergedCount = results.length;
+              lastForceSyncAt = Date.now();
+              okFinal = true;
+              break;
+            }
+            ok = false;
+          } else {
+            lastSyncedMergedCount = results.length;
+            lastForceSyncAt = Date.now();
+            okFinal = true;
+            break;
+          }
+        }
+        await sleep(150 * (attempt + 1));
       }
-      await sleep(300 * (attempt + 1));
+
+      // Có snapshot mới hơn trong lúc sync → gửi tiếp vòng sau
+      if (pushSyncQueued) {
+        const q = pushSyncQueued;
+        pushSyncQueued = null;
+        text = q.text || text;
+        percent = q.percent ?? percent;
+        continue;
+      }
+
+      if (okFinal) break;
+      if (!ok) await sleep(200);
     }
-    return false;
+    return okFinal;
   } finally {
     pushSyncBusy = false;
     if (pushSyncQueued) {
       const q = pushSyncQueued;
       pushSyncQueued = null;
       if (Date.now() - q.at < 60000) {
-        setTimeout(() => pushSyncSnapshotToWeb(q.text, q.percent), 350);
+        setTimeout(() => pushSyncSnapshotToWeb(q.text, q.percent), 100);
       }
     }
   }
@@ -781,7 +849,7 @@ async function ensureWebSyncedToResults(reason, force = false) {
   if (!count) return false;
   const stale = count > lastSyncedMergedCount;
   if (!force && !stale) return false;
-  if (force && Date.now() - lastForceSyncAt < 5000) return false;
+  if (force && Date.now() - lastForceSyncAt < 600) return false;
   scheduleLiveSearchBackup(true);
   const pct = calcProgressPercent(scrapeState.gridIndex, scrapeState.totalCells, 0.35);
   const text =
@@ -966,6 +1034,14 @@ async function maybeRecoverStalledScrape() {
     lastScrapeProgressAt = Date.now();
     if (idleMs >= 300000 && scrapeState.phase === "grid") {
       const idx = scrapeState.gridIndex;
+      // Thử lại vùng 1 lần trước khi bỏ qua — tránh mất cả cụm kết quả
+      if (!scrapeState._retriedCells) scrapeState._retriedCells = new Set();
+      if (!scrapeState._retriedCells.has(idx) && !scrapeState.completedCells.has(idx)) {
+        scrapeState._retriedCells.add(idx);
+        notifyPopup(`Vùng ${idx + 1} treo — thử quét lại lần 2...`);
+        await runGridCell(idx);
+        return;
+      }
       if (!scrapeState.completedCells.has(idx)) {
         scrapeState.completedCells.add(idx);
         notifyPopup(`Vùng ${idx + 1} treo quá lâu — bỏ qua và chuyển vùng tiếp theo.`);
@@ -2115,6 +2191,25 @@ async function handleScrapeComplete(data) {
     partialCode: partialCode || null
   };
 
+  // Đồng bộ snapshot đầy đủ trước complete — tránh web nhận ít hơn extension
+  await pushSyncSnapshotToWeb(`Đồng bộ cuối — ${finalResults.length} quán`, 99);
+  for (let syncTry = 0; syncTry < 6; syncTry++) {
+    const tab = scrapeState.webTabId
+      ? await chrome.tabs.get(scrapeState.webTabId).catch(() => null)
+      : await findWebTab(searchParams.webUrl);
+    if (tab?.id) {
+      scrapeState.webTabId = tab.id;
+      const verified = await verifyWebReceived(
+        tab.id,
+        finalResults.length,
+        searchParams.searchId
+      );
+      if (verified.ok) break;
+    }
+    await pushSyncSnapshotToWeb(`Bù dữ liệu — ${finalResults.length} quán (lần ${syncTry + 2})`, 99);
+    await sleep(400 * (syncTry + 1));
+  }
+
   // Retry gửi complete nhiều lần — đảm bảo web page nhận kết quả ngay cả khi không active
   let sent = false;
   for (let i = 0; i < 8 && !sent; i++) {
@@ -2322,7 +2417,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     scheduleLiveSearchBackup(true);
 
-    sendItemToWeb(params.webUrl, merged, params);
+    // Không fire-and-forget — chờ gửi xong để bù sync khi fail
+    sendItemToWeb(params.webUrl, merged, params).catch(() => {});
   }
 
   if (message.action === "CELL_LIST_COMPLETE") {

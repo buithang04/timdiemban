@@ -1,94 +1,79 @@
 <!DOCTYPE html>
-
 <html lang="vi">
-
 <head>
-
   <meta charset="UTF-8" />
-
   <title>findmap</title>
-
   <style>
-
     body {
-
       width: 280px;
-
       margin: 0;
-
       padding: 20px;
-
       font-family: "Segoe UI", system-ui, sans-serif;
-
       text-align: center;
-
       color: #1e293b;
-
     }
-
     h1 { font-size: 16px; margin: 0 0 8px; }
-
     p { font-size: 13px; color: #64748b; line-height: 1.5; margin: 0 0 16px; }
-
-    a {
-
+    a, button.open-link {
       display: block;
-
+      width: 100%;
+      box-sizing: border-box;
       padding: 12px;
-
       background: #2563eb;
-
       color: #fff;
-
       text-decoration: none;
-
+      border: none;
       border-radius: 8px;
-
       font-weight: 600;
-
       font-size: 14px;
-
+      cursor: pointer;
+      font-family: inherit;
     }
-
-    a:hover { background: #1d4ed8; }
-
+    a:hover, button.open-link:hover { background: #1d4ed8; }
+    .url-hint {
+      margin-top: 10px;
+      font-size: 11px;
+      color: #94a3b8;
+      word-break: break-all;
+    }
   </style>
-
 </head>
-
 <body>
-
   <h1>findmap</h1>
-
   <p>Extension chạy ngầm. Mở trang kết quả để tìm kiếm và xem dữ liệu.</p>
-
-  <a id="openWebLink" href="#" target="_blank">Mở trang kết quả</a>
+  <a id="openWebLink" class="open-link" href="https://findmap.app.chatplus.io.vn" target="_blank" rel="noopener">
+    Mở trang kết quả
+  </a>
+  <div class="url-hint" id="openWebHint">findmap.app.chatplus.io.vn</div>
 
   <script src="app-config.js"></script>
-
   <script>
-
     (function () {
-
-      var origin = (window.TIMDIEMBAN_CONFIG && window.TIMDIEMBAN_CONFIG.APP_ORIGIN) || "http://localhost:3000";
-
-      origin = origin.replace(/\/$/, "");
+      var FALLBACK = "https://findmap.app.chatplus.io.vn";
+      var origin = (window.TIMDIEMBAN_CONFIG && window.TIMDIEMBAN_CONFIG.APP_ORIGIN) || FALLBACK;
+      origin = String(origin || FALLBACK).replace(/\/$/, "");
+      if (!/^https?:\/\//i.test(origin)) origin = FALLBACK;
 
       var link = document.getElementById("openWebLink");
-
+      var hint = document.getElementById("openWebHint");
       if (link) {
-
         link.href = origin;
-
-        link.textContent = "Mở " + origin.replace(/^https?:\/\//, "");
-
+        link.textContent = "Mở trang kết quả";
+        link.addEventListener("click", function (e) {
+          e.preventDefault();
+          try {
+            if (chrome && chrome.tabs && chrome.tabs.create) {
+              chrome.tabs.create({ url: origin });
+              return;
+            }
+          } catch (_) {}
+          window.open(origin, "_blank");
+        });
       }
-
+      if (hint) {
+        hint.textContent = origin.replace(/^https?:\/\//, "");
+      }
     })();
-
   </script>
-
 </body>
-
 </html>
-
