@@ -371,8 +371,12 @@ function buildProgressText(cell, cellIndex, totalCells, extra = {}) {
 
 function calcProgressPercent(cellIndex, totalCells, inCellRatio = 0) {
   if (!totalCells) return 0;
-  const base = ((cellIndex + inCellRatio) / totalCells) * 95;
-  return Math.min(95, Math.round(base));
+  const ratio = Math.max(0, Math.min(1, Number(inCellRatio) || 0));
+  const idx = Math.max(0, Number(cellIndex) || 0);
+  const doneCells = (idx / totalCells) * 70;
+  const withinSpan = Math.max(8, 70 / totalCells);
+  const within = ratio * withinSpan;
+  return Math.min(95, Math.max(0, Math.round(doneCells + within)));
 }
 
 async function apiFetch(webUrl, path, options = {}) {
@@ -867,6 +871,8 @@ function notifyPopup(error) {
 function notifyProgress(percent, text) {
   lastScrapeProgressAt = Date.now();
   chrome.runtime.sendMessage({ action: "SEARCH_PROGRESS", percent, text }).catch(() => {});
+  // Luôn đẩy overlay Maps — tránh UI kẹt text cũ trong khi vẫn scrape/gửi kết quả
+  updateMapsShield(text, percent);
   if (currentSearch?.webUrl) {
     return sendToWebPage(currentSearch.webUrl, "progress", {
       percent,
@@ -2395,7 +2401,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === "SCRAPE_PROGRESS") {
     if (!scrapeState.running) return;
     notifyProgress(message.percent, message.text);
-    updateMapsShield(message.text, message.percent);
   }
 
   if (message.action === "SCRAPE_LOG") {
@@ -2416,6 +2421,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (!merged) return;
 
     scheduleLiveSearchBackup(true);
+
+    // Cập nhật overlay Maps theo số quán đã có — tránh nhìn như treo ở 1%
+    const total = getFinalResultsList().length;
+    const cellIdx = scrapeState.gridIndex || 0;
+    const cells = scrapeState.totalCells || 1;
+    const pct = calcProgressPercent(cellIdx, cells, 0.35);
+    updateMapsShield(
+      `Bước ${cellIdx + 1}/${cells} — đã gửi ${total} quán · ${merged.name || ""}`.slice(0, 120),
+      Math.max(pct, 2)
+    );
 
     // Không fire-and-forget — chờ gửi xong để bù sync khi fail
     sendItemToWeb(params.webUrl, merged, params).catch(() => {});

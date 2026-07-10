@@ -146,7 +146,14 @@
   });
 
   function createShield() {
-    if (shieldEl) return shieldEl;
+    // Maps SPA có thể gỡ node khỏi DOM — tạo lại nếu đã bị detach
+    if (shieldEl && document.contains(shieldEl)) return shieldEl;
+    if (shieldEl && !document.contains(shieldEl)) {
+      try {
+        shieldEl.remove();
+      } catch {}
+      shieldEl = null;
+    }
     shieldEl = document.createElement("div");
     shieldEl.id = "timdiemban-shield";
     shieldEl.innerHTML = `
@@ -233,15 +240,29 @@
   }
 
   function updateShield(text, percent) {
+    createShield();
     if (!shieldEl) return;
     const textEl = shieldEl.querySelector("#timdiemban-shield-text");
     const barEl = shieldEl.querySelector("#timdiemban-shield-bar");
     const pctEl = shieldEl.querySelector("#timdiemban-shield-percent");
     if (textEl && text) textEl.textContent = text;
     if (percent != null) {
-      if (barEl) barEl.style.width = `${percent}%`;
-      if (pctEl) pctEl.textContent = `${percent}%`;
+      const pct = Math.max(0, Math.min(100, Number(percent) || 0));
+      if (barEl) barEl.style.width = `${pct}%`;
+      if (pctEl) pctEl.textContent = `${Math.round(pct)}%`;
     }
+  }
+
+  /** % tổng — ưu tiên hiển thị tiến độ trong ô hiện tại để không kẹt 1% khi có nhiều ô */
+  function calcProgressPercent(cellIndex, totalCells, inCellRatio = 0) {
+    if (!totalCells) return 0;
+    const ratio = Math.max(0, Math.min(1, Number(inCellRatio) || 0));
+    const idx = Math.max(0, Number(cellIndex) || 0);
+    const doneCells = (idx / totalCells) * 70;
+    // Mỗi ô đang chạy chiếm tối thiểu ~8% thanh (dễ thấy), tối đa 1 phần theo số ô
+    const withinSpan = Math.max(8, 70 / totalCells);
+    const within = ratio * withinSpan;
+    return Math.min(95, Math.max(0, Math.round(doneCells + within)));
   }
 
   function hideShield() {
@@ -3111,11 +3132,27 @@
   }
 
   /** Chờ Maps tải đúng vùng — tránh đọc list cũ sau khi background chuyển URL (Apify: mỗi ô = search mới) */
-  async function waitForCellFeedReady(searchUrl, cellLat, cellLng, cellIndex = 0, maxMs = 28000) {
+  async function waitForCellFeedReady(searchUrl, cellLat, cellLng, cellIndex = 0, maxMs = 28000, totalCells = 0) {
     const start = Date.now();
     const oldFirstHref = cellIndex > 0 ? getFirstListPlaceHref(getFeedPanel()) : "";
+    let lastHeartbeat = 0;
+    if (totalCells > 0) _lastKnownTotalCells = totalCells;
+    const cellsHint = Math.max(1, totalCells || _lastKnownTotalCells || 1);
+
+    const heartbeat = () => {
+      const now = Date.now();
+      if (now - lastHeartbeat < 1500) return;
+      lastHeartbeat = now;
+      const waited = Math.round((now - start) / 1000);
+      const pulse = Math.min(0.12, 0.02 + waited * 0.004);
+      sendProgress(
+        calcProgressPercent(cellIndex, cellsHint, pulse),
+        `Bước ${cellIndex + 1}/${cellsHint} — đang chờ danh sách Maps... (${waited}s)`
+      );
+    };
 
     while (Date.now() - start < maxMs) {
+      heartbeat();
       if (urlCenterMatchesCell(window.location.href, cellLat, cellLng)) break;
       await sleep(200);
     }
@@ -3126,6 +3163,7 @@
 
     while (Date.now() - start < maxMs) {
       if (isAborted) throw new Error("Đã hủy");
+      heartbeat();
 
       const feed = getFeedPanel();
       if (isFeedLoading(feed)) {
@@ -3172,6 +3210,8 @@
     }
     throw new Error("Không tìm thấy danh sách kết quả trên Google Maps");
   }
+
+  let _lastKnownTotalCells = 1;
 
   async function enrichPlaceOnPage(listData, searchParams, progressText, percent, options = {}) {
     const { fast = false, quick = false, needAddress = true, needPhone = true } = options;
@@ -3607,11 +3647,6 @@
 
     tbLog(`Xong batch: ${enriched.length} quán, ${needFallback.length} cần URL`);
     return { success: true, places: enriched, needFallback };
-  }
-
-  function calcProgressPercent(cellIndex, totalCells, inCellRatio = 0) {
-    if (!totalCells) return 0;
-    return Math.min(95, Math.round(((cellIndex + inCellRatio) / totalCells) * 95));
   }
 
   async function scrollFeed(feed, onItems, options = {}) {
@@ -4087,16 +4122,17 @@
       searchUrl
     } = data;
     isAborted = false;
+    if (totalCells > 0) _lastKnownTotalCells = totalCells;
     const label = cellLabel || cellId || `Vùng ${cellIndex + 1}`;
-    showShield(`Ô ${cellIndex + 1}/${totalCells}: ${label} — cuộn + lấy DOM`, 0, {
+    showShield(`Ô ${cellIndex + 1}/${totalCells}: ${label} — cuộn + lấy DOM`, 2, {
       webUrl: searchParams?.webUrl
     });
     sendProgress(
-      2,
+      calcProgressPercent(cellIndex, totalCells, 0.03),
       `Bước ${cellIndex + 1}/${totalCells} — ${label} | Đang chờ danh sách Maps...`
     );
 
-    const feed = await waitForCellFeedReady(searchUrl, cellLat, cellLng, cellIndex);
+    const feed = await waitForCellFeedReady(searchUrl, cellLat, cellLng, cellIndex, 28000, totalCells);
     const outcome = await scrollAndScrapePlaces(
       feed,
       searchParams,
