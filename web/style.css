@@ -1939,6 +1939,50 @@ body.wm-console .wm-main { display: contents; }
   gap: 8px;
 }
 
+.gps-recovery {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 4px 0 8px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid #93c5fd;
+  background: linear-gradient(180deg, #eff6ff 0%, #f8fbff 100%);
+}
+
+.gps-recovery.hidden {
+  display: none !important;
+}
+
+.gps-recovery-text,
+.gps-recovery-alt {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: #1e3a8a;
+}
+
+.gps-recovery-alt {
+  font-size: 12px;
+  color: #334155;
+}
+
+.gps-geo-el {
+  display: block;
+  width: 100%;
+  min-height: 40px;
+}
+
+.gps-geo-el:granted {
+  outline: 2px solid #16a34a;
+  outline-offset: 2px;
+}
+
+#btnGeoFallback {
+  width: 100%;
+  font-weight: 700;
+}
+
 .wm-btn-primary {
   background: var(--wm-primary) !important;
   border-color: var(--wm-primary) !important;

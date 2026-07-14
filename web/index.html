@@ -14,7 +14,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
   <base href="/" />
-  <link rel="stylesheet" href="/style.css" />
+  <link rel="stylesheet" href="/style.css?v=20260714gps" />
   <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
   <script>
     try {
@@ -219,6 +219,20 @@
               <button type="button" id="btnPickCenter" class="wm-btn wm-btn-mini wm-btn-pick-center" title="Bấm nút này rồi click bản đồ để chọn tâm">Chọn tâm</button>
             </div>
 
+            <div id="gpsRecoveryPanel" class="gps-recovery hidden" role="region" aria-label="Quyền vị trí">
+              <p class="gps-recovery-text" id="gpsRecoveryText">
+                Chrome đang chặn vị trí. Bấm nút bên dưới — Chrome sẽ mở hộp thoại Cho phép / Tiếp tục chặn (không cần vào Settings).
+              </p>
+              <geolocation id="geoPermissionEl" class="gps-geo-el" accuracymode="precise">
+                <button type="button" id="btnGeoFallback" class="wm-btn wm-btn-primary wm-btn-block">
+                  Bật vị trí GPS
+                </button>
+              </geolocation>
+              <p class="gps-recovery-alt" id="gpsRecoveryAlt">
+                Hoặc bấm biểu tượng định vị bị gạch trên thanh địa chỉ → chọn <strong>Luôn cho phép</strong> → <strong>Xong</strong>. Hoặc dùng <strong>Chọn tâm</strong>.
+              </p>
+            </div>
+
             <button type="submit" id="startSearchBtn" class="wm-btn wm-btn-primary wm-btn-block">Tìm kiếm ngay</button>
             <button type="button" id="cancelSearchBtn" class="wm-btn wm-btn-danger wm-btn-block hidden" title="Dừng quét Google Maps và lưu kết quả đã tìm">Dừng quét điểm bán</button>
 
@@ -414,7 +428,7 @@
   <script src="/grid-utils.js"></script>
   <script src="/map.js"></script>
   <script src="/ext-version.js"></script>
-  <script src="/search.js?v=20260714gps"></script>
+  <script src="/search.js?v=20260714gps2"></script>
   <script src="/app.js"></script>
 </body>
 </html>
