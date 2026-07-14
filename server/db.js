@@ -3,6 +3,12 @@
  */
 const mysql = require("mysql2/promise");
 const crypto = require("crypto");
+const {
+  isSecretSettingKey,
+  encryptSecret,
+  decryptSecret,
+  migrateSecretSettings
+} = require("../config/settings-crypto");
 
 const PACKAGES = [
   { id: "pkg_starter", name: "Gói Starter", points: 30000, price: 2000000, expire_days: 30 },
@@ -54,6 +60,7 @@ async function initDb() {
   await seedPackages();
   await seedDefaultAdmin();
   await migrateUsersSchema();
+  await migrateSecretSettings(pool);
 
   return pool;
 }
@@ -352,15 +359,22 @@ async function listPackages() {
 
 async function getSetting(key, fallback = null) {
   const [rows] = await pool.execute("SELECT value FROM settings WHERE `key` = ?", [key]);
-  return rows[0] ? rows[0].value : fallback;
+  if (!rows[0]) return fallback;
+  const raw = rows[0].value;
+  if (raw == null) return fallback;
+  return isSecretSettingKey(key) ? decryptSecret(raw) : raw;
 }
 
 async function setSetting(key, value) {
   const now = new Date().toISOString();
+  let stored = value == null ? null : String(value);
+  if (stored !== null && isSecretSettingKey(key)) {
+    stored = stored ? encryptSecret(stored) : "";
+  }
   await pool.execute(
     `INSERT INTO settings (\`key\`, value, updated_at) VALUES (?, ?, ?)
      ON DUPLICATE KEY UPDATE value = VALUES(value), updated_at = VALUES(updated_at)`,
-    [key, value == null ? null : String(value), now]
+    [key, stored, now]
   );
 }
 

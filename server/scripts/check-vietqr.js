@@ -9,6 +9,7 @@ require("fs").readFileSync(require("path").join(__dirname, "..", ".env"), "utf8"
 
 const mysql = require("mysql2/promise");
 const { generateVietQrV2 } = require("../vietqr");
+const { decryptSecret, isSecretSettingKey } = require("../../config/settings-crypto");
 
 async function main() {
   const p = await mysql.createConnection({
@@ -24,7 +25,9 @@ async function main() {
   console.log("=== Settings in DB ===");
   const cfg = {};
   for (const r of rows) {
-    cfg[r.key] = r.value || "";
+    const raw = r.value || "";
+    const val = isSecretSettingKey(r.key) ? decryptSecret(raw) : raw;
+    cfg[r.key] = val;
     if (r.key.includes("api_key")) {
       console.log(r.key + ":", r.value ? `[set, len=${r.value.length}]` : "(empty)");
     } else {

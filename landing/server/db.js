@@ -3,6 +3,12 @@
  */
 const mysql = require("mysql2/promise");
 const crypto = require("crypto");
+const {
+  isSecretSettingKey,
+  encryptSecret,
+  decryptSecret,
+  migrateSecretSettings
+} = require("../../config/settings-crypto");
 
 let pool = null;
 
@@ -55,6 +61,8 @@ async function initDb() {
     console.error("[cms] Không khởi tạo bảng tin tức:", err.message);
     throw err;
   }
+
+  await migrateSecretSettings(pool);
 
   return pool;
 }
@@ -214,15 +222,22 @@ async function getUserById(id) {
 
 async function getSetting(key, fallback = null) {
   const [rows] = await pool.execute("SELECT value FROM settings WHERE `key` = ?", [key]);
-  return rows[0] ? rows[0].value : fallback;
+  if (!rows[0]) return fallback;
+  const raw = rows[0].value;
+  if (raw == null) return fallback;
+  return isSecretSettingKey(key) ? decryptSecret(raw) : raw;
 }
 
 async function setSetting(key, value) {
   const now = new Date().toISOString();
+  let stored = value == null ? null : String(value);
+  if (stored !== null && isSecretSettingKey(key)) {
+    stored = stored ? encryptSecret(stored) : "";
+  }
   await pool.execute(
     `INSERT INTO settings (\`key\`, value, updated_at) VALUES (?, ?, ?)
      ON DUPLICATE KEY UPDATE value = VALUES(value), updated_at = VALUES(updated_at)`,
-    [key, value == null ? null : String(value), now]
+    [key, stored, now]
   );
 }
 
