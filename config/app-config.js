@@ -9,8 +9,8 @@
  *   NEWS_ORIGIN: "http://localhost:3001"
  *
  * Prod (cùng domain reverse-proxy hoặc tách subdomain):
- *   APP_ORIGIN:  "https://findmap.app.chatplus.io.vn"
- *   NEWS_ORIGIN: "https://findmap.app.chatplus.io.vn"  // hoặc https://news.example.com
+ *   APP_ORIGIN:  "https://app.findmap.vn"
+ *   NEWS_ORIGIN: "https://findmap.vn"  // hoặc cùng APP_ORIGIN
  *
  * Sau khi đổi: `cd server && npm start` (prestart sync) hoặc `node scripts/sync-app-config.js`
  */
@@ -25,7 +25,7 @@ function env(name) {
   return "";
 }
 
-const defaultApp = "https://findmap.app.chatplus.io.vn";
+const defaultApp = "https://app.findmap.vn";
 const appOrigin = env("APP_ORIGIN") || defaultApp;
 const isLocalApp = /localhost|127\.0\.0\.1/i.test(appOrigin);
 const defaultNews = isLocalApp ? "http://localhost:3001" : appOrigin;

@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "findmap - Google Maps Scraper",
-  "version": "1.7.37",
-  "description": "Cào dữ liệu Google Maps — điều khiển từ http://localhost:3000",
+  "version": "1.7.39",
+  "description": "Cao Google Maps — bat ky domain Findmap (kich hoat trong popup)",
   "permissions": [
     "activeTab",
     "tabs",
@@ -17,7 +17,11 @@
     "http://localhost:3000/*",
     "http://127.0.0.1:3000/*",
     "http://localhost:3001/*",
-    "http://127.0.0.1:3001/*"
+    "http://127.0.0.1:3001/*",
+    "https://app.findmap.vn/*",
+    "https://*.findmap.vn/*",
+    "https://findmap.vn/*",
+    "https://findmap.app.chatplus.io.vn/*"
   ],
   "action": {
     "default_popup": "popup.html",
@@ -42,7 +46,11 @@
         "http://localhost:3000/*",
         "http://127.0.0.1:3000/*",
         "http://localhost:3001/*",
-        "http://127.0.0.1:3001/*"
+        "http://127.0.0.1:3001/*",
+        "https://app.findmap.vn/*",
+        "https://*.findmap.vn/*",
+        "https://findmap.vn/*",
+        "https://findmap.app.chatplus.io.vn/*"
       ],
       "js": [
         "web-bridge.js"
@@ -54,5 +62,9 @@
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
-  }
+  },
+  "optional_host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ]
 }

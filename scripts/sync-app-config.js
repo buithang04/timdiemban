@@ -50,7 +50,21 @@ function collectWebUrlPatterns(...origins) {
     } else if (base.includes("127.0.0.1")) {
       patterns.add(originToHostPattern(base.replace("127.0.0.1", "localhost")));
     }
+    try {
+      const host = new URL(base).hostname;
+      // Cùng root domain .findmap.vn → luôn cho phép subdomain (đổi app.* vẫn chạy)
+      if (/(^|\.)findmap\.vn$/i.test(host)) {
+        patterns.add("https://app.findmap.vn/*");
+        patterns.add("https://*.findmap.vn/*");
+        patterns.add("https://findmap.vn/*");
+      }
+    } catch {}
   }
+  // Alias cũ + prod mặc định — tránh miss khi sync từ env local
+  patterns.add("https://app.findmap.vn/*");
+  patterns.add("https://*.findmap.vn/*");
+  patterns.add("https://findmap.vn/*");
+  patterns.add("https://findmap.app.chatplus.io.vn/*");
   // Dev local luôn được phép
   patterns.add("http://localhost:3000/*");
   patterns.add("http://127.0.0.1:3000/*");
@@ -144,6 +158,7 @@ function syncManifest() {
   const patterns = collectWebUrlPatterns(cfg.APP_ORIGIN, cfg.NEWS_ORIGIN);
 
   manifest.host_permissions = ["https://www.google.com/maps/*", ...patterns];
+  manifest.optional_host_permissions = ["http://*/*", "https://*/*"];
 
   const bridge = manifest.content_scripts.find((s) => (s.js || []).includes("web-bridge.js"));
   if (bridge) {
@@ -151,6 +166,11 @@ function syncManifest() {
   }
 
   manifest.description = `Cào dữ liệu Google Maps — điều khiển từ ${stripSlash(cfg.APP_ORIGIN)}`;
+
+  // Bump patch version khi sync domain (giúp Chrome nhận thấy cần reload)
+  const parts = String(manifest.version || "1.0.0").split(".").map((n) => parseInt(n, 10) || 0);
+  while (parts.length < 3) parts.push(0);
+  // Không auto-bump mỗi sync — chỉ đảm bảo description cập nhật
 
   fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + "\n", "utf8");
   console.log("[sync-config] manifest host_permissions:", patterns.join(", "));

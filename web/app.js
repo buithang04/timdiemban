@@ -232,6 +232,10 @@ function updateAuthUI() {
       els.headerUserRole.textContent =
         currentUser.role === "admin" ? "Super Administrator" : "Thành viên";
     }
+    const adminNav = document.getElementById("navAdminLink");
+    if (adminNav) {
+      adminNav.classList.toggle("hidden", currentUser.role !== "admin");
+    }
     if (els.headerUserAvatar) {
       const seed = currentUser.fullName || currentUser.email || "U";
       const initial = seed[0].toUpperCase();
@@ -255,6 +259,8 @@ function updateAuthUI() {
     if (els.pkgPointsHdr) els.pkgPointsHdr.textContent = "-";
     if (els.infoPointsHdr) els.infoPointsHdr.textContent = "-";
     if (els.pkgName) els.pkgName.textContent = "";
+    const adminNav = document.getElementById("navAdminLink");
+    if (adminNav) adminNav.classList.add("hidden");
   }
   updateStatUsed();
   renderPackageButtons();
@@ -448,11 +454,8 @@ async function loadCurrentUser() {
   }
   try {
     const { user } = await apiRequest("/api/auth/me");
-    if (user?.role === "admin") {
-      window.location.replace("/admin");
-      return null;
-    }
-    if (user && !user.termsAccepted) {
+    // Admin được dùng trang tìm kiếm như user thường (vào /admin qua menu riêng)
+    if (user && user.role !== "admin" && !user.termsAccepted) {
       window.location.replace("/login");
       return null;
     }
@@ -2687,7 +2690,7 @@ window.addEventListener("timdiemban:bridge-ready", (e) => {
     queryRescanStatus();
   } else {
     window.TimDiemBanExtVersion?.onBridgeMissing();
-    setConnStatus("Chưa thấy extension — cài/reload findmap", "error");
+      setConnStatus("Chưa thấy extension — bấm icon findmap → Kích hoạt trang này (đổi domain cũng dùng cách này)", "error");
   }
 });
 

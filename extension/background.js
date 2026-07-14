@@ -1,4 +1,4 @@
-importScripts("app-config.js", "web-config.js", "grid.js");
+importScripts("app-config.js", "web-config.js", "site-bridge.js", "grid.js");
 
 /** URL search Maps — cạnh ô cố định (m), chỉ đổi tâm @lat,lng */
 function buildMapsUrl(keyword, lat, lng, viewportM) {
@@ -481,6 +481,13 @@ async function tabHasIngestHandler(tabId) {
 
 async function findWebTab(webUrl) {
   const candidates = resolveWebUrlCandidates(webUrl);
+  try {
+    const preferred = await getPreferredWebOrigin();
+    if (preferred && !candidates.includes(preferred)) candidates.unshift(preferred);
+    for (const extra of await getExtraWebOrigins()) {
+      if (!candidates.includes(extra)) candidates.push(extra);
+    }
+  } catch {}
   const tryTabs = [];
 
   if (scrapeState.webTabId) {
@@ -498,15 +505,25 @@ async function findWebTab(webUrl) {
   }
 
   if (!tryTabs.length) {
-    let hostRe = null;
+    let hostRes = [];
     try {
-      const host = new URL(getAppOrigin()).hostname.replace(/\./g, "\\.");
-      hostRe = new RegExp(host, "i");
+      hostRes = [
+        new RegExp(new URL(getAppOrigin()).hostname.replace(/\./g, "\\."), "i"),
+        ...(await getExtraWebOrigins()).map(
+          (o) => new RegExp(new URL(o).hostname.replace(/\./g, "\\."), "i")
+        )
+      ];
     } catch {}
-    if (hostRe) {
+    if (hostRes.length) {
       const all = await chrome.tabs.query({});
       for (const t of all) {
-        if (t.url && hostRe.test(t.url) && !tryTabs.some((x) => x.id === t.id)) tryTabs.push(t);
+        if (
+          t.url &&
+          hostRes.some((re) => re.test(t.url)) &&
+          !tryTabs.some((x) => x.id === t.id)
+        ) {
+          tryTabs.push(t);
+        }
       }
     }
   }
@@ -2293,6 +2310,65 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message.action === "CONNECT_WEB_SITE") {
+    (async () => {
+      try {
+        let tab = sender?.tab;
+        if (!tab?.id || !tab?.url) {
+          const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
+          tab = active;
+        }
+        const originHint = message.data?.origin || tab?.url;
+        if (originHint && !tab?.url) {
+          await rememberWebOrigin(originHint);
+        }
+        const result = await ensureBridgeOnTab(tab);
+        if (result.ok && result.origin) {
+          try {
+            await chrome.tabs.sendMessage(tab.id, {
+              action: "TIMDIEMBAN_DATA",
+              type: "bridge_ready",
+              payload: { ok: true, connected: true, origin: result.origin }
+            });
+          } catch {}
+        }
+        sendResponse(result);
+      } catch (err) {
+        sendResponse({ ok: false, error: err.message || String(err) });
+      }
+    })();
+    return true;
+  }
+
+  if (message.action === "INSPECT_ACTIVE_TAB") {
+    inspectActiveTab()
+      .then(sendResponse)
+      .catch((err) => sendResponse({ ok: false, error: err.message || String(err) }));
+    return true;
+  }
+
+  if (message.action === "GRANT_BROAD_HOSTS") {
+    grantBroadAndResync()
+      .then(sendResponse)
+      .catch((err) => sendResponse({ ok: false, error: err.message || String(err) }));
+    return true;
+  }
+
+  if (message.action === "GET_WEB_ORIGINS") {
+    Promise.all([getPreferredWebOrigin(), getExtraWebOrigins(), hasBroadHostAccess()])
+      .then(([preferred, extra, broad]) =>
+        sendResponse({
+          ok: true,
+          preferred,
+          config: getAppOrigin(),
+          extra,
+          broad
+        })
+      )
+      .catch((err) => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
+
   if (message.action === "START_SEARCH") {
     handleStartSearch(message.data).then(sendResponse).catch((err) => {
       sendResponse({ success: false, error: err.message });
@@ -2509,6 +2585,14 @@ async function handleStartSearch(params) {
   }
 
   await ensureReadyForNewSearch();
+
+  if (params?.webUrl) {
+    try {
+      await rememberWebOrigin(params.webUrl);
+      const preTab = await findWebTab(params.webUrl);
+      if (preTab) await ensureBridgeOnTab(preTab);
+    } catch {}
+  }
 
   const webTab = await findWebTab(params.webUrl);
   if (!webTab) {

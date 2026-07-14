@@ -89,7 +89,7 @@
     if (!state.bridgeOk) {
       showBanner(
         "error",
-        `Chưa thấy extension (cần v${req}). Cài extension findmap → chrome://extensions → bật và bấm Reload.`
+        `Chưa thấy extension (cần v${req}). Mở icon findmap trên Chrome → «Kích hoạt trên trang này» (hoặc «Cho phép mọi domain» nếu hay đổi host) → F5. Cài/Reload tại chrome://extensions.`
       );
       return;
     }

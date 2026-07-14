@@ -73,8 +73,8 @@
     const AUTH_TOKEN_KEY = "timdiemban_token";
     const LEGACY_ADMIN_KEY = "timdiemban_admin_token";
 
-    function homeForRole(role) {
-      if (role === "admin") return "/admin";
+    function homeForRole(_role) {
+      // Cả admin và user đều vào trang tìm kiếm; admin mở /admin từ menu
       return "/";
     }
 

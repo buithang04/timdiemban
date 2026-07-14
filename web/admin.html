@@ -13,19 +13,19 @@
   <link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
   <base href="/" />
   <link rel="stylesheet" href="/style.css" />
-  <link rel="stylesheet" href="/admin.css?v=3" />
+  <link rel="stylesheet" href="/admin.css?v=4" />
 </head>
 <body class="page-winmap wm-console admin-console">
-  <aside class="wm-sidebar">
-    <div class="wm-sidebar-brand">
-      <div class="wm-sidebar-logo"><img src="/assets/findmap-logo/logo-chatplus-findmap-svg.svg" alt="findmap logo" /></div>
-      <div>
-        <div class="wm-sidebar-title">findmap</div>
-        <div class="wm-sidebar-sub">Admin Console</div>
+  <aside class="wm-sidebar admin-sidebar">
+    <div class="wm-sidebar-brand admin-sidebar-brand">
+      <div class="wm-sidebar-logo wm-sidebar-logo-full">
+        <img src="/assets/findmap-logo/logo-chatplus-findmap-svg.svg" alt="findmap logo" />
       </div>
+      <p class="admin-sidebar-eyebrow">Admin console</p>
     </div>
 
     <nav id="adminNav" class="admin-nav hidden">
+      <p class="admin-nav-label">Quản lý</p>
       <button type="button" class="admin-nav-item active" data-panel="users">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
         Tài khoản
@@ -35,6 +35,7 @@
         Gói &amp; đơn hàng
         <span id="adminNavPendingBadge" class="admin-nav-badge hidden">0</span>
       </button>
+      <p class="admin-nav-label">Hệ thống</p>
       <button type="button" class="admin-nav-item" data-panel="vietqr">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 7h.01M7 12h.01M7 17h.01M12 7h.01M12 12h.01M12 17h.01M17 7h.01M17 12h.01M17 17h.01"/></svg>
         VietQR
@@ -44,11 +45,12 @@
         Cấu hình
       </button>
       <a href="#" id="adminNewsCmsLink" class="admin-nav-item admin-nav-link" target="_blank" rel="noopener">
-        Tin tức / CMS →
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-2 2Zm0 0a2 2 0 0 1-2-2v-9c0-1.1.9-2 2-2h2"/><path d="M18 14h-8M15 18h-5M10 6h8v4h-8V6Z"/></svg>
+        Tin tức / CMS
       </a>
     </nav>
 
-    <div class="wm-sidebar-foot">
+    <div class="wm-sidebar-foot admin-sidebar-foot">
       <a href="/" class="wm-nav-item wm-nav-btn wm-nav-foot">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
         Trang tìm kiếm
@@ -61,18 +63,28 @@
   </aside>
 
   <div class="wm-app admin-app">
-    <header class="wm-header">
+    <header class="wm-header admin-header">
       <div class="wm-header-left">
         <div class="wm-header-stats">
+          <p class="admin-header-kicker">Findmap · Hệ thống</p>
           <h1 class="wm-header-title" id="adminPageTitle">Quản trị hệ thống</h1>
-          <div class="wm-header-statline">
-            <span class="wm-hstat">Tài khoản: <strong id="statUsers">0</strong></span>
-            <span class="wm-hstat-sep">·</span>
-            <span class="wm-hstat">Tổng credit: <strong id="statPoints">0</strong></span>
-            <span class="wm-hstat-sep">·</span>
-            <span class="wm-hstat">Chờ duyệt: <strong id="statPendingOrders">0</strong></span>
-            <span class="wm-hstat-sep">·</span>
-            <span class="wm-hstat">Đã xác nhận TT: <strong id="statConfirmedOrders">0</strong></span>
+          <div class="admin-metrics" aria-label="Thống kê nhanh">
+            <div class="admin-metric">
+              <span class="admin-metric-label">Tài khoản</span>
+              <strong class="admin-metric-value" id="statUsers">0</strong>
+            </div>
+            <div class="admin-metric">
+              <span class="admin-metric-label">Tổng credit</span>
+              <strong class="admin-metric-value" id="statPoints">0</strong>
+            </div>
+            <div class="admin-metric admin-metric-warn">
+              <span class="admin-metric-label">Chờ duyệt</span>
+              <strong class="admin-metric-value" id="statPendingOrders">0</strong>
+            </div>
+            <div class="admin-metric admin-metric-ok">
+              <span class="admin-metric-label">Đã xác nhận TT</span>
+              <strong class="admin-metric-value" id="statConfirmedOrders">0</strong>
+            </div>
           </div>
         </div>
       </div>
@@ -82,7 +94,7 @@
             <span id="adminUserEmail" class="wm-header-user-name">Admin</span>
             <span class="wm-header-user-role">Super Administrator</span>
           </div>
-          <div class="wm-header-avatar">A</div>
+          <div class="wm-header-avatar admin-header-avatar">A</div>
         </div>
       </div>
     </header>
@@ -95,7 +107,7 @@
             <div class="admin-card-head">
               <div>
                 <h2>Thao tác nhanh</h2>
-                <p class="admin-card-desc">Tạo tài khoản user, nạp gói, đặt mật khẩu</p>
+                <p class="admin-card-desc">Tạo tài khoản, nạp gói, đặt mật khẩu hoặc cộng credit lẻ</p>
               </div>
             </div>
             <div class="admin-card-body admin-card-body-compact">
@@ -302,43 +314,56 @@
             </div>
             <div class="admin-card-body">
               <form id="vietqrForm" class="admin-form admin-form-inline">
-                <div class="admin-form-row">
-                  <div class="field">
-                    <label for="vqBankId">Mã ngân hàng ngắn</label>
-                    <input type="text" id="vqBankId" placeholder="VD: MB" maxlength="20" />
-                  </div>
-                  <div class="field">
-                    <label for="vqAcqId">Mã BIN acqId (6 số)</label>
-                    <input type="text" id="vqAcqId" placeholder="VD: 970422" maxlength="6" inputmode="numeric" />
-                  </div>
-                  <div class="field">
-                    <label for="vqAccountNo">Số tài khoản</label>
-                    <input type="text" id="vqAccountNo" placeholder="VD: 8325896836" maxlength="30" />
-                  </div>
-                  <div class="field">
-                    <label for="vqAccountName">Tên tài khoản (IN HOA)</label>
-                    <input type="text" id="vqAccountName" placeholder="VD: NGUYEN VAN A" maxlength="50" />
-                  </div>
-                </div>
-                <div class="admin-form-row">
-                  <div class="field">
-                    <label for="vqClientId">Client ID (x-client-id)</label>
-                    <input type="text" id="vqClientId" placeholder="UUID từ my.vietqr.io" autocomplete="off" />
-                  </div>
-                  <div class="field">
-                    <label for="vqApiKey">API Key (x-api-key)</label>
-                    <input type="password" id="vqApiKey" placeholder="Để trống = giữ key cũ" autocomplete="off" />
-                  </div>
-                  <div class="field field-actions">
-                    <button type="submit" class="admin-btn admin-btn-primary">Lưu cấu hình</button>
-                    <button type="button" id="vietqrTestBtn" class="admin-btn admin-btn-outline">Test QR</button>
+                <div class="admin-section">
+                  <h3 class="admin-section-title">Tài khoản ngân hàng</h3>
+                  <p class="admin-section-desc">Thông tin hiển thị trên mã QR thanh toán</p>
+                  <div class="admin-form-row">
+                    <div class="field">
+                      <label for="vqBankId">Mã ngân hàng ngắn</label>
+                      <input type="text" id="vqBankId" placeholder="VD: MB" maxlength="20" />
+                    </div>
+                    <div class="field">
+                      <label for="vqAcqId">Mã BIN acqId (6 số)</label>
+                      <input type="text" id="vqAcqId" placeholder="VD: 970422" maxlength="6" inputmode="numeric" />
+                    </div>
+                    <div class="field">
+                      <label for="vqAccountNo">Số tài khoản</label>
+                      <input type="text" id="vqAccountNo" placeholder="VD: 8325896836" maxlength="30" />
+                    </div>
+                    <div class="field">
+                      <label for="vqAccountName">Tên tài khoản (IN HOA)</label>
+                      <input type="text" id="vqAccountName" placeholder="VD: NGUYEN VAN A" maxlength="50" />
+                    </div>
                   </div>
                 </div>
+
+                <div class="admin-section">
+                  <h3 class="admin-section-title">API key</h3>
+                  <p class="admin-section-desc">Lấy từ my.vietqr.io — để trống API Key nếu muốn giữ key đã lưu</p>
+                  <div class="admin-form-row">
+                    <div class="field">
+                      <label for="vqClientId">Client ID (x-client-id)</label>
+                      <input type="text" id="vqClientId" placeholder="UUID từ my.vietqr.io" autocomplete="off" />
+                    </div>
+                    <div class="field">
+                      <label for="vqApiKey">API Key (x-api-key)</label>
+                      <input type="password" id="vqApiKey" placeholder="Để trống = giữ key cũ" autocomplete="off" />
+                    </div>
+                    <div class="field field-actions">
+                      <button type="submit" class="admin-btn admin-btn-primary">Lưu cấu hình</button>
+                      <button type="button" id="vietqrTestBtn" class="admin-btn admin-btn-outline">Test QR</button>
+                    </div>
+                  </div>
+                </div>
+
                 <p id="vietqrSavedStatus" class="field-hint vietqr-saved-status hidden"></p>
                 <p id="vietqrMsg" class="admin-msg hidden"></p>
                 <div id="vietqrTestPreview" class="vietqr-test-preview hidden">
                   <img id="vietqrTestImg" alt="QR test" />
-                  <span id="vietqrTestMethod" class="vietqr-test-method"></span>
+                  <div class="vietqr-test-meta">
+                    <span class="vietqr-test-label">Kết quả test</span>
+                    <span id="vietqrTestMethod" class="vietqr-test-method"></span>
+                  </div>
                 </div>
               </form>
             </div>
@@ -351,90 +376,99 @@
             <div class="admin-card-head">
               <div>
                 <h2>Cấu hình hệ thống</h2>
-                <p class="admin-card-desc">Thiết lập quy đổi credit và điểm hệ thống.</p>
+                <p class="admin-card-desc">Quy đổi credit và email hệ thống (SMTP).</p>
               </div>
             </div>
             <div class="admin-card-body">
               <form id="systemConfigForm" class="admin-form admin-form-inline">
-                <div class="admin-form-row">
-                  <div class="field">
-                    <label for="cfgCreditPerPoint">Credit / 1 điểm</label>
-                    <input type="number" id="cfgCreditPerPoint" min="0.1" step="0.1" placeholder="VD: 3" />
-                    <small class="field-hint">Ví dụ đặt 3 nghĩa là mỗi kết quả có SĐT sẽ trừ 3 credit.</small>
-                  </div>
-                  <div class="field field-actions">
-                    <button type="submit" class="admin-btn admin-btn-primary">Lưu cấu hình</button>
-                  </div>
-                </div>
-                <hr style="border:none;border-top:1px solid #e5e7eb;margin:8px 0 14px" />
-                <div class="admin-form-row admin-form-row-2">
-                  <div class="field">
-                    <label for="smtpHost">SMTP host</label>
-                    <input type="text" id="smtpHost" placeholder="smtp.gmail.com" />
-                  </div>
-                  <div class="field">
-                    <label for="smtpHostBackup">SMTP host dự phòng</label>
-                    <input type="text" id="smtpHostBackup" placeholder="smtp.gmail.com" />
+                <div class="admin-section">
+                  <h3 class="admin-section-title">Credit</h3>
+                  <p class="admin-section-desc">Mỗi kết quả có SĐT sẽ trừ theo tỷ lệ dưới đây</p>
+                  <div class="admin-form-row">
+                    <div class="field">
+                      <label for="cfgCreditPerPoint">Credit / 1 điểm</label>
+                      <input type="number" id="cfgCreditPerPoint" min="0.1" step="0.1" placeholder="VD: 3" />
+                      <small class="field-hint">Ví dụ đặt 3 nghĩa là mỗi kết quả có SĐT sẽ trừ 3 credit.</small>
+                    </div>
+                    <div class="field field-actions">
+                      <button type="submit" class="admin-btn admin-btn-primary">Lưu cấu hình</button>
+                    </div>
                   </div>
                 </div>
-                <div class="admin-form-row admin-form-row-2">
-                  <div class="field">
-                    <label for="smtpPort">SMTP port</label>
-                    <input type="number" id="smtpPort" min="1" placeholder="465" />
+
+                <div class="admin-section">
+                  <h3 class="admin-section-title">SMTP</h3>
+                  <p class="admin-section-desc">Email quên mật khẩu và mail hệ thống</p>
+                  <div class="admin-form-row admin-form-row-2">
+                    <div class="field">
+                      <label for="smtpHost">SMTP host</label>
+                      <input type="text" id="smtpHost" placeholder="smtp.gmail.com" />
+                    </div>
+                    <div class="field">
+                      <label for="smtpHostBackup">SMTP host dự phòng</label>
+                      <input type="text" id="smtpHostBackup" placeholder="smtp.gmail.com" />
+                    </div>
                   </div>
-                  <div class="field">
-                    <label for="smtpSecureMode">Protocol mã hóa</label>
-                    <select id="smtpSecureMode">
-                      <option value="ssl">SSL</option>
-                      <option value="tls">TLS</option>
-                    </select>
+                  <div class="admin-form-row admin-form-row-2">
+                    <div class="field">
+                      <label for="smtpPort">SMTP port</label>
+                      <input type="number" id="smtpPort" min="1" placeholder="465" />
+                    </div>
+                    <div class="field">
+                      <label for="smtpSecureMode">Protocol mã hóa</label>
+                      <select id="smtpSecureMode">
+                        <option value="ssl">SSL</option>
+                        <option value="tls">TLS</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div class="admin-form-row admin-form-row-2">
+                    <div class="field">
+                      <label for="smtpUsername">SMTP username</label>
+                      <input type="text" id="smtpUsername" placeholder="yourmail@gmail.com" />
+                    </div>
+                    <div class="field">
+                      <label for="smtpPassword">SMTP password</label>
+                      <input type="password" id="smtpPassword" placeholder="Nhập để cập nhật mật khẩu SMTP" />
+                    </div>
+                  </div>
+                  <div class="admin-form-row admin-form-row-2">
+                    <div class="field">
+                      <label for="smtpFromEmail">Email gửi đi (From)</label>
+                      <input type="email" id="smtpFromEmail" placeholder="yourmail@gmail.com" />
+                    </div>
+                    <div class="field">
+                      <label for="smtpFromName">Tên người gửi (From name)</label>
+                      <input type="text" id="smtpFromName" placeholder="findmap" />
+                    </div>
+                  </div>
+                  <div class="admin-form-row admin-form-row-2">
+                    <div class="field">
+                      <label for="smtpClientHostname">Client hostname</label>
+                      <input type="text" id="smtpClientHostname" placeholder="mail.findmap.local" />
+                    </div>
+                    <div class="field">
+                      <label for="smtpHelo">HELO / EHLO</label>
+                      <input type="text" id="smtpHelo" placeholder="findmap.local" />
+                    </div>
+                  </div>
+                  <div class="admin-form-row">
+                    <div class="field">
+                      <label for="smtpRerouteAddress">Reroute address</label>
+                      <input type="email" id="smtpRerouteAddress" placeholder="mail test nhận tạm (để trống nếu gửi trực tiếp user)" />
+                    </div>
+                  </div>
+                  <div class="admin-form-row">
+                    <div class="field">
+                      <label for="smtpTestTo">Email nhận test</label>
+                      <input type="email" id="smtpTestTo" placeholder="you@example.com" />
+                    </div>
+                    <div class="field field-actions">
+                      <button type="button" id="smtpTestBtn" class="admin-btn admin-btn-outline">Test gửi mail</button>
+                    </div>
                   </div>
                 </div>
-                <div class="admin-form-row admin-form-row-2">
-                  <div class="field">
-                    <label for="smtpUsername">SMTP username</label>
-                    <input type="text" id="smtpUsername" placeholder="yourmail@gmail.com" />
-                  </div>
-                  <div class="field">
-                    <label for="smtpPassword">SMTP password</label>
-                    <input type="password" id="smtpPassword" placeholder="Nhập để cập nhật mật khẩu SMTP" />
-                  </div>
-                </div>
-                <div class="admin-form-row admin-form-row-2">
-                  <div class="field">
-                    <label for="smtpFromEmail">Email gửi đi (From)</label>
-                    <input type="email" id="smtpFromEmail" placeholder="yourmail@gmail.com" />
-                  </div>
-                  <div class="field">
-                    <label for="smtpFromName">Tên người gửi (From name)</label>
-                    <input type="text" id="smtpFromName" placeholder="findmap" />
-                  </div>
-                </div>
-                <div class="admin-form-row admin-form-row-2">
-                  <div class="field">
-                    <label for="smtpClientHostname">Client hostname</label>
-                    <input type="text" id="smtpClientHostname" placeholder="mail.findmap.local" />
-                  </div>
-                  <div class="field">
-                    <label for="smtpHelo">HELO / EHLO</label>
-                    <input type="text" id="smtpHelo" placeholder="findmap.local" />
-                  </div>
-                </div>
-                <div class="admin-form-row">
-                  <div class="field">
-                    <label for="smtpRerouteAddress">Reroute address</label>
-                    <input type="email" id="smtpRerouteAddress" placeholder="mail test nhận tạm (để trống nếu gửi trực tiếp user)" />
-                  </div>
-                </div>
-                <div class="admin-form-row">
-                  <div class="field">
-                    <label for="smtpTestTo">Email nhận test</label>
-                    <input type="email" id="smtpTestTo" placeholder="you@example.com" />
-                  </div>
-                  <div class="field field-actions">
-                    <button type="button" id="smtpTestBtn" class="admin-btn admin-btn-outline">Test gửi mail</button>
-                  </div>
-                </div>
+
                 <p id="systemConfigMsg" class="admin-msg hidden"></p>
               </form>
             </div>
@@ -444,22 +478,34 @@
     </main>
   </div>
 
-  <div id="editUserModal" class="auth-modal hidden">
-    <div class="auth-modal-box">
+  <div id="editUserModal" class="auth-modal admin-modal hidden">
+    <div class="auth-modal-box admin-modal-box">
       <h2>Sửa thông tin tài khoản</h2>
-      <form id="editUserForm">
-        <label for="editUserEmail">Email</label>
-        <input type="email" id="editUserEmail" readonly />
-        <label for="editUserFullName">Họ và tên</label>
-        <input type="text" id="editUserFullName" required placeholder="Nguyễn Văn A" />
-        <label for="editUserPhone">Số điện thoại</label>
-        <input type="tel" id="editUserPhone" required placeholder="0912345678" />
-        <label for="editUserNewPassword">Mật khẩu mới (không bắt buộc)</label>
-        <input type="password" id="editUserNewPassword" minlength="6" placeholder="Để trống nếu không đổi mật khẩu" />
-        <label for="editUserConfirmPassword">Nhập lại mật khẩu mới</label>
-        <input type="password" id="editUserConfirmPassword" minlength="6" placeholder="Nhập lại mật khẩu mới" />
+      <form id="editUserForm" class="admin-form">
+        <div class="field">
+          <label for="editUserEmail">Email</label>
+          <input type="email" id="editUserEmail" readonly />
+        </div>
+        <div class="field">
+          <label for="editUserFullName">Họ và tên</label>
+          <input type="text" id="editUserFullName" required placeholder="Nguyễn Văn A" />
+        </div>
+        <div class="field">
+          <label for="editUserPhone">Số điện thoại</label>
+          <input type="tel" id="editUserPhone" required placeholder="0912345678" />
+        </div>
+        <div class="field">
+          <label for="editUserNewPassword">Mật khẩu mới (không bắt buộc)</label>
+          <input type="password" id="editUserNewPassword" minlength="6" placeholder="Để trống nếu không đổi mật khẩu" />
+        </div>
+        <div class="field">
+          <label for="editUserConfirmPassword">Nhập lại mật khẩu mới</label>
+          <input type="password" id="editUserConfirmPassword" minlength="6" placeholder="Nhập lại mật khẩu mới" />
+        </div>
         <p id="editUserMsg" class="auth-error hidden"></p>
-        <button type="submit" class="btn btn-primary auth-submit">Lưu thay đổi</button>
+        <div class="admin-form-actions">
+          <button type="submit" class="admin-btn admin-btn-primary">Lưu thay đổi</button>
+        </div>
       </form>
     </div>
   </div>
