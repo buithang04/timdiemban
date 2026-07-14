@@ -23,9 +23,12 @@
 
     const adminLink = document.getElementById("cmsLinkAdmin");
     if (adminLink) {
+      const fromCfg = String(
+        globalThis.TIMDIEMBAN_CONFIG?.SEARCH_ORIGIN || globalThis.TIMDIEMBAN_CONFIG?.APP_ORIGIN || ""
+      ).replace(/\/+$/, "");
       try {
         const origins = await fetch("/api/config/origins").then((r) => r.json());
-        const search = String(origins.searchOrigin || "").replace(/\/+$/, "");
+        const search = String(origins.searchOrigin || fromCfg || "").replace(/\/+$/, "");
         if (search) {
           adminLink.href = `${search}/admin`;
           adminLink.target = "_blank";
@@ -34,7 +37,13 @@
           adminLink.classList.add("hidden");
         }
       } catch {
-        adminLink.classList.add("hidden");
+        if (fromCfg) {
+          adminLink.href = `${fromCfg}/admin`;
+          adminLink.target = "_blank";
+          adminLink.rel = "noopener";
+        } else {
+          adminLink.classList.add("hidden");
+        }
       }
     }
 

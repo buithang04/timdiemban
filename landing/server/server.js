@@ -241,6 +241,26 @@ app.use("/tin-tuc", express.static(tinTucDir, { index: false, fallthrough: true 
 app.use("/landing", express.static(publicLandingDir));
 app.use("/assets", express.static(path.join(webDir, "assets")));
 
+/** Config browser — luôn theo runtime NEWS_ORIGIN / SEARCH_ORIGIN (không cứng domain). */
+app.get("/app-config.js", (_req, res) => {
+  const body = `/**
+ * Runtime app-config — từ NEWS_ORIGIN / SEARCH_ORIGIN của server landing.
+ */
+const TIMDIEMBAN_CONFIG = {
+  APP_ORIGIN: ${JSON.stringify(searchOrigin)},
+  NEWS_ORIGIN: ${JSON.stringify(appOrigin)},
+  SEARCH_ORIGIN: ${JSON.stringify(searchOrigin)},
+  MAPS_AUTO_FOCUS_MINUTES: 2,
+  MAPS_AUTO_REOPEN_MAX: 5
+};
+if (typeof globalThis !== "undefined") {
+  globalThis.TIMDIEMBAN_CONFIG = TIMDIEMBAN_CONFIG;
+}
+`;
+  res.setHeader("Cache-Control", "no-store");
+  res.type("application/javascript").send(body);
+});
+
 app.get("/tin-tuc/:slug", async (req, res, next) => {
   try {
     const resolved = await cms.resolvePostPath(`/tin-tuc/${req.params.slug}`, { publicOnly: false });

@@ -28,8 +28,23 @@ npm start
 # → http://localhost:3001/gioi-thieu
 ```
 
-## Cấu hình
+## Cấu hình origin (quan trọng khi deploy)
 
-- Copy `server/.env.example` → `server/.env`
-- Copy `landing/server/.env.example` → `landing/server/.env`
-- Domain: sửa `config/app-config.js` rồi `node scripts/sync-app-config.js`
+Sửa **một chỗ**: [`config/app-config.js`](config/app-config.js) + env:
+
+| Biến | Ý nghĩa |
+|------|---------|
+| `APP_ORIGIN` / `SEARCH_ORIGIN` | Hệ tìm kiếm |
+| `NEWS_ORIGIN` | Landing + tin + CMS |
+
+Local (`landing/server/.env` / `server/.env`):
+
+```
+APP_ORIGIN=http://localhost:3000
+SEARCH_ORIGIN=http://localhost:3000
+NEWS_ORIGIN=http://localhost:3001
+```
+
+Prod: đặt cả hai về domain thật (cùng host hoặc subdomain). Chạy `node scripts/sync-app-config.js`.
+
+Không hardcode `localhost:3001` trong HTML — link CMS/login lấy từ config / `/api/config/origins`.

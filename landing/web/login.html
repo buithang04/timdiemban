@@ -97,19 +97,29 @@
       <p id="loginError" class="error"></p>
       <button type="submit">Đăng nhập</button>
     </form>
-    <p class="foot">Cần Findmap tìm kiếm? <a id="searchLoginLink" href="http://localhost:3000/login">Đăng nhập hệ tìm kiếm</a></p>
+    <p class="foot">Cần Findmap tìm kiếm? <a id="searchLoginLink" href="#" data-href-search="/login">Đăng nhập hệ tìm kiếm</a></p>
   </main>
+  <script src="/app-config.js"></script>
   <script>
     const TOKEN_KEY = "findmap_cms_token";
     const form = document.getElementById("loginForm");
     const errEl = document.getElementById("loginError");
 
+    function stripSlash(o) {
+      return String(o || "").replace(/\/+$/, "");
+    }
+
+    function applySearchLoginHref(searchOrigin) {
+      const a = document.getElementById("searchLoginLink");
+      const search = stripSlash(searchOrigin);
+      if (a && search) a.href = `${search}/login`;
+    }
+
+    applySearchLoginHref(globalThis.TIMDIEMBAN_CONFIG?.SEARCH_ORIGIN || globalThis.TIMDIEMBAN_CONFIG?.APP_ORIGIN);
+
     fetch("/api/config/origins")
       .then((r) => r.json())
-      .then((d) => {
-        const a = document.getElementById("searchLoginLink");
-        if (a && d.searchOrigin) a.href = d.searchOrigin.replace(/\/+$/, "") + "/login";
-      })
+      .then((d) => applySearchLoginHref(d.searchOrigin))
       .catch(() => {});
 
     if (localStorage.getItem(TOKEN_KEY)) {

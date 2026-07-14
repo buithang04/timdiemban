@@ -329,9 +329,22 @@ async function unlockAdmin(adminUser) {
   if (els.adminUserEmail) els.adminUserEmail.textContent = adminUser?.email || "";
   try {
     const cfg = globalThis.TIMDIEMBAN_CONFIG || {};
-    const news = String(cfg.NEWS_ORIGIN || "http://localhost:3001").replace(/\/+$/, "");
+    let news = String(cfg.NEWS_ORIGIN || "").replace(/\/+$/, "");
+    try {
+      const origins = await fetch("/api/config/origins").then((r) => (r.ok ? r.json() : null));
+      if (origins?.newsOrigin) news = String(origins.newsOrigin).replace(/\/+$/, "");
+    } catch {
+      /* keep cfg */
+    }
     const link = document.getElementById("adminNewsCmsLink");
-    if (link) link.href = `${news}/admin-post-article`;
+    if (link) {
+      if (news) {
+        link.href = `${news}/admin-post-article`;
+        link.classList.remove("hidden");
+      } else {
+        link.classList.add("hidden");
+      }
+    }
   } catch {
     /* ignore */
   }

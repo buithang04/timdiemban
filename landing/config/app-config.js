@@ -1,18 +1,30 @@
 /**
- * Findmap Landing / CMS — cấu hình (SỬA TẠI ĐÂY)
- *
- * NEWS_ORIGIN: URL hệ thống tin tức + giới thiệu + CMS (folder landing/)
- * SEARCH_ORIGIN: URL hệ thống tìm kiếm Findmap
+ * AUTO-SYNC hint — server landing đọc NEWS/SEARCH từ file này + process.env.
+ * Nguồn chính: config/app-config.js (root).
  */
+const rootCfg = (() => {
+  try {
+    return require("../../config/app-config.js");
+  } catch {
+    return {};
+  }
+})();
+
+function env(name, fallback) {
+  const v = process.env[name];
+  return v != null && String(v).trim() ? String(v).trim() : fallback;
+}
+
 const FINDMAP_NEWS_CONFIG = {
-  NEWS_ORIGIN: process.env.NEWS_ORIGIN || "http://localhost:3001",
-  SEARCH_ORIGIN: process.env.SEARCH_ORIGIN || "http://localhost:3000",
-  MYSQL_DATABASE: process.env.MYSQL_DATABASE || "findmap_news"
+  NEWS_ORIGIN: env("NEWS_ORIGIN", rootCfg.NEWS_ORIGIN || "http://localhost:3001"),
+  SEARCH_ORIGIN: env(
+    "SEARCH_ORIGIN",
+    rootCfg.SEARCH_ORIGIN || rootCfg.APP_ORIGIN || "http://localhost:3000"
+  ),
+  MYSQL_DATABASE: env("MYSQL_DATABASE", "findmap_news")
 };
 
-if (typeof module !== "undefined" && module.exports) {
-  module.exports = FINDMAP_NEWS_CONFIG;
-}
+module.exports = FINDMAP_NEWS_CONFIG;
 if (typeof globalThis !== "undefined") {
   globalThis.FINDMAP_NEWS_CONFIG = FINDMAP_NEWS_CONFIG;
 }

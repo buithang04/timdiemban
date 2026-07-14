@@ -92,8 +92,7 @@ const appConfig = require(path.join(__dirname, "..", "config", "app-config.js"))
 const appOrigin = String(process.env.APP_ORIGIN || appConfig.APP_ORIGIN || "")
   .replace(/\/$/, "") || `http://localhost:${PORT}`;
 const newsOrigin = String(
-  process.env.NEWS_ORIGIN ||
-    (require("../config/app-config.js").NEWS_ORIGIN || "http://localhost:3001")
+  process.env.NEWS_ORIGIN || appConfig.NEWS_ORIGIN || `http://localhost:3001`
 ).replace(/\/+$/, "");
 
 const allowedOrigins = new Set([
@@ -412,6 +411,14 @@ app.get("/api/packages", async (req, res) => {
 
 app.get("/api/packages/vietqr-status", requireAuth, async (req, res) => {
   res.json({ configured: await isVietQrConfigured() });
+});
+
+app.get("/api/config/origins", (_req, res) => {
+  res.json({
+    searchOrigin: appOrigin,
+    newsOrigin,
+    appOrigin
+  });
 });
 
 app.get("/api/ext-version", (req, res) => {

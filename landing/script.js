@@ -1,6 +1,81 @@
 (function () {
   const PAGE_SIZE = 9;
 
+  function stripSlash(o) {
+    return String(o || "").replace(/\/+$/, "");
+  }
+
+  /** Gắn APP/NEWS/SEARCH origin từ config hoặc /api/config/origins — không hardcode domain. */
+  function applyOriginLinks(origins) {
+    const search = stripSlash(
+      origins?.searchOrigin ||
+        origins?.SEARCH_ORIGIN ||
+        globalThis.TIMDIEMBAN_CONFIG?.SEARCH_ORIGIN ||
+        globalThis.TIMDIEMBAN_CONFIG?.APP_ORIGIN ||
+        ""
+    );
+    const news = stripSlash(
+      origins?.newsOrigin ||
+        origins?.NEWS_ORIGIN ||
+        globalThis.TIMDIEMBAN_CONFIG?.NEWS_ORIGIN ||
+        (typeof location !== "undefined" ? location.origin : "")
+    );
+
+    document.querySelectorAll("[data-href-search]").forEach((el) => {
+      const path = el.getAttribute("data-href-search") || "/";
+      if (!search) return;
+      el.setAttribute("href", path.startsWith("http") ? path : `${search}${path.startsWith("/") ? path : `/${path}`}`);
+    });
+
+    document.querySelectorAll("[data-href-news]").forEach((el) => {
+      const path = el.getAttribute("data-href-news") || "/";
+      if (!news) return;
+      el.setAttribute("href", path.startsWith("http") ? path : `${news}${path.startsWith("/") ? path : `/${path}`}`);
+    });
+
+    const canon = document.querySelector('link[rel="canonical"]');
+    if (canon && news) {
+      const path = location.pathname.replace(/\/+$/, "") || "/gioi-thieu";
+      canon.setAttribute("href", `${news}${path}`);
+    }
+
+    document.querySelectorAll('meta[property="og:image"]').forEach((meta) => {
+      const raw = meta.getAttribute("content") || "";
+      if (raw.startsWith("/") && news) meta.setAttribute("content", `${news}${raw}`);
+      else if (raw.includes("://") && news && /localhost|127\.0\.0\.1|findmap\.app\.chatplus\.io\.vn/i.test(raw)) {
+        try {
+          const u = new URL(raw);
+          meta.setAttribute("content", `${news}${u.pathname}${u.search}`);
+        } catch {
+          /* keep */
+        }
+      }
+    });
+
+    document.querySelectorAll("script[type='application/ld+json']").forEach((el) => {
+      try {
+        const data = JSON.parse(el.textContent || "{}");
+        if (data?.publisher && search) data.publisher.url = search;
+        if (data && news && !data.url) data.url = `${news}${location.pathname}`;
+        el.textContent = JSON.stringify(data);
+      } catch {
+        /* ignore */
+      }
+    });
+  }
+
+  async function bootOrigins() {
+    let origins = null;
+    try {
+      origins = await fetch("/api/config/origins").then((r) => (r.ok ? r.json() : null));
+    } catch {
+      origins = null;
+    }
+    applyOriginLinks(origins);
+  }
+
+  bootOrigins();
+
   const nav = document.getElementById("mainNav");
   const toggle = document.getElementById("menuToggle");
 
