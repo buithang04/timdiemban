@@ -620,7 +620,10 @@
         let loc;
         try {
           loc = await getQuickLocation();
-        } catch {
+        } catch (err) {
+          // Lỗi từ chối quyền: dừng ngay — để Chrome giữ UI hỏi quyền/icon định vị,
+          // không retry watchPosition (sẽ fail ngay, không hỏi lại).
+          if (isGeoDeniedError(err)) throw err;
           loc = await getHighAccuracyLocation();
         }
         const extra = loc.accuracy ? `±${Math.round(loc.accuracy)}m` : "";
@@ -639,45 +642,8 @@
     return detectFreshGpsCenter({ force: false });
   }
 
-  async function queryGeolocationPermission() {
-    try {
-      if (!navigator.permissions?.query) return "unknown";
-      const status = await navigator.permissions.query({ name: "geolocation" });
-      return status.state; // "granted" | "denied" | "prompt"
-    } catch {
-      return "unknown";
-    }
-  }
-
   function isGeoDeniedError(err) {
     return err?.code === 1 || /denied|permission/i.test(String(err?.message || err || ""));
-  }
-
-  function showGpsPermissionBanner(text) {
-    const banner = document.getElementById("gpsPermissionBanner");
-    const textEl = document.getElementById("gpsPermissionText");
-    if (textEl && text) textEl.textContent = text;
-    banner?.classList.remove("hidden");
-    revealGpsPermissionButton("Cho phép GPS");
-  }
-
-  function hideGpsPermissionBanner() {
-    document.getElementById("gpsPermissionBanner")?.classList.add("hidden");
-  }
-
-  /** Hiện nút để user bấm — Chrome chỉ chắc hỏi quyền khi có thao tác người dùng. */
-  function revealGpsPermissionButton(label = "Cho phép GPS") {
-    if (!els.btnFromGps) return;
-    els.btnFromGps.classList.remove("hidden");
-    els.btnFromGps.textContent = label;
-    els.btnFromGps.title = "Bấm để Chrome hỏi quyền vị trí";
-  }
-
-  function markGpsButtonReady() {
-    if (!els.btnFromGps) return;
-    els.btnFromGps.textContent = "GPS";
-    els.btnFromGps.title = "Lấy GPS";
-    hideGpsPermissionBanner();
   }
 
   function formatGpsCenterStatus(center) {
@@ -691,82 +657,167 @@
     );
   }
 
-  /**
-   * Luôn gọi getCurrentPosition từ thao tác user.
-   * - prompt: Chrome hiện hộp thoại
-   * - denied: Chrome không hỏi lại → hướng dẫn bật lại rồi bấm nút
-   */
-  async function requestGpsCenterFromUserGesture() {
-    showSearchStatus("Đang gọi GPS — nếu Chrome hỏi, hãy chọn Cho phép.", "info");
+  async function applyGpsCenter(center) {
+    window.TimDiemBanMap?.focusPoint?.(center.lat, center.lng);
+    showSearchStatus(await formatGpsCenterStatus(center), "success");
+    if (els.btnFromGps) els.btnFromGps.classList.add("hidden");
+    return center;
+  }
+
+  async function queryGeolocationPermission() {
     try {
-      const center = await detectFreshGpsCenter({ force: true });
-      window.TimDiemBanMap?.focusPoint?.(center.lat, center.lng);
-      showSearchStatus(await formatGpsCenterStatus(center), "success");
-      markGpsButtonReady();
-      return center;
-    } catch (err) {
-      const denied = isGeoDeniedError(err);
-      const perm = await queryGeolocationPermission();
-      revealGpsPermissionButton("Thử lại GPS");
-      if (denied || perm === "denied") {
-        showGpsPermissionBanner(
-          "Chrome đã chặn vị trí trước đó nên không hỏi lại. Bấm ổ khóa/ⓘ cạnh địa chỉ → Quyền trang → Vị trí → Cho phép (hoặc Hỏi), rồi bấm nút bên dưới để Chrome hỏi lại."
-        );
-        showSearchStatus(
-          "Chưa được phép vị trí — làm theo hướng dẫn trên, rồi bấm «Cho phép vị trí». Hoặc dùng Chọn tâm.",
-          "error"
-        );
-      } else {
-        showGpsPermissionBanner(
-          "Chưa lấy được vị trí. Bấm nút bên dưới — Chrome sẽ hỏi Cho phép / Chặn."
-        );
-        showSearchStatus(err.message || "Không lấy được GPS — bấm Cho phép vị trí.", "error");
+      if (!navigator.permissions?.query) return "unknown";
+      const status = await navigator.permissions.query({ name: "geolocation" });
+      return status.state; // granted | denied | prompt
+    } catch {
+      return "unknown";
+    }
+  }
+
+  const GPS_DENIED_HINT =
+    "Chrome đã chặn vị trí site này. Bấm biểu tượng định vị / ổ khóa trên thanh địa chỉ → Vị trí → Luôn cho phép → tải lại trang. Hoặc dùng Chọn tâm.";
+  const GPS_ASKING_HINT =
+    "Chrome đang hỏi chia sẻ vị trí — nhìn thanh địa chỉ (chip / biểu tượng định vị cạnh ổ khóa) rồi chọn Cho phép.";
+
+  async function waitGpsBootstrap(ms = 18000) {
+    const cur = window.__findmapGpsBoot;
+    if (cur?.ok === true) return cur;
+    if (cur?.ok === false) {
+      const err = new Error(cur.message || "denied");
+      err.code = cur.code ?? 1;
+      throw err;
+    }
+    if (!cur?.pending) return null;
+
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        window.removeEventListener("findmap:gps-boot", onBoot);
+        resolve(window.__findmapGpsBoot || null);
+      }, ms);
+      function onBoot(e) {
+        clearTimeout(timer);
+        window.removeEventListener("findmap:gps-boot", onBoot);
+        const d = e.detail || window.__findmapGpsBoot;
+        if (d?.ok === true) resolve(d);
+        else if (d?.ok === false) {
+          const err = new Error(d.message || "denied");
+          err.code = d.code ?? 1;
+          reject(err);
+        } else resolve(d);
       }
+      window.addEventListener("findmap:gps-boot", onBoot);
+    });
+  }
+
+  async function requestGpsCenterFromUserGesture() {
+    showSearchStatus("Đang xin quyền vị trí từ Chrome…", "info");
+    try {
+      return await applyGpsCenter(await detectFreshGpsCenter({ force: true }));
+    } catch (err) {
+      showSearchStatus(
+        isGeoDeniedError(err)
+          ? GPS_DENIED_HINT
+          : err?.message || "Không lấy được GPS — dùng Chọn tâm trên bản đồ.",
+        "error"
+      );
       throw err;
     }
   }
 
+  /** Một lần: thao tác bất kỳ trên trang → gọi lại GPS (có user gesture → Chrome hiện hộp thoại lớn). */
+  let gestureGpsArmed = false;
+  function armGestureGpsRetry() {
+    if (gestureGpsArmed) return;
+    gestureGpsArmed = true;
+    const once = async () => {
+      document.removeEventListener("pointerdown", once, true);
+      document.removeEventListener("keydown", once, true);
+      const perm = await queryGeolocationPermission();
+      if (perm === "denied") {
+        showSearchStatus(GPS_DENIED_HINT, "error");
+        return;
+      }
+      if (perm === "granted" && readCenterFromFormOrCache()) return;
+      showSearchStatus(GPS_ASKING_HINT, "info");
+      try {
+        await applyGpsCenter(await detectFreshGpsCenter({ force: true }));
+      } catch (err) {
+        if (isGeoDeniedError(err)) showSearchStatus(GPS_DENIED_HINT, "error");
+      }
+    };
+    document.addEventListener("pointerdown", once, true);
+    document.addEventListener("keydown", once, true);
+  }
+
+  /**
+   * Tự hỏi quyền GPS ngay khi vào trang — không chờ bấm nút GPS.
+   * Script sớm trong index.html đã gọi getCurrentPosition; đây tiếp nhận kết quả hoặc gọi lại.
+   * Lưu ý Chrome: request không có gesture có thể chỉ hiện chip trên thanh địa chỉ (không phải hộp thoại lớn).
+   * Nếu đã Chặn sticky: Chrome không hỏi lại — chỉ mở được qua thanh địa chỉ.
+   */
   async function autoDetectGpsSilent() {
     if (!navigator.geolocation) {
       showSearchStatus("Trình duyệt không hỗ trợ GPS — nhập lat/lng hoặc bấm Chọn tâm.", "error");
       return;
     }
+    if (els.btnFromGps) els.btnFromGps.classList.add("hidden");
 
-    const perm = await queryGeolocationPermission();
-
-    // Đã cấp quyền → lấy GPS ngay (không cần hộp thoại)
-    if (perm === "granted") {
-      showSearchStatus("Đang lấy vị trí GPS (tâm tìm kiếm)...", "info");
-      try {
-        const center = await detectFreshGpsCenter({ force: true });
-        window.TimDiemBanMap?.focusPoint?.(center.lat, center.lng);
-        showSearchStatus(await formatGpsCenterStatus(center), "success");
-        markGpsButtonReady();
-      } catch (err) {
-        showGpsPermissionBanner(
-          "Không lấy được GPS. Bấm nút bên dưới để thử lại — Chrome có thể hỏi quyền."
-        );
-        showSearchStatus(err.message || "Không lấy được GPS — bấm Cho phép vị trí.", "error");
-        console.warn("GPS ngầm:", err?.message || err);
-      }
+    const perm0 = await queryGeolocationPermission();
+    if (perm0 === "denied") {
+      showSearchStatus(GPS_DENIED_HINT, "error");
       return;
     }
 
-    // Chưa cấp / đã chặn / unknown: KHÔNG gọi GPS ngầm.
-    // Chrome chỉ chắc hiện hộp thoại khi user bấm nút (user gesture).
-    revealGpsPermissionButton("Cho phép GPS");
-    if (perm === "denied") {
-      showGpsPermissionBanner(
-        "Quyền vị trí đang tắt. Bấm nút bên dưới trước — nếu Chrome không hỏi, mở ổ khóa/ⓘ → Vị trí → Cho phép (hoặc Hỏi), rồi bấm lại."
-      );
-      showSearchStatus("Cần bật vị trí — bấm «Cho phép vị trí (Chrome hỏi)».", "info");
-    } else {
-      showGpsPermissionBanner(
-        "Cần vị trí làm tâm tìm kiếm. Bấm nút bên dưới — Chrome sẽ hiện hộp thoại Cho phép / Chặn."
-      );
-      showSearchStatus("Bấm «Cho phép vị trí (Chrome hỏi)» để Chrome hiện hộp thoại.", "info");
+    showSearchStatus(GPS_ASKING_HINT, "info");
+    // Chrome hiện đại: request lúc load thường chỉ hiện chip thanh địa chỉ.
+    // Thao tác đầu tiên trên trang (không cần nút GPS) → hỏi lại với gesture → hộp thoại Cho phép/Chặn.
+    if (perm0 !== "granted") armGestureGpsRetry();
+
+    try {
+      let center = null;
+      try {
+        const boot = await waitGpsBootstrap(16000);
+        if (boot?.ok && boot.lat != null && boot.lng != null) {
+          const extra = boot.accuracy ? `±${Math.round(boot.accuracy)}m` : "";
+          setCenterFields(boot.lat, boot.lng, "gps", extra);
+          if (lastKnownCenter) lastKnownCenter.accuracy = boot.accuracy ?? null;
+          center = normalizeCenterCoords(boot.lat, boot.lng);
+        }
+      } catch (bootErr) {
+        if (isGeoDeniedError(bootErr)) {
+          const perm = await queryGeolocationPermission();
+          if (perm === "denied") {
+            showSearchStatus(GPS_DENIED_HINT, "error");
+            return;
+          }
+        }
+      }
+
+      if (!center) {
+        center = await detectFreshGpsCenter({ force: true });
+      }
+      await applyGpsCenter(center);
+    } catch (err) {
+      const perm = await queryGeolocationPermission();
+      if (isGeoDeniedError(err) || perm === "denied") {
+        if (perm === "denied") showSearchStatus(GPS_DENIED_HINT, "error");
+        else {
+          showSearchStatus(GPS_ASKING_HINT, "info");
+          armGestureGpsRetry();
+        }
+      } else {
+        showSearchStatus(
+          err?.message || "Không lấy được GPS — dùng Chọn tâm trên bản đồ.",
+          "error"
+        );
+        armGestureGpsRetry();
+      }
+      console.warn("GPS:", err?.code, err?.message || err);
     }
   }
+
+  // Gọi ngay khi script nạp — không đợi hết wire event listener ở cuối file
+  autoDetectGpsSilent();
 
   function requestMapsCenter() {
     return new Promise((resolve, reject) => {
@@ -1129,10 +1180,9 @@
     });
   }
 
-  // Ẩn Tab Maps; nút GPS hiện khi cần hỏi quyền (autoDetect / lỗi)
-  if (els.btnFromMaps) {
-    els.btnFromMaps.classList.add("hidden");
-  }
+  // Ẩn Tab Maps / GPS — GPS xin qua hộp thoại Chrome + nút định vị bản đồ
+  if (els.btnFromMaps) els.btnFromMaps.classList.add("hidden");
+  if (els.btnFromGps) els.btnFromGps.classList.add("hidden");
 
   // Bấm trên bản đồ → đặt tâm tìm kiếm (CHỈ khi đang ở chế độ chọn tâm)
   window.addEventListener("timdiemban:map-pick-center", (e) => {
@@ -1146,6 +1196,25 @@
       "success"
     );
     exitPickCenterMode();
+  });
+
+  // Nút định vị trên bản đồ (user gesture) → đặt tâm GPS + Chrome hỏi quyền nếu cần
+  window.addEventListener("timdiemban:gps-center", async (e) => {
+    if (isFormLocked()) return;
+    const { lat, lng, accuracy } = e.detail || {};
+    if (lat == null || lng == null) return;
+    const extra = accuracy ? `±${Math.round(accuracy)}m` : "";
+    setCenterFields(lat, lng, "gps", extra);
+    if (lastKnownCenter) lastKnownCenter.accuracy = accuracy ?? null;
+    try {
+      showSearchStatus(await formatGpsCenterStatus({ lat, lng }), "success");
+    } catch {
+      showSearchStatus(`Tâm GPS: ${Number(lat).toFixed(5)}, ${Number(lng).toFixed(5)}`, "success");
+    }
+  });
+
+  window.addEventListener("timdiemban:gps-denied", () => {
+    showSearchStatus(GPS_DENIED_HINT, "error");
   });
 
   function enterPickCenterMode() {
@@ -1191,20 +1260,11 @@
     });
   }
 
-  document.getElementById("btnAllowGpsPrompt")?.addEventListener("click", () => {
-    els.btnFromGps?.click();
-  });
-
   // Khi user đổi quyền ở thanh địa chỉ → thử lấy GPS lại
   try {
     navigator.permissions?.query?.({ name: "geolocation" }).then((status) => {
       status.addEventListener?.("change", () => {
         if (status.state === "granted") autoDetectGpsSilent();
-        else if (status.state === "prompt") {
-          showGpsPermissionBanner(
-            "Chrome đã sẵn sàng hỏi lại. Bấm «Cho phép vị trí (Chrome hỏi)»."
-          );
-        }
       });
     });
   } catch {}
@@ -1256,12 +1316,12 @@
     if (count != null && count > lastKnownMergedCount) lastKnownMergedCount = count;
   });
 
+  // GPS đã được gọi ngay sau khi định nghĩa autoDetectGpsSilent — không gọi lại ở đây
   loadMapsAutoFocusPref();
   loadMapsAutoReopenPref();
   loadSearchOptionsOpen();
   updateSearchOptionsHint();
   loadLastSearch();
-  autoDetectGpsSilent();
   resetFormLock();
 
   pingExtensionBridge();

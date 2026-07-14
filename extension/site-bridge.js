@@ -1,6 +1,6 @@
 /**
  * AUTO: gắn bridge trên mọi domain Findmap — không cần bấm popup.
- * Cần host_permissions http://*/* + https://*/* (xin lúc cài/reload extension).
+ * Cần host_permissions rộng (http và https mọi host) — xin lúc cài/reload extension.
  */
 const EXTRA_WEB_ORIGINS_KEY = "timdiemban_extra_web_origins";
 const PREFERRED_WEB_ORIGIN_KEY = "timdiemban_preferred_web_origin";

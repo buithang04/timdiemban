@@ -259,11 +259,20 @@
         const { latitude: lat, longitude: lng } = pos.coords;
         if (!map) init();
         map?.setView([lat, lng], 15);
+        // Luôn đặt tâm tìm kiếm khi user chủ động bấm nút vị trí (user gesture → Chrome hỏi quyền)
         window.dispatchEvent(
-          new CustomEvent("timdiemban:map-pick-center", { detail: { lat, lng } })
+          new CustomEvent("timdiemban:gps-center", {
+            detail: { lat, lng, accuracy: pos.coords.accuracy }
+          })
         );
       },
-      () => {},
+      (err) => {
+        window.dispatchEvent(
+          new CustomEvent("timdiemban:gps-denied", {
+            detail: { code: err?.code, message: err?.message }
+          })
+        );
+      },
       { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 }
     );
   }
