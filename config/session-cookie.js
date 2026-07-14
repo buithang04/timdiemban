@@ -39,6 +39,7 @@ function browserClearSessionCookie() {
 module.exports = {
   COOKIE_NAME,
   COOKIE_VALUE,
+  MAX_AGE_SEC,
   parseCookies,
   hasSessionCookie,
   browserSetSessionCookie,

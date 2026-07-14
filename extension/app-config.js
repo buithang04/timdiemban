@@ -3,9 +3,9 @@
  * Sửa nguồn: config/app-config.js rồi chạy sync.
  */
 const TIMDIEMBAN_CONFIG = {
-  APP_ORIGIN: "http://localhost:3000",
-  NEWS_ORIGIN: "http://localhost:3001",
-  SEARCH_ORIGIN: "http://localhost:3000",
+  APP_ORIGIN: "https://app.findmap.vn",
+  NEWS_ORIGIN: "https://app.findmap.vn",
+  SEARCH_ORIGIN: "https://app.findmap.vn",
   MAPS_AUTO_FOCUS_MINUTES: 2,
   MAPS_AUTO_REOPEN_MAX: 5,
   EXTENSION_INSTALL_URL: ""

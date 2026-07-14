@@ -80,8 +80,8 @@
     const LEGACY_ADMIN_KEY = "timdiemban_admin_token";
 
     function homeForRole(_role) {
-      // Cả admin và user đều vào trang tìm kiếm; admin mở /admin từ menu
-      return "/";
+      // /app luôn vào hệ tìm kiếm (nginx không nhầm với landing "/")
+      return "/app";
     }
 
     const TERMS_HIDE_KEY = "findmap_terms_hide_until";
@@ -168,7 +168,7 @@
         if (afterLoginShouldShowTerms(data.user)) {
           openTermsModal(token, data.user || null, "login");
         } else {
-          window.location.replace("/");
+          window.location.replace(homeForRole(role));
         }
       } catch {}
     }
@@ -299,7 +299,7 @@
         if (afterLoginShouldShowTerms(data.user)) {
           openTermsModal(data.token, data.user || null, "login");
         } else {
-          window.location.href = "/";
+          window.location.href = homeForRole(role);
         }
       } catch (err) {
         errorEl.textContent = err.message || "Đăng nhập thất bại";
@@ -409,7 +409,7 @@
         pendingTermsAction = "";
         pendingRegisterPayload = null;
         termsModal.classList.add("hidden");
-        window.location.replace("/");
+        window.location.replace(homeForRole(agreedUser?.role));
       } catch (err) {
         termsError.textContent = err.message || "Không thể lưu điều khoản";
         termsError.classList.remove("hidden");

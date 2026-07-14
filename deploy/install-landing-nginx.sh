@@ -19,9 +19,8 @@ echo "==> Reload nginx (không restart — không downtime)"
 systemctl reload nginx
 
 echo "==> Kiểm tra nhanh"
-curl -sI http://127.0.0.1/gioi-thieu -H 'Host: app.findmap.vn' | head -5
 curl -sI http://127.0.0.1/ -H 'Host: app.findmap.vn' | head -5
-
+curl -sI http://127.0.0.1/gioi-thieu -H 'Host: app.findmap.vn' | head -5
 echo ""
-echo "Done. Landing: https://app.findmap.vn/gioi-thieu"
+echo "Done. Landing: https://app.findmap.vn/"
 echo "Hệ tìm kiếm: https://app.findmap.vn/ (không đổi)"

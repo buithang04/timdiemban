@@ -89,7 +89,31 @@ const PORT = Number(process.env.PORT || process.env.APP_PORT || 3000);
 app.set("json escape", true);
 
 const appConfig = require(path.join(__dirname, "..", "config", "app-config.js"));
-const { hasSessionCookie } = require(path.join(__dirname, "..", "config", "session-cookie"));
+const { hasSessionCookie, COOKIE_NAME, COOKIE_VALUE, MAX_AGE_SEC } = require(path.join(
+  __dirname,
+  "..",
+  "config",
+  "session-cookie"
+));
+
+function sessionCookieAttributes(req) {
+  const proto = String(req.get("x-forwarded-proto") || req.protocol || "").toLowerCase();
+  const secure = proto === "https" ? "; Secure" : "";
+  return `Path=/; Max-Age=${MAX_AGE_SEC}; SameSite=Lax${secure}`;
+}
+
+function attachSessionCookie(req, res) {
+  res.setHeader(
+    "Set-Cookie",
+    `${COOKIE_NAME}=${COOKIE_VALUE}; ${sessionCookieAttributes(req)}`
+  );
+}
+
+function clearSessionCookieHeader(req, res) {
+  const proto = String(req.get("x-forwarded-proto") || req.protocol || "").toLowerCase();
+  const secure = proto === "https" ? "; Secure" : "";
+  res.setHeader("Set-Cookie", `${COOKIE_NAME}=; Path=/; Max-Age=0; SameSite=Lax${secure}`);
+}
 const appOrigin = String(process.env.APP_ORIGIN || appConfig.APP_ORIGIN || "")
   .replace(/\/$/, "") || `http://localhost:${PORT}`;
 const newsOrigin = String(
@@ -430,6 +454,7 @@ app.post("/api/auth/login", authWriteRateLimit, guardSensitiveInput("email", "pa
   try {
     const { email, password } = req.body || {};
     const result = await loginUser(email, password);
+    attachSessionCookie(req, res);
     res.json(result);
   } catch (err) {
     res.status(401).json({ error: err.message });
@@ -441,6 +466,7 @@ app.post("/api/auth/register", authWriteRateLimit, guardSensitiveInput("email", 
     const { fullName, email, phone, password } = req.body || {};
     const user = await createUser(email, password, { fullName, phone });
     const result = await loginUser(email, password);
+    attachSessionCookie(req, res);
     res.status(201).json({ ok: true, user, token: result.token });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -449,6 +475,7 @@ app.post("/api/auth/register", authWriteRateLimit, guardSensitiveInput("email", 
 
 app.post("/api/auth/logout", authWriteRateLimit, async (req, res) => {
   await logoutToken(getToken(req));
+  clearSessionCookieHeader(req, res);
   res.json({ ok: true });
 });
 
@@ -471,6 +498,7 @@ app.post("/api/auth/accept-terms", authWriteRateLimit, requireAuth, async (req, 
   try {
     const version = req.body?.version || "v1";
     const user = await acceptTerms(req.user.id, version);
+    attachSessionCookie(req, res);
     res.json({ ok: true, user });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -1171,6 +1199,9 @@ const webPages = {
 for (const [route, file] of Object.entries(webPages)) {
   app.get(route, (req, res) => sendWebPage(res, file));
 }
+
+/** Trang tìm điểm — luôn vào hệ tìm kiếm (tránh nhầm "/" landing cùng domain). */
+app.get("/app", (_req, res) => sendWebPage(res, "index.html"));
 
 app.get("/", (req, res) => {
   if (hasSessionCookie(req)) {

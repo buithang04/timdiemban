@@ -198,7 +198,6 @@ app.get("/robots.txt", (req, res) => {
   const body = [
     "User-agent: *",
     "Allow: /",
-    "Allow: /",
     "Allow: /tin-tuc",
     "Allow: /media/",
     "Disallow: /login",

@@ -1,6 +1,14 @@
 (function () {
   const PAGE_SIZE = 9;
 
+  /** URL cũ /gioi-thieu → / (không reload) */
+  (function normalizeLandingPath() {
+    const path = (location.pathname || "/").replace(/\/+$/, "") || "/";
+    if (path === "/gioi-thieu") {
+      history.replaceState(null, "", `/${location.search}${location.hash}`);
+    }
+  })();
+
   function stripSlash(o) {
     return String(o || "").replace(/\/+$/, "");
   }
@@ -20,10 +28,10 @@
           ""
       );
       if (!search || search === stripSlash(location.origin)) {
-        window.location.replace("/");
+        window.location.replace("/app");
         return;
       }
-      window.location.replace(`${search}/`);
+      window.location.replace(`${search}/app`);
     } catch {
       /* ignore */
     }
@@ -49,6 +57,11 @@
       const path = el.getAttribute("data-href-search") || "/";
       if (!search) return;
       el.setAttribute("href", path.startsWith("http") ? path : `${search}${path.startsWith("/") ? path : `/${path}`}`);
+      // Đăng nhập / vào app: cùng tab (không mở tab mới)
+      if (path === "/login" || path === "/app" || path === "/") {
+        el.removeAttribute("target");
+        el.removeAttribute("rel");
+      }
     });
 
     document.querySelectorAll("[data-href-news]").forEach((el) => {
