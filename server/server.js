@@ -1187,7 +1187,16 @@ for (const [from, to] of Object.entries(legacyHtmlRedirects)) {
   });
 }
 
-app.use(express.static(webDir));
+app.use(
+  express.static(webDir, {
+    setHeaders(res, filePath) {
+      // Tránh cache cứng HTML/JS/CSS — prod hay giữ bản cũ (panel GPS ảnh 2)
+      if (/\.(html|js|css)$/i.test(filePath)) {
+        res.setHeader("Cache-Control", "no-cache, must-revalidate");
+      }
+    }
+  })
+);
 
 const { execSync } = require("child_process");
 

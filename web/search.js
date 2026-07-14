@@ -887,17 +887,20 @@
       return;
     }
 
-    // Chưa có lat/lng → gọi GPS ngay trong cùng lần bấm (ngầm, không thêm UI trên form).
-    // Chrome hiện UI trên thanh địa chỉ nếu quyền còn hỏi được (prompt).
-    // Đã Chặn (denied): không mở được panel thanh địa chỉ bằng code — chỉ báo status.
+    // Xin GPS ngay trong gesture bấm Tìm kiếm (ngầm — không thêm panel/nút trong form).
+    // - Chưa có lat/lng: bắt buộc chờ GPS (Chrome hỏi trên thanh địa chỉ nếu còn "prompt")
+    // - Đã có lat/lng: vẫn kick GPS trong cùng gesture để Chrome kịp hiện UI nếu còn hỏi được;
+    //   không chặn luồng tìm. Đã "denied": Chrome không mở panel (giới hạn trình duyệt).
     let center = readCenterFromForm();
     let gpsPromise = null;
-    if (!center) {
-      if (!navigator.geolocation) {
+
+    if (!navigator.geolocation) {
+      if (!center) {
         showSearchStatus("Trình duyệt không hỗ trợ GPS — nhập lat/lng hoặc dùng Chọn tâm.", "error");
         return;
       }
-      showSearchStatus(GPS_ASKING_HINT, "info");
+    } else {
+      if (!center) showSearchStatus(GPS_ASKING_HINT, "info");
       gpsPromise = detectFreshGpsCenter({ force: true });
     }
 
@@ -915,6 +918,13 @@
           showSearchStatus(humanizeGeoError(err), "error");
           return;
         }
+      } else if (gpsPromise) {
+        // Không await — để Chrome có thể hiện hộp thoại trong lúc tìm chạy
+        gpsPromise
+          .then((c) => {
+            if (c) window.TimDiemBanMap?.focusPoint?.(c.lat, c.lng);
+          })
+          .catch(() => {});
       }
 
       if (!center) {
