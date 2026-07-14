@@ -281,7 +281,8 @@
     $("sidebarLogoutBtn")?.addEventListener("click", () => {
       apiReq("/api/logout", { method: "POST" }).catch(() => {});
       localStorage.removeItem(AUTH_KEY);
-      window.location.replace("/login");
+      window.FindmapSessionCookie?.clearSessionCookie?.();
+      window.location.replace("/");
     });
   }
 

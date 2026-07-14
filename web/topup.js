@@ -504,6 +504,7 @@
       }
     } catch {
       localStorage.removeItem(AUTH_KEY);
+      window.FindmapSessionCookie?.clearSessionCookie?.();
       currentUser = null;
     }
     updateHeaderUI();
@@ -550,11 +551,12 @@
     if (currentUser) {
       apiReq("/api/logout", { method: "POST" }).catch(() => {});
       localStorage.removeItem(AUTH_KEY);
+      window.FindmapSessionCookie?.clearSessionCookie?.();
       clearSessionInExtension();
       currentUser = null;
       updateHeaderUI();
       showLoginGate();
-      window.location.replace("/login");
+      window.location.replace("/");
     } else {
       window.location.replace("/login");
     }

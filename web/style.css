@@ -551,6 +551,26 @@ body.page-winmap {
   border-bottom: 1px solid transparent;
 }
 
+.ext-version-inner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.ext-version-install {
+  flex-shrink: 0;
+  font-weight: 700;
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.ext-version-install:hover {
+  opacity: 0.85;
+}
+
 .ext-version-info {
   background: #eff6ff;
   color: var(--wm-primary-deep);

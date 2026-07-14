@@ -5,6 +5,30 @@
     return String(o || "").replace(/\/+$/, "");
   }
 
+  function maybeRedirectLoggedInUser(origins) {
+    try {
+      const token = localStorage.getItem("timdiemban_token");
+      if (!token) return;
+      window.FindmapSessionCookie?.setSessionCookie?.();
+      const path = (location.pathname || "/").replace(/\/+$/, "") || "/";
+      if (path !== "/" && path !== "/gioi-thieu") return;
+      const search = stripSlash(
+        origins?.searchOrigin ||
+          origins?.SEARCH_ORIGIN ||
+          globalThis.TIMDIEMBAN_CONFIG?.SEARCH_ORIGIN ||
+          globalThis.TIMDIEMBAN_CONFIG?.APP_ORIGIN ||
+          ""
+      );
+      if (!search || search === stripSlash(location.origin)) {
+        window.location.replace("/");
+        return;
+      }
+      window.location.replace(`${search}/`);
+    } catch {
+      /* ignore */
+    }
+  }
+
   /** Gắn APP/NEWS/SEARCH origin từ config hoặc /api/config/origins — không hardcode domain. */
   function applyOriginLinks(origins) {
     const search = stripSlash(
@@ -35,7 +59,8 @@
 
     const canon = document.querySelector('link[rel="canonical"]');
     if (canon && news) {
-      const path = location.pathname.replace(/\/+$/, "") || "/gioi-thieu";
+      let path = location.pathname.replace(/\/+$/, "") || "/";
+      if (path === "/gioi-thieu") path = "/";
       canon.setAttribute("href", `${news}${path}`);
     }
 
@@ -72,6 +97,7 @@
       origins = null;
     }
     applyOriginLinks(origins);
+    maybeRedirectLoggedInUser(origins);
   }
 
   bootOrigins();

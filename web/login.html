@@ -65,11 +65,16 @@
         <input type="checkbox" id="termsAgreeGpsCheckbox" style="margin-top:3px" />
         <span>Tôi đồng ý cho phép ứng dụng thu thập và xử lý Dữ liệu vị trí GPS (Dữ liệu cá nhân nhạy cảm) để tìm kiếm các điểm bán xung quanh vị trí của tôi (Bắt buộc để sử dụng tính năng định vị điểm bán gần nhất).</span>
       </label>
+      <label style="display:grid;grid-template-columns:20px 1fr;column-gap:10px;align-items:start;margin:12px 0">
+        <input type="checkbox" id="termsHide7DaysCheckbox" style="margin-top:3px" />
+        <span>Không hiện lại điều khoản trong <strong>7 ngày</strong> (hết hạn sẽ hiện lại khi đăng nhập).</span>
+      </label>
       <p id="termsError" class="auth-error hidden"></p>
       <button type="button" id="termsAgreeBtn" class="btn btn-primary auth-submit">Tôi đồng ý</button>
     </div>
   </div>
 
+  <script src="/session-cookie.js"></script>
   <script>
     const AUTH_TOKEN_KEY = "timdiemban_token";
     const LEGACY_ADMIN_KEY = "timdiemban_admin_token";
@@ -79,36 +84,46 @@
       return "/";
     }
 
+    const TERMS_HIDE_KEY = "findmap_terms_hide_until";
+    const TERMS_HIDE_MS = 7 * 24 * 60 * 60 * 1000;
+
     function setSessionToken(token) {
       localStorage.setItem(AUTH_TOKEN_KEY, token);
       sessionStorage.removeItem(LEGACY_ADMIN_KEY);
+      window.FindmapSessionCookie?.setSessionCookie?.();
     }
 
-    async function redirectIfLoggedIn() {
-      const token = localStorage.getItem(AUTH_TOKEN_KEY) || sessionStorage.getItem(LEGACY_ADMIN_KEY) || "";
-      if (!token) return;
+    function termsHideStorageKey(userId) {
+      return `${TERMS_HIDE_KEY}:${userId || "unknown"}`;
+    }
+
+    function isTermsHiddenFor7Days(user) {
+      if (!user?.id || !user.termsAccepted) return false;
       try {
-        const res = await fetch("/api/auth/me", { headers: { Authorization: `Bearer ${token}` } });
-        if (!res.ok) {
-          localStorage.removeItem(AUTH_TOKEN_KEY);
-          sessionStorage.removeItem(LEGACY_ADMIN_KEY);
-          return;
-        }
-        const data = await res.json();
-        const role = data.user?.role;
-        if (role === "admin") {
-          setSessionToken(token);
-          window.location.replace(homeForRole(role));
-          return;
-        }
-        // user thường: giữ flow cũ (có thể cần terms) — chỉ auto vào app nếu đã accept
-        if (data.user?.termsAccepted) {
-          window.location.replace("/");
+        const until = Number(localStorage.getItem(termsHideStorageKey(user.id)) || 0);
+        return until > Date.now();
+      } catch {
+        return false;
+      }
+    }
+
+    function saveTermsHideFor7Days(userId, enabled) {
+      if (!userId) return;
+      try {
+        if (enabled) {
+          localStorage.setItem(termsHideStorageKey(userId), String(Date.now() + TERMS_HIDE_MS));
+        } else {
+          localStorage.removeItem(termsHideStorageKey(userId));
         }
       } catch {}
     }
 
-    redirectIfLoggedIn();
+    /** Đăng nhập: hiện điều khoản mỗi lần; chỉ bỏ qua nếu còn trong cửa sổ 7 ngày. */
+    function afterLoginShouldShowTerms(user) {
+      if (!user || user.role === "admin") return false;
+      if (!user.termsAccepted) return true;
+      return !isTermsHiddenFor7Days(user);
+    }
 
     const form = document.getElementById("loginForm");
     const errorEl = document.getElementById("loginError");
@@ -121,6 +136,7 @@
     const termsAgreeBtn = document.getElementById("termsAgreeBtn");
     const termsAgreeServiceCheckbox = document.getElementById("termsAgreeServiceCheckbox");
     const termsAgreeGpsCheckbox = document.getElementById("termsAgreeGpsCheckbox");
+    const termsHide7DaysCheckbox = document.getElementById("termsHide7DaysCheckbox");
     const termsError = document.getElementById("termsError");
     const termsContent = document.getElementById("termsContent");
     const termsScrollHint = document.getElementById("termsScrollHint");
@@ -129,6 +145,33 @@
     let pendingTermsAction = "";
     let pendingRegisterPayload = null;
     let termsScrolledOnce = false;
+
+    async function redirectIfLoggedIn() {
+      const token = localStorage.getItem(AUTH_TOKEN_KEY) || sessionStorage.getItem(LEGACY_ADMIN_KEY) || "";
+      if (!token) return;
+      try {
+        const res = await fetch("/api/auth/me", { headers: { Authorization: `Bearer ${token}` } });
+        if (!res.ok) {
+          localStorage.removeItem(AUTH_TOKEN_KEY);
+          sessionStorage.removeItem(LEGACY_ADMIN_KEY);
+          window.FindmapSessionCookie?.clearSessionCookie?.();
+          return;
+        }
+        const data = await res.json();
+        const role = data.user?.role;
+        if (role === "admin") {
+          setSessionToken(token);
+          window.location.replace(homeForRole(role));
+          return;
+        }
+        setSessionToken(token);
+        if (afterLoginShouldShowTerms(data.user)) {
+          openTermsModal(token, data.user || null, "login");
+        } else {
+          window.location.replace("/");
+        }
+      } catch {}
+    }
 
     function esc(value) {
       return String(value || "").replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
@@ -189,10 +232,11 @@
     function setTermsConsentEnabled(enabled) {
       termsAgreeServiceCheckbox.disabled = !enabled;
       termsAgreeGpsCheckbox.disabled = !enabled;
+      if (termsHide7DaysCheckbox) termsHide7DaysCheckbox.disabled = !enabled;
       termsAgreeBtn.disabled = !enabled;
       if (termsScrollHint) {
         termsScrollHint.textContent = enabled
-          ? "Bạn đã cuộn hết điều khoản. Hãy tích chọn 2 ô để tiếp tục."
+          ? "Bạn đã cuộn hết điều khoản. Hãy tích chọn 2 ô đồng ý để tiếp tục."
           : "Vui lòng cuộn hết nội dung điều khoản để mở khóa xác nhận đồng ý.";
       }
     }
@@ -204,6 +248,7 @@
       termsScrolledOnce = false;
       termsAgreeServiceCheckbox.checked = false;
       termsAgreeGpsCheckbox.checked = false;
+      if (termsHide7DaysCheckbox) termsHide7DaysCheckbox.checked = false;
       termsError.classList.add("hidden");
       renderTerms(pendingTermsUser);
       termsContent.scrollTop = 0;
@@ -220,6 +265,8 @@
       }
     });
 
+    redirectIfLoggedIn();
+
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
       errorEl.classList.add("hidden");
@@ -235,8 +282,7 @@
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.error || "Đăng nhập thất bại");
 
-        localStorage.setItem(AUTH_TOKEN_KEY, data.token);
-        sessionStorage.removeItem(LEGACY_ADMIN_KEY);
+        setSessionToken(data.token);
         try {
           window.postMessage(
             { source: "timdiemban-web", type: "LOGIN", payload: { token: data.token, user: data.user } },
@@ -250,10 +296,10 @@
           return;
         }
 
-        if (data.user?.termsAccepted) {
-          window.location.href = "/";
-        } else {
+        if (afterLoginShouldShowTerms(data.user)) {
           openTermsModal(data.token, data.user || null, "login");
+        } else {
+          window.location.href = "/";
         }
       } catch (err) {
         errorEl.textContent = err.message || "Đăng nhập thất bại";
@@ -344,8 +390,10 @@
         });
         const d = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(d.error || "Không thể lưu điều khoản");
+        const agreedUser = d.user || pendingTermsUser || null;
+        saveTermsHideFor7Days(agreedUser?.id, Boolean(termsHide7DaysCheckbox?.checked));
         // Ensure both web + extension hold the latest accepted-terms session
-        localStorage.setItem(AUTH_TOKEN_KEY, pendingTermsToken);
+        setSessionToken(pendingTermsToken);
         try {
           window.postMessage(
             {

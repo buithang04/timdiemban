@@ -3,11 +3,12 @@
  * Sửa nguồn: config/app-config.js rồi chạy sync.
  */
 const TIMDIEMBAN_CONFIG = {
-  APP_ORIGIN: "https://app.findmap.vn",
-  NEWS_ORIGIN: "https://app.findmap.vn",
-  SEARCH_ORIGIN: "https://app.findmap.vn",
+  APP_ORIGIN: "http://localhost:3000",
+  NEWS_ORIGIN: "http://localhost:3001",
+  SEARCH_ORIGIN: "http://localhost:3000",
   MAPS_AUTO_FOCUS_MINUTES: 2,
-  MAPS_AUTO_REOPEN_MAX: 5
+  MAPS_AUTO_REOPEN_MAX: 5,
+  EXTENSION_INSTALL_URL: ""
 };
 if (typeof module !== "undefined" && module.exports) {
   module.exports = TIMDIEMBAN_CONFIG;

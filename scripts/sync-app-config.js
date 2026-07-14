@@ -87,7 +87,8 @@ const TIMDIEMBAN_CONFIG = {
   NEWS_ORIGIN: ${JSON.stringify(news)},
   SEARCH_ORIGIN: ${JSON.stringify(search)},
   MAPS_AUTO_FOCUS_MINUTES: ${Number(cfg.MAPS_AUTO_FOCUS_MINUTES) || 2},
-  MAPS_AUTO_REOPEN_MAX: ${Number(cfg.MAPS_AUTO_REOPEN_MAX) || 5}
+  MAPS_AUTO_REOPEN_MAX: ${Number(cfg.MAPS_AUTO_REOPEN_MAX) || 5},
+  EXTENSION_INSTALL_URL: ${JSON.stringify(String(cfg.EXTENSION_INSTALL_URL || ""))}
 };
 if (typeof module !== "undefined" && module.exports) {
   module.exports = TIMDIEMBAN_CONFIG;

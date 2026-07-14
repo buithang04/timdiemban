@@ -89,6 +89,7 @@ const PORT = Number(process.env.PORT || process.env.APP_PORT || 3000);
 app.set("json escape", true);
 
 const appConfig = require(path.join(__dirname, "..", "config", "app-config.js"));
+const { hasSessionCookie } = require(path.join(__dirname, "..", "config", "session-cookie"));
 const appOrigin = String(process.env.APP_ORIGIN || appConfig.APP_ORIGIN || "")
   .replace(/\/$/, "") || `http://localhost:${PORT}`;
 const newsOrigin = String(
@@ -1112,9 +1113,14 @@ function redirectToNews(req, res) {
   res.redirect(302, dest);
 }
 
+function redirectGioiThieuToHome(req, res) {
+  const qs = req.url.includes("?") ? req.url.slice(req.url.indexOf("?")) : "";
+  res.redirect(301, `${newsOrigin}/${qs}`);
+}
+
 /** Tin tức / giới thiệu / CMS đã tách sang hệ news — chuyển hướng. */
+app.get("/gioi-thieu", redirectGioiThieuToHome);
 [
-  "/gioi-thieu",
   "/tin-tuc",
   "/sitemap.xml",
   "/admin-post-article",
@@ -1165,6 +1171,14 @@ const webPages = {
 for (const [route, file] of Object.entries(webPages)) {
   app.get(route, (req, res) => sendWebPage(res, file));
 }
+
+app.get("/", (req, res) => {
+  if (hasSessionCookie(req)) {
+    return sendWebPage(res, "index.html");
+  }
+  const qs = req.url.includes("?") ? req.url.slice(req.url.indexOf("?")) : "";
+  res.redirect(302, `${newsOrigin}/${qs}`);
+});
 
 const legacyHtmlRedirects = {
   "/login.html": "/login",

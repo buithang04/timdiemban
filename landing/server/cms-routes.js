@@ -664,7 +664,7 @@ async function buildSitemapXml(appOrigin) {
   const posts = await cms.listPublishedForSitemap();
   const urls = [
     { loc: `${origin}/`, priority: "1.0", changefreq: "weekly" },
-    { loc: `${origin}/gioi-thieu`, priority: "0.95", changefreq: "weekly" },
+    { loc: `${origin}/`, priority: "0.95", changefreq: "weekly" },
     { loc: `${origin}/tin-tuc`, priority: "0.9", changefreq: "daily" },
     ...posts.map((p) => ({
       loc: `${origin}${p.path || cms.publicPathForPost(p)}`,

@@ -183,8 +183,13 @@ function getAuthToken() {
 }
 
 function setAuthToken(token) {
-  if (token) localStorage.setItem(AUTH_TOKEN_KEY, token);
-  else localStorage.removeItem(AUTH_TOKEN_KEY);
+  if (token) {
+    localStorage.setItem(AUTH_TOKEN_KEY, token);
+    window.FindmapSessionCookie?.setSessionCookie?.();
+  } else {
+    localStorage.removeItem(AUTH_TOKEN_KEY);
+    window.FindmapSessionCookie?.clearSessionCookie?.();
+  }
 }
 
 async function parseApiResponse(res) {
@@ -448,7 +453,7 @@ async function loadCurrentUser() {
     currentUser = null;
     updateAuthUI();
     if (window.location.pathname === "/") {
-      window.location.replace("/login");
+      window.location.replace("/");
     }
     return null;
   }
@@ -469,7 +474,7 @@ async function loadCurrentUser() {
     updateAuthUI();
     clearSessionInExtension();
     if (window.location.pathname === "/") {
-      window.location.replace("/login");
+      window.location.replace("/");
     }
     return null;
   }

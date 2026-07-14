@@ -14,8 +14,14 @@
   const els = {
     banner: null,
     text: null,
+    install: null,
     dismiss: null
   };
+
+  function getInstallUrl() {
+    const cfg = globalThis.TIMDIEMBAN_CONFIG || {};
+    return String(cfg.EXTENSION_INSTALL_URL || "").trim();
+  }
 
   function parseSemver(v) {
     const parts = String(v || "0.0.0")
@@ -63,7 +69,18 @@
     els.banner?.classList.add("hidden");
   }
 
-  function showBanner(kind, message, { dismissible = false } = {}) {
+  function updateInstallLink(show) {
+    if (!els.install) return;
+    const url = getInstallUrl();
+    if (show && url) {
+      els.install.href = url;
+      els.install.classList.remove("hidden");
+    } else {
+      els.install.classList.add("hidden");
+    }
+  }
+
+  function showBanner(kind, message, { dismissible = false, showInstall = false } = {}) {
     if (!els.banner || !els.text) return;
     if (kind === "ok" && isDismissed()) {
       hideBanner();
@@ -72,6 +89,7 @@
     els.banner.className = `ext-version-banner ext-version-${kind}`;
     els.text.textContent = message;
     els.banner.classList.remove("hidden");
+    updateInstallLink(showInstall);
     if (els.dismiss) {
       els.dismiss.classList.toggle("hidden", !dismissible);
     }
@@ -87,9 +105,14 @@
     }
 
     if (!state.bridgeOk) {
+      const installUrl = getInstallUrl();
+      const extra = installUrl
+        ? " Bấm «Cài Extension Findmap» bên cạnh để tải tiện ích."
+        : " (Link cài đặt sẽ được cập nhật trên hệ thống.)";
       showBanner(
         "error",
-        `Chưa thấy extension (cần v${req}). Reload extension findmap tại chrome://extensions (chấp nhận quyền truy cập site nếu Chrome hỏi), rồi F5 trang.`
+        `Chưa cài hoặc chưa kết nối Extension Findmap (cần v${req}). Cài tiện ích Chrome, bật extension, rồi F5 trang.${extra}`,
+        { showInstall: true }
       );
       return;
     }
@@ -106,7 +129,8 @@
     if (cmp < 0) {
       showBanner(
         "error",
-        `Extension chưa cập nhật: đang dùng v${state.installedVersion}, cần v${req}. Mở chrome://extensions → findmap → Reload.`
+        `Extension chưa cập nhật: đang dùng v${state.installedVersion}, cần v${req}. Mở chrome://extensions → Findmap Extension → Reload.`,
+        { showInstall: true }
       );
       return;
     }
@@ -157,10 +181,11 @@
   function init() {
     els.banner = document.getElementById("extVersionBanner");
     els.text = document.getElementById("extVersionBannerText");
+    els.install = document.getElementById("extInstallLink");
     els.dismiss = document.getElementById("extVersionDismiss");
     els.dismiss?.addEventListener("click", dismissBanner);
 
-    showBanner("info", "Đang kiểm tra phiên bản extension…");
+    showBanner("info", "Đang kiểm tra Extension Findmap…");
 
     loadRequiredVersion().then(() => {
       render();

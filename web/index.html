@@ -16,13 +16,17 @@
   <base href="/" />
   <link rel="stylesheet" href="/style.css?v=20260714gps8" />
   <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+  <script src="/session-cookie.js"></script>
   <script>
     try {
       if (!localStorage.getItem("timdiemban_token")) {
-        window.location.replace("/login");
+        window.FindmapSessionCookie?.clearSessionCookie?.();
+        window.location.replace("/");
+      } else {
+        window.FindmapSessionCookie?.setSessionCookie?.();
       }
     } catch {
-      window.location.replace("/login");
+      window.location.replace("/");
     }
   </script>
 </head>
@@ -71,7 +75,10 @@
   <!-- Main app -->
   <div class="wm-app">
     <div id="extVersionBanner" class="ext-version-banner ext-version-info hidden" role="status">
-      <span id="extVersionBannerText"></span>
+      <div class="ext-version-inner">
+        <span id="extVersionBannerText"></span>
+        <a id="extInstallLink" class="ext-version-install hidden" href="#" target="_blank" rel="noopener noreferrer">Cài Extension Findmap</a>
+      </div>
       <button type="button" id="extVersionDismiss" class="ext-version-dismiss hidden">Đóng</button>
     </div>
 

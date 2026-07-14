@@ -34,7 +34,9 @@ const TIMDIEMBAN_CONFIG = {
   APP_ORIGIN: appOrigin,
   NEWS_ORIGIN: env("NEWS_ORIGIN") || defaultNews,
   MAPS_AUTO_FOCUS_MINUTES: 2,
-  MAPS_AUTO_REOPEN_MAX: 5
+  MAPS_AUTO_REOPEN_MAX: 5,
+  /** Link cài Extension Chrome — cập nhật khi có URL store/zip */
+  EXTENSION_INSTALL_URL: env("EXTENSION_INSTALL_URL") || ""
 };
 
 /** Alias rõ nghĩa — SEARCH = hệ tìm kiếm */

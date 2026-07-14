@@ -357,7 +357,8 @@ els.adminLogoutBtn?.addEventListener("click", async () => {
     await adminFetch("/api/auth/logout", { method: "POST" });
   } catch {}
   setAdminToken("");
-  location.replace("/login");
+  window.FindmapSessionCookie?.clearSessionCookie?.();
+  location.replace("/");
 });
 
 function escapeHtml(s) {

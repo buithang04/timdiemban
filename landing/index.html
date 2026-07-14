@@ -7,7 +7,7 @@
   <meta name="description" content="Findmap giúp đội bán hàng tìm điểm bán trên Google Maps theo khu vực, gom kết quả về một bảng, trừ credit rõ ràng, xuất Excel hoặc gửi sang hệ thống ngoài." />
   <meta name="keywords" content="Findmap, tìm điểm bán, Google Maps, danh sách điểm bán, xuất Excel, ChatPlus" />
   <meta name="robots" content="index, follow" />
-  <link rel="canonical" href="/gioi-thieu" />
+  <link rel="canonical" href="/" />
   <link rel="sitemap" type="application/xml" title="Sitemap" href="/sitemap.xml" />
   <meta property="og:type" content="website" />
   <meta property="og:title" content="Findmap — Tìm điểm bán trên Google Maps" />
@@ -16,8 +16,10 @@
   <meta property="og:locale" content="vi_VN" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="google-site-verification" content="" id="gscMeta" />
-  <link rel="icon" href="/landing/assets/favicon.svg" type="image/svg+xml" />
-  <link rel="icon" href="/landing/assets/favicon-48.png" type="image/png" sizes="48x48" />
+  <link rel="icon" href="/assets/icons/favicon.svg" type="image/svg+xml" />
+  <link rel="icon" href="/assets/icons/favicon-48.png" type="image/png" sizes="48x48" />
+  <link rel="icon" href="/assets/icons/favicon-16.png" type="image/png" sizes="16x16" />
+  <link rel="apple-touch-icon" href="/assets/icons/favicon-128.png" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800&family=Manrope:wght@700;800&display=swap" rel="stylesheet" />
@@ -38,7 +40,7 @@
 <body class="page-home">
   <header class="topbar">
     <div class="container topbar-inner">
-      <a class="brand" href="/gioi-thieu" aria-label="Findmap">
+      <a class="brand" href="/" aria-label="Findmap">
         <img src="/landing/assets/logo.svg" alt="Findmap" />
       </a>
       <button class="menu-toggle" id="menuToggle" type="button" aria-label="Mở menu">☰</button>
@@ -48,7 +50,7 @@
         <a href="#loi-ich">Lợi ích</a>
         <a href="/tin-tuc">Tin tức</a>
         <a href="#chinh-sach">Chính sách</a>
-        <a class="btn btn-primary btn-sm" href="#" data-href-search="/" target="_blank" rel="noopener">Đăng nhập</a>
+        <a class="btn btn-primary btn-sm" href="#" data-href-search="/login" target="_blank" rel="noopener">Đăng nhập</a>
       </nav>
     </div>
   </header>
@@ -64,7 +66,7 @@
             Trừ điểm sử dụng minh bạch — xuất Excel hoặc gửi sang hệ thống ngoài khi đã cấu hình.
           </p>
           <div class="hero-actions">
-            <a class="btn btn-primary" href="#" data-href-search="/" target="_blank" rel="noopener">Bắt đầu</a>
+            <a class="btn btn-primary" href="#" data-href-search="/login" target="_blank" rel="noopener">Bắt đầu</a>
             <a class="btn btn-ghost" href="#cach-dung">Xem cách dùng</a>
           </div>
         </div>
@@ -375,7 +377,7 @@
             <p>Đăng nhập, cài tiện ích Chrome, chọn khu vực cần tìm — hệ thống dẫn bạn từng bước.</p>
           </div>
           <div class="cta-actions">
-            <a class="btn btn-primary" href="#" data-href-search="/" target="_blank" rel="noopener">Đăng nhập ngay</a>
+            <a class="btn btn-primary" href="#" data-href-search="/login" target="_blank" rel="noopener">Đăng nhập ngay</a>
             <a class="btn btn-ghost" href="#cach-dung">Xem lại các bước</a>
           </div>
         </div>
@@ -418,7 +420,7 @@
       <div class="footer-links">
         <a href="/tin-tuc">Tin tức</a>
         <a href="#chinh-sach">Chính sách</a>
-        <a href="#" data-href-search="/" target="_blank" rel="noopener">Đăng nhập</a>
+        <a href="#" data-href-search="/login" target="_blank" rel="noopener">Đăng nhập</a>
       </div>
     </div>
   </footer>
@@ -436,6 +438,7 @@
   </div>
 
   <script src="/app-config.js"></script>
+  <script src="/landing/session-cookie.js"></script>
   <script src="/landing/script.js"></script>
 </body>
 </html>

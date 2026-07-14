@@ -23,6 +23,7 @@ const fs = require("fs");
 const cors = require("cors");
 
 const newsConfig = require("../config/app-config");
+const rootAppConfig = require(path.join(__dirname, "..", "..", "config", "app-config.js"));
 const dbModule = require("./db");
 const auth = require("./auth");
 const { createCmsRouter, buildSitemapXml, cms } = require("./cms-routes");
@@ -197,7 +198,7 @@ app.get("/robots.txt", (req, res) => {
   const body = [
     "User-agent: *",
     "Allow: /",
-    "Allow: /gioi-thieu",
+    "Allow: /",
     "Allow: /tin-tuc",
     "Allow: /media/",
     "Disallow: /login",
@@ -221,9 +222,12 @@ function sendTinTucPage(res, file) {
   res.sendFile(path.join(tinTucDir, file));
 }
 
-app.get("/", (_req, res) => res.redirect(302, "/gioi-thieu"));
-app.get("/gioi-thieu", (_req, res) => {
+app.get("/", (_req, res) => {
   res.sendFile(path.join(publicLandingDir, "index.html"));
+});
+app.get("/gioi-thieu", (req, res) => {
+  const qs = req.url.includes("?") ? req.url.slice(req.url.indexOf("?")) : "";
+  res.redirect(301, `/${qs}`);
 });
 
 app.get("/tin-tuc", (_req, res) => sendTinTucPage(res, "tin-tuc.html"));
@@ -252,7 +256,8 @@ const TIMDIEMBAN_CONFIG = {
   NEWS_ORIGIN: ${JSON.stringify(appOrigin)},
   SEARCH_ORIGIN: ${JSON.stringify(searchOrigin)},
   MAPS_AUTO_FOCUS_MINUTES: 2,
-  MAPS_AUTO_REOPEN_MAX: 5
+  MAPS_AUTO_REOPEN_MAX: 5,
+  EXTENSION_INSTALL_URL: ${JSON.stringify(String(process.env.EXTENSION_INSTALL_URL || rootAppConfig.EXTENSION_INSTALL_URL || ""))}
 };
 if (typeof globalThis !== "undefined") {
   globalThis.TIMDIEMBAN_CONFIG = TIMDIEMBAN_CONFIG;
@@ -345,7 +350,7 @@ function freePort(port) {
 function startServer(retried = false) {
   const server = app.listen(PORT, () => {
     console.log(`Findmap Landing / News: ${appOrigin}`);
-    console.log(`Giới thiệu: ${appOrigin}/gioi-thieu`);
+    console.log(`Giới thiệu: ${appOrigin}/`);
     console.log(`Tin tức: ${appOrigin}/tin-tuc`);
     console.log(`CMS: ${appOrigin}/admin-post-article`);
     console.log(`Đăng nhập CMS: ${appOrigin}/login-admin-post`);
