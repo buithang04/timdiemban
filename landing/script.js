@@ -17,9 +17,13 @@
     try {
       const token = localStorage.getItem("timdiemban_token");
       if (!token) return;
-      window.FindmapSessionCookie?.setSessionCookie?.();
       const path = (location.pathname || "/").replace(/\/+$/, "") || "/";
       if (path !== "/" && path !== "/gioi-thieu") return;
+      // Trang app đã mount (meta) — không làm gì
+      if (document.querySelector("[data-findmap-app], meta[name='findmap-app']")) return;
+
+      window.FindmapSessionCookie?.setSessionCookie?.();
+
       const search = stripSlash(
         origins?.searchOrigin ||
           origins?.SEARCH_ORIGIN ||
@@ -27,11 +31,15 @@
           globalThis.TIMDIEMBAN_CONFIG?.APP_ORIGIN ||
           ""
       );
+
+      // Reload đúng 1 lần sau khi set cookie — server "/" nhận cookie → trang tìm kiếm
       if (!search || search === stripSlash(location.origin)) {
-        window.location.replace("/app");
+        if (sessionStorage.getItem("findmap_home_reload") === "1") return;
+        sessionStorage.setItem("findmap_home_reload", "1");
+        window.location.reload();
         return;
       }
-      window.location.replace(`${search}/app`);
+      window.location.replace(`${search}/`);
     } catch {
       /* ignore */
     }
@@ -58,7 +66,7 @@
       if (!search) return;
       el.setAttribute("href", path.startsWith("http") ? path : `${search}${path.startsWith("/") ? path : `/${path}`}`);
       // Đăng nhập / vào app: cùng tab (không mở tab mới)
-      if (path === "/login" || path === "/app" || path === "/") {
+      if (path === "/login" || path === "/") {
         el.removeAttribute("target");
         el.removeAttribute("rel");
       }

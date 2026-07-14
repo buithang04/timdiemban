@@ -1130,6 +1130,8 @@ app.get("/api/points/push-config", requireAuth, async (req, res) => {
 });
 
 const webDir = path.join(__dirname, "..", "web");
+const landingDir = path.join(__dirname, "..", "landing");
+const landingIndexHtml = path.join(landingDir, "index.html");
 
 function sendWebPage(res, file) {
   res.sendFile(path.join(webDir, file));
@@ -1143,7 +1145,15 @@ function redirectToNews(req, res) {
 
 function redirectGioiThieuToHome(req, res) {
   const qs = req.url.includes("?") ? req.url.slice(req.url.indexOf("?")) : "";
-  res.redirect(301, `${newsOrigin}/${qs}`);
+  res.redirect(301, `/${qs}`);
+}
+
+function sameNewsOrigin() {
+  try {
+    return new URL(newsOrigin).host === new URL(appOrigin).host;
+  } catch {
+    return newsOrigin.replace(/\/+$/, "") === appOrigin.replace(/\/+$/, "");
+  }
 }
 
 /** Tin tức / giới thiệu / CMS đã tách sang hệ news — chuyển hướng. */
@@ -1200,12 +1210,19 @@ for (const [route, file] of Object.entries(webPages)) {
   app.get(route, (req, res) => sendWebPage(res, file));
 }
 
-/** Trang tìm điểm — luôn vào hệ tìm kiếm (tránh nhầm "/" landing cùng domain). */
-app.get("/app", (_req, res) => sendWebPage(res, "index.html"));
+/** Trang tìm điểm — alias cũ → "/" (một URL duy nhất). */
+app.get("/app", (req, res) => {
+  const qs = req.url.includes("?") ? req.url.slice(req.url.indexOf("?")) : "";
+  res.redirect(301, `/${qs}`);
+});
 
 app.get("/", (req, res) => {
   if (hasSessionCookie(req)) {
     return sendWebPage(res, "index.html");
+  }
+  // Cùng domain: trả HTML giới thiệu tại "/" (không redirect — tránh vòng lặp)
+  if (sameNewsOrigin() && fs.existsSync(landingIndexHtml)) {
+    return res.sendFile(landingIndexHtml);
   }
   const qs = req.url.includes("?") ? req.url.slice(req.url.indexOf("?")) : "";
   res.redirect(302, `${newsOrigin}/${qs}`);

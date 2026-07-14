@@ -19,6 +19,7 @@
   <script src="/session-cookie.js"></script>
   <script>
     try {
+      sessionStorage.removeItem("findmap_home_reload");
       if (!localStorage.getItem("timdiemban_token")) {
         window.FindmapSessionCookie?.clearSessionCookie?.();
         window.location.replace("/");

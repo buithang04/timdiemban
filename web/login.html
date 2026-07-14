@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Đăng nhập — findmap</title>
   <meta name="findmap-app" content="1" />
+  <meta name="referrer" content="no-referrer" />
   <link rel="icon" href="/assets/icons/favicon.svg" type="image/svg+xml" />
   <link rel="icon" href="/assets/icons/favicon-48.png" type="image/png" sizes="48x48" />
   <link rel="icon" href="/assets/icons/favicon-16.png" type="image/png" sizes="16x16" />
@@ -80,8 +81,8 @@
     const LEGACY_ADMIN_KEY = "timdiemban_admin_token";
 
     function homeForRole(_role) {
-      // /app luôn vào hệ tìm kiếm (nginx không nhầm với landing "/")
-      return "/app";
+      // Cùng domain: "/" — nginx + cookie findmap_session phân biệt landing / tìm kiếm
+      return "/";
     }
 
     const TERMS_HIDE_KEY = "findmap_terms_hide_until";
