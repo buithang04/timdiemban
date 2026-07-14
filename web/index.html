@@ -14,7 +14,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
   <base href="/" />
-  <link rel="stylesheet" href="/style.css?v=20260714gps3" />
+  <link rel="stylesheet" href="/style.css?v=20260714gps4" />
   <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
   <script>
     try {
@@ -188,6 +188,18 @@
 
             <button type="submit" id="startSearchBtn" class="wm-btn wm-btn-primary wm-btn-block">Tìm kiếm ngay</button>
             <button type="button" id="cancelSearchBtn" class="wm-btn wm-btn-danger wm-btn-block hidden" title="Dừng quét Google Maps và lưu kết quả đã tìm">Dừng quét điểm bán</button>
+
+            <!-- Chỉ hiện khi bấm Tìm kiếm mà Chrome đã chặn GPS — nút native mở hộp Cho phép / Tiếp tục chặn -->
+            <div id="gpsAllowRow" class="gps-allow-row hidden" role="region" aria-label="Cho phép vị trí">
+              <p class="gps-allow-hint" id="gpsAllowHint">
+                Chrome đang chặn vị trí. Bấm nút bên dưới để mở hộp thoại <strong>Cho phép / Tiếp tục chặn</strong>:
+              </p>
+              <geolocation id="geoAllowEl" class="gps-allow-el" accuracymode="precise">
+                <button type="button" id="btnGeoAllowFallback" class="wm-btn wm-btn-primary wm-btn-block">
+                  Cho phép vị trí
+                </button>
+              </geolocation>
+            </div>
 
             <span id="centerPreview" class="center-preview-inline hidden"></span>
             <span id="searchStatus" class="search-status-inline hidden"></span>
@@ -381,7 +393,7 @@
   <script src="/grid-utils.js"></script>
   <script src="/map.js"></script>
   <script src="/ext-version.js"></script>
-  <script src="/search.js?v=20260714gps3"></script>
+  <script src="/search.js?v=20260714gps5"></script>
   <script src="/app.js"></script>
 </body>
 </html>
