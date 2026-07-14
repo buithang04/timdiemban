@@ -1939,39 +1939,6 @@ body.wm-console .wm-main { display: contents; }
   gap: 8px;
 }
 
-.gps-allow-row {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-top: 8px;
-  padding: 10px 12px;
-  border-radius: 8px;
-  border: 1px solid #bfdbfe;
-  background: #f0f7ff;
-}
-
-.gps-allow-row.hidden {
-  display: none !important;
-}
-
-.gps-allow-hint {
-  margin: 0;
-  font-size: 13px;
-  line-height: 1.4;
-  color: #1e3a8a;
-}
-
-.gps-allow-el {
-  display: block;
-  width: 100%;
-  min-height: 40px;
-}
-
-#btnGeoAllowFallback {
-  width: 100%;
-  font-weight: 700;
-}
-
 .wm-btn-primary {
   background: var(--wm-primary) !important;
   border-color: var(--wm-primary) !important;
