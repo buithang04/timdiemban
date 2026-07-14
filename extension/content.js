@@ -2018,11 +2018,6 @@
   }
 
   function getItemTrackKey(listData) {
-    const href = (listData.href || listData.mapsUrl || "").split("?")[0].split("#")[0];
-    if (href.includes("/maps/place/")) {
-      const slug = href.match(/\/maps\/place\/([^/]+)/);
-      if (slug) return `place:${decodeURIComponent(slug[1]).toLowerCase()}`;
-    }
     const cid =
       getCanonicalPlaceId(listData.href || "") ||
       getCanonicalPlaceId(listData.mapsUrl || "") ||
@@ -2032,13 +2027,22 @@
     const phone = normalizePhone(listData.phone);
     if (name && phone.length >= 9) return `np:${name}|${phone}`;
     const hrefFull = listData.href || listData.mapsUrl || "";
-    const coordM = hrefFull.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/);
+    const coordM =
+      hrefFull.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/) ||
+      hrefFull.match(/!3d(-?\d+(?:\.\d+)?)!4d(-?\d+(?:\.\d+)?)/);
     if (name && coordM) {
       return `coord:${name}|${Number(coordM[1]).toFixed(4)}|${Number(coordM[2]).toFixed(4)}`;
     }
+    // Slug + tọa độ — không dùng slug trần (chuỗi cửa hàng cùng tên)
+    if (hrefFull.includes("/maps/place/") && coordM) {
+      const slug = hrefFull.match(/\/maps\/place\/([^/@?]+)/);
+      if (slug) {
+        return `place:${decodeURIComponent(slug[1]).toLowerCase()}@${Number(coordM[1]).toFixed(4)},${Number(coordM[2]).toFixed(4)}`;
+      }
+    }
     const addr = (listData.address || "").trim();
     if (name && addr.length > 8) return `na:${name}|${addr.slice(0, 60)}`;
-    return `name:${name}`;
+    return `name:${name}|${(listData.address || "").slice(0, 40)}`;
   }
 
   function isAlreadyCollected(listData, seenTrack, seenKeys, seenCanonical, results) {

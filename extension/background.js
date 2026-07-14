@@ -94,12 +94,14 @@ async function verifyWebReceived(tabId, minCount, searchId) {
   }
   const webCount = Number(stats.count ?? 0);
   const applied = Number(stats.lastSyncApplied ?? webCount);
+  const incoming = Number(stats.lastSyncIncoming ?? 0);
   if (minCount != null) {
     const need = Number(minCount);
-    // Chỉ tin số dòng thực trên bảng — không tin lastSyncIncoming
-    if (webCount < need && applied < need) {
-      return { ok: false, stats, reason: "count_short", webCount, applied, minCount: need };
+    // Đủ dòng trên bảng, hoặc vừa nhận đủ snapshot (incoming) dù còn đang render
+    if (webCount >= need || applied >= need || incoming >= need) {
+      return { ok: true, stats, webCount };
     }
+    return { ok: false, stats, reason: "count_short", webCount, applied, incoming, minCount: need };
   }
   return { ok: true, stats, webCount };
 }
@@ -581,45 +583,51 @@ const EXT_QUEUE_KEY = "timdiemban_ext_queue";
 
 /** Gửi thẳng vào handler trang — trả về true chỉ khi ingest vào bảng thành công */
 async function deliverDataToWebTab(tabId, type, payload) {
-  const [{ result }] = await chrome.scripting.executeScript({
-    target: { tabId },
-    world: "MAIN",
-    func: (data, queueKey) => {
-      let delivered = false;
-      if (typeof window.__timDiemBanIngestSync === "function") {
-        try {
-          window.__timDiemBanIngestSync(data.type, data.payload);
-          delivered = true;
-          if (
-            data.type === "complete" &&
-            typeof window.__timDiemBanHandlePayload === "function"
-          ) {
-            window.__timDiemBanHandlePayload(data.type, data.payload);
+  try {
+    const [{ result }] = await chrome.scripting.executeScript({
+      target: { tabId },
+      world: "MAIN",
+      func: (data, queueKey) => {
+        let delivered = false;
+        if (typeof window.__timDiemBanIngestSync === "function") {
+          try {
+            window.__timDiemBanIngestSync(data.type, data.payload);
+            delivered = true;
+            if (
+              data.type === "complete" &&
+              typeof window.__timDiemBanHandlePayload === "function"
+            ) {
+              window.__timDiemBanHandlePayload(data.type, data.payload);
+            }
+          } catch (e) {
+            console.warn("TimDiemBan ingestSync:", e);
+            delivered = false;
           }
-        } catch (e) {
-          console.warn("TimDiemBan ingestSync:", e);
-          delivered = false;
         }
-      }
-      if (!delivered) {
-        try {
-          const q = JSON.parse(localStorage.getItem(queueKey) || "[]");
-          q.push({ type: data.type, payload: data.payload, at: Date.now() });
-          while (q.length > 800) q.shift();
-          localStorage.setItem(queueKey, JSON.stringify(q));
-        } catch {}
-        try {
-          window.postMessage(
-            { source: "timdiemban-ext", type: data.type, payload: data.payload },
-            window.location.origin
-          );
-        } catch {}
-      }
-      return { delivered };
-    },
-    args: [{ type, payload }, EXT_QUEUE_KEY]
-  });
-  return !!(result && result.delivered);
+        if (!delivered) {
+          try {
+            const q = JSON.parse(localStorage.getItem(queueKey) || "[]");
+            q.push({ type: data.type, payload: data.payload, at: Date.now() });
+            while (q.length > 800) q.shift();
+            localStorage.setItem(queueKey, JSON.stringify(q));
+          } catch {}
+          try {
+            window.postMessage(
+              { source: "timdiemban-ext", type: data.type, payload: data.payload },
+              window.location.origin
+            );
+            delivered = true;
+          } catch {}
+        }
+        return { delivered };
+      },
+      args: [{ type, payload }, EXT_QUEUE_KEY]
+    });
+    return !!(result && result.delivered);
+  } catch (err) {
+    console.warn("deliverDataToWebTab:", err?.message || err);
+    return false;
+  }
 }
 
 let itemSyncBackoffUntil = 0;

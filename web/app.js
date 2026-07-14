@@ -605,7 +605,12 @@ function getCanonicalPlaceId(url) {
     if (chijQ) return chijQ[1];
     const slugM = decoded.match(/\/maps\/place\/([^/@?]+)/);
     if (slugM && slugM[1].length > 1) {
-      return `slug:${slugM[1].toLowerCase().replace(/\+/g, " ").slice(0, 120)}`;
+      const slug = slugM[1].toLowerCase().replace(/\+/g, " ").slice(0, 120);
+      const coords = extractCoordsFromUrl(url);
+      if (coords && !isNaN(coords.lat) && !isNaN(coords.lng)) {
+        return `slug:${slug}@${Number(coords.lat).toFixed(4)},${Number(coords.lng).toFixed(4)}`;
+      }
+      return "";
     }
   } catch {}
   return "";
@@ -848,15 +853,12 @@ async function flushChargeNewPhones() {
   syncSessionToExtension();
 
   if (paid < newPhones.length && currentSearch?.status !== "running") {
-    currentData = limitRowsByPaidPhones(currentData);
-    dedupeCurrentDataKeepFirst();
-    saveResultsToStorage();
-    renderFullTable();
-    window.TimDiemBanMap?.refreshMarkers(currentData);
-    window.TimDiemBanMap?.countInOut(currentData);
+    // Không xóa hàng khỏi bảng khi hết credit — trước đây cắt SĐT chưa trừ điểm
+    // khiến người dùng tưởng "không bắt được kết quả về".
+    const unpaid = newPhones.length - paid;
     showErrorBanner(
       "Hết credit",
-      `Đã dùng ${paid} điểm (quy đổi credit) — hết credit khả dụng, chỉ giữ quán có SĐT đã lưu (${getChargedPhonesSet().size} SĐT)`
+      `Đã trừ ${paid}/${newPhones.length} SĐT mới — còn ${unpaid} SĐT chưa trừ điểm. Dữ liệu vẫn giữ đủ trên bảng; nạp thêm điểm để tiếp tục trừ credit.`
     );
   }
 
@@ -953,8 +955,6 @@ function getRowSlug(row) {
 }
 
 function getResultKey(row) {
-  const slug = getRowSlug(row);
-  if (slug) return `place:${slug}`;
   const cid =
     row.googlePlaceId ||
     getCanonicalPlaceId(row.mapsUrl || row.href || "");
@@ -967,6 +967,10 @@ function getResultKey(row) {
   const c = resolveRowCoords(row);
   if (name && c) {
     return `coord:${name}|${Number(c.lat).toFixed(4)}|${Number(c.lng).toFixed(4)}`;
+  }
+  const slug = getRowSlug(row);
+  if (slug && c) {
+    return `place:${slug}@${Number(c.lat).toFixed(4)},${Number(c.lng).toFixed(4)}`;
   }
   return `fb:${name}|${(row.address || "").slice(0, 50)}`;
 }
@@ -1009,9 +1013,17 @@ function buildRescanHref(row) {
 function isDuplicateRow(a, b) {
   const pa = normalizePhone(a.phone);
   const pb = normalizePhone(b.phone);
-  // Trùng SĐT (≥9 số) → coi là trùng, bỏ bản mới
-  if (pa.length < 9 || pb.length < 9) return false;
-  return pa === pb;
+  // Cùng SĐT không đủ — tránh mất chuỗi cửa hàng / tổng đài chung
+  if (pa.length < 9 || pb.length < 9 || pa !== pb) return false;
+  const na = normalizeName(a.name);
+  const nb = normalizeName(b.name);
+  if (na && nb && na === nb) return true;
+  const ca = resolveRowCoords(a);
+  const cb = resolveRowCoords(b);
+  if (ca && cb) {
+    return haversineKm(ca.lat, ca.lng, cb.lat, cb.lng) < 0.12;
+  }
+  return false;
 }
 
 function dedupeCurrentDataKeepFirst() {
@@ -1034,17 +1046,22 @@ function dedupeCurrentDataKeepFirst() {
 }
 
 function isSamePlaceRow(a, b) {
-  const sa = getRowSlug(a);
-  const sb = getRowSlug(b);
-  if (sa && sb && sa === sb) return true;
   const idA = (a.googlePlaceId || getCanonicalPlaceId(a.mapsUrl || a.href || "")).toLowerCase();
   const idB = (b.googlePlaceId || getCanonicalPlaceId(b.mapsUrl || b.href || "")).toLowerCase();
   if (idA && idB && idA === idB) return true;
+  const sa = getRowSlug(a);
+  const sb = getRowSlug(b);
+  const ca = resolveRowCoords(a);
+  const cb = resolveRowCoords(b);
+  // Cùng slug Maps chỉ coi trùng khi pin gần nhau (không gộp mọi quán cùng tên)
+  if (sa && sb && sa === sb) {
+    if (ca && cb) {
+      return haversineKm(ca.lat, ca.lng, cb.lat, cb.lng) <= 0.12;
+    }
+  }
   const na = normalizeName(a.name);
   const nb = normalizeName(b.name);
   if (!na || !nb || na !== nb) return false;
-  const ca = resolveRowCoords(a);
-  const cb = resolveRowCoords(b);
   if (ca && cb) {
     return haversineKm(ca.lat, ca.lng, cb.lat, cb.lng) <= 0.12;
   }

@@ -214,13 +214,16 @@ function buildGlobalSeenKeys(places) {
   const keys = new Set();
   for (const p of places) {
     keys.add(getDedupeKey(p));
-    const slug = getPlaceSlugFromRecord(p);
-    if (slug) keys.add(`place:${slug}`);
+    // Không seed place:slug trần — cùng tên chuỗi cửa hàng sẽ bị skip xuyên các ô
     const cid = p.googlePlaceId || getCanonicalPlaceId(p.mapsUrl || p.href || "");
     if (cid) keys.add(`cid:${String(cid).toLowerCase()}`);
     const name = normalizeName(p.name);
     const phone = normalizePhone(p.phone);
     if (name && phone.length >= 9) keys.add(`np:${name}|${phone}`);
+    const coords = resolvePlaceCoords(p);
+    if (name && coords) {
+      keys.add(`coord:${name}|${Number(coords.lat).toFixed(4)}|${Number(coords.lng).toFixed(4)}`);
+    }
   }
   return [...keys];
 }
@@ -236,7 +239,7 @@ function getPlaceSlugFromRecord(p) {
   return "";
 }
 
-/** ID chuẩn — chỉ ChIJ... hoặc slug tên quán; KHÔNG dùng !1s0x... (nhiều URL dùng chung → trùng 1 quán) */
+/** ID chuẩn — ưu tiên ChIJ; slug kèm tọa độ để tránh gộp mọi quán cùng tên */
 function getCanonicalPlaceId(url) {
   if (!url) return "";
   try {
@@ -247,7 +250,13 @@ function getCanonicalPlaceId(url) {
     if (chijQ) return chijQ[1];
     const slugM = decoded.match(/\/maps\/place\/([^/@?]+)/);
     if (slugM && slugM[1].length > 1) {
-      return `slug:${slugM[1].toLowerCase().replace(/\+/g, " ").slice(0, 120)}`;
+      const slug = slugM[1].toLowerCase().replace(/\+/g, " ").slice(0, 120);
+      const coords = extractCoordsFromUrl(url);
+      if (coords && !isNaN(coords.lat) && !isNaN(coords.lng)) {
+        return `slug:${slug}@${Number(coords.lat).toFixed(4)},${Number(coords.lng).toFixed(4)}`;
+      }
+      // Slug trần yếu — không dùng làm id duy nhất (chuỗi cửa hàng cùng tên)
+      return "";
     }
   } catch {}
   return "";
@@ -362,12 +371,20 @@ function isNearDuplicate(a, b) {
 
   if (getDedupeKey(a) === getDedupeKey(b)) return true;
 
-  const phoneA = normalizePhone(a.phone);
-  const phoneB = normalizePhone(b.phone);
-  if (phoneA.length >= 9 && phoneA === phoneB) return true;
-
   const nameA = normalizeName(a.name);
   const nameB = normalizeName(b.name);
+  const phoneA = normalizePhone(a.phone);
+  const phoneB = normalizePhone(b.phone);
+
+  // Cùng SĐT KHÔNG đủ để gộp — nhiều cửa hàng dùng 1 tổng đài
+  // Chỉ gộp khi thêm cùng tên, hoặc hai pin gần nhau
+  if (phoneA.length >= 9 && phoneA === phoneB) {
+    if (nameA && nameB && nameA === nameB) return true;
+    const ca = resolvePlaceCoords(a);
+    const cb = resolvePlaceCoords(b);
+    if (ca && cb && haversineKm(ca.lat, ca.lng, cb.lat, cb.lng) < 0.12) return true;
+  }
+
   if (!nameA || nameA !== nameB) return false;
 
   const addrA = normalizeAddress(a.address);
