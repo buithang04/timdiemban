@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "findmap - Google Maps Scraper",
-  "version": "1.7.42",
-  "description": "Cào Google Maps — tự kết nối mọi domain Findmap (chạy ngầm)",
+  "name": "Findmap Extension",
+  "version": "0.0.1",
+  "description": "Tìm điểm trên Google Maps",
   "permissions": [
     "activeTab",
     "tabs",
@@ -19,7 +19,7 @@
   ],
   "action": {
     "default_popup": "popup.html",
-    "default_title": "findmap"
+    "default_title": "Findmap Extension"
   },
   "background": {
     "service_worker": "background.js"
