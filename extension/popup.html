@@ -5,114 +5,46 @@
   <title>findmap</title>
   <style>
     body {
-      width: 320px;
+      width: 280px;
       margin: 0;
       padding: 18px;
       font-family: "Segoe UI", system-ui, sans-serif;
+      text-align: center;
       color: #1e293b;
     }
-    h1 { font-size: 16px; margin: 0 0 6px; text-align: center; }
-    .lead {
-      font-size: 12px;
-      color: #64748b;
-      line-height: 1.45;
-      margin: 0 0 14px;
-      text-align: center;
-    }
-    .card {
-      background: #f8fafc;
-      border: 1px solid #e2e8f0;
-      border-radius: 10px;
-      padding: 10px 12px;
-      margin-bottom: 12px;
-      text-align: left;
-    }
-    .card .label {
-      font-size: 10px;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.06em;
-      color: #94a3b8;
-      margin-bottom: 4px;
-    }
-    .card .host {
-      font-size: 13px;
-      font-weight: 600;
-      word-break: break-all;
-      color: #0f172a;
-    }
-    .card .meta {
-      margin-top: 4px;
-      font-size: 11px;
-      color: #64748b;
-    }
-    button, a.open-link {
+    h1 { font-size: 16px; margin: 0 0 8px; }
+    p { font-size: 12px; color: #64748b; line-height: 1.45; margin: 0 0 14px; }
+    a.open-link {
       display: block;
       width: 100%;
       box-sizing: border-box;
-      padding: 11px 12px;
-      border: none;
+      padding: 12px;
+      background: #2563eb;
+      color: #fff;
+      text-decoration: none;
       border-radius: 8px;
       font-weight: 600;
-      font-size: 13px;
-      cursor: pointer;
-      font-family: inherit;
-      margin-bottom: 8px;
-      text-align: center;
-      text-decoration: none;
+      font-size: 14px;
     }
-    .connect-btn { background: #0f766e; color: #fff; }
-    .connect-btn:hover { background: #0d9488; }
-    .broad-btn { background: #1e3a8a; color: #fff; }
-    .broad-btn:hover { background: #1d4ed8; }
-    .open-link { background: #2563eb; color: #fff; }
-    .open-link:hover { background: #1d4ed8; }
-    button:disabled { opacity: 0.55; cursor: wait; }
-    #connectStatus {
-      font-size: 12px;
-      line-height: 1.4;
-      color: #64748b;
-      min-height: 1.2em;
-      margin: 4px 0 10px;
-      text-align: center;
-    }
-    #connectStatus.ok { color: #047857; }
-    #connectStatus.err { color: #b91c1c; }
+    a.open-link:hover { background: #1d4ed8; }
     .url-hint {
+      margin-top: 10px;
       font-size: 11px;
       color: #94a3b8;
       word-break: break-all;
-      text-align: center;
     }
-    .hint-list {
-      margin: 0 0 12px;
-      padding-left: 18px;
-      font-size: 11px;
-      color: #64748b;
-      line-height: 1.45;
-      text-align: left;
+    #statusLine {
+      font-size: 12px;
+      color: #0f766e;
+      margin-bottom: 12px;
+      min-height: 1.2em;
     }
   </style>
 </head>
 <body>
   <h1>findmap</h1>
-  <p class="lead">Đổi domain (vd. <code>thang.timdiemban.vn</code>) không cần cài lại — kích hoạt tab hiện tại hoặc cho phép mọi site một lần.</p>
-
-  <div class="card">
-    <div class="label">Tab đang mở</div>
-    <div class="host" id="currentHost">…</div>
-    <div class="meta" id="currentMeta">Đang kiểm tra…</div>
-  </div>
-
-  <button type="button" id="connectSiteBtn" class="connect-btn">Kích hoạt trên trang này</button>
-  <button type="button" id="broadBtn" class="broad-btn">Cho phép mọi domain (một lần)</button>
-  <div id="connectStatus"></div>
-
-  <ul class="hint-list">
-    <li>Mở đúng tab trang tìm điểm bán rồi bấm kích hoạt.</li>
-    <li>Hay đổi host → chọn “Cho phép mọi domain”.</li>
-  </ul>
-
+  <p>Extension tự kết nối mọi domain trang Findmap ở nền. Không cần kích hoạt tay.</p>
+  <div id="statusLine">Đang kiểm tra…</div>
   <a id="openWebLink" class="open-link" href="https://app.findmap.vn" target="_blank" rel="noopener">Mở trang kết quả</a>
   <div class="url-hint" id="openWebHint">app.findmap.vn</div>
 
@@ -126,17 +58,7 @@
 
       var link = document.getElementById("openWebLink");
       var hint = document.getElementById("openWebHint");
-      var statusEl = document.getElementById("connectStatus");
-      var connectBtn = document.getElementById("connectSiteBtn");
-      var broadBtn = document.getElementById("broadBtn");
-      var hostEl = document.getElementById("currentHost");
-      var metaEl = document.getElementById("currentMeta");
-
-      function setStatus(text, cls) {
-        if (!statusEl) return;
-        statusEl.textContent = text || "";
-        statusEl.className = cls || "";
-      }
+      var statusEl = document.getElementById("statusLine");
 
       function setPreferred(url) {
         var preferred = String(url || origin).replace(/\/$/, "");
@@ -144,57 +66,23 @@
         if (hint) hint.textContent = preferred.replace(/^https?:\/\//, "");
       }
 
-      function applyInspect(info) {
-        if (!info || !info.ok) {
-          if (hostEl) hostEl.textContent = "Không đọc được tab";
-          if (metaEl) metaEl.textContent = (info && info.error) || "";
-          return;
-        }
-        if (hostEl) hostEl.textContent = (info.origin || info.url || "—").replace(/^https?:\/\//, "");
-        var parts = [];
-        if (info.broad) parts.push("Đã cho phép mọi domain");
-        else if (info.permitted) parts.push("Đã kích hoạt domain này");
-        else parts.push("Chưa kích hoạt");
-        if (info.isFindmap) parts.push("Nhận diện trang Findmap");
-        if (metaEl) metaEl.textContent = parts.join(" · ");
-        if (info.preferred) setPreferred(info.preferred);
-        else if (info.origin) setPreferred(info.origin);
-      }
-
-      function refreshInspect(cb) {
-        chrome.runtime.sendMessage({ action: "INSPECT_ACTIVE_TAB" }, function (resp) {
-          if (chrome.runtime.lastError) {
-            if (hostEl) hostEl.textContent = "—";
-            if (metaEl) metaEl.textContent = chrome.runtime.lastError.message;
-            if (cb) cb(null);
-            return;
-          }
-          applyInspect(resp);
-          if (cb) cb(resp);
-        });
-      }
-
       chrome.runtime.sendMessage({ action: "GET_WEB_ORIGINS" }, function (resp) {
-        if (chrome.runtime.lastError) return;
-        setPreferred((resp && (resp.preferred || resp.config)) || origin);
+        if (!chrome.runtime.lastError && resp) {
+          setPreferred(resp.preferred || resp.config || origin);
+        }
       });
 
-      refreshInspect(function (info) {
-        // Mở popup = user gesture: tự kích hoạt nếu đang ở trang Findmap chưa có bridge
-        if (info && info.isFindmap && !info.permitted && !info.broad) {
-          setStatus("Đang tự kích hoạt domain mới…");
-          chrome.runtime.sendMessage({ action: "CONNECT_WEB_SITE" }, function (resp) {
-            if (resp && resp.ok) {
-              setStatus("Đã kết nối " + (resp.origin || "") + " — F5 trang nếu cần.", "ok");
-              refreshInspect();
-            }
-          });
-        } else if (info && info.isFindmap && (info.permitted || info.broad)) {
-          setStatus("Domain này đã sẵn sàng. Đang gắn lại bridge…");
-          chrome.runtime.sendMessage({ action: "CONNECT_WEB_SITE" }, function (resp) {
-            if (resp && resp.ok) setStatus("OK — " + (resp.origin || "đã kết nối"), "ok");
-            refreshInspect();
-          });
+      // Mở popup: gắn lại bridge tab hiện tại (ngầm) + báo trạng thái
+      chrome.runtime.sendMessage({ action: "CONNECT_WEB_SITE" }, function (resp) {
+        if (chrome.runtime.lastError) {
+          if (statusEl) statusEl.textContent = "Chạy ngầm — mở trang Findmap để tự kết nối.";
+          return;
+        }
+        if (resp && resp.ok) {
+          if (statusEl) statusEl.textContent = "Đã kết nối: " + (resp.origin || "OK");
+          if (resp.origin) setPreferred(resp.origin);
+        } else {
+          if (statusEl) statusEl.textContent = "Sẵn sàng — mở tab trang tìm điểm bán.";
         }
       });
 
@@ -209,52 +97,6 @@
             }
           } catch (_) {}
           window.open(url, "_blank");
-        });
-      }
-
-      if (connectBtn) {
-        connectBtn.addEventListener("click", function () {
-          connectBtn.disabled = true;
-          setStatus("Đang xin quyền và gắn bridge…");
-          chrome.runtime.sendMessage({ action: "CONNECT_WEB_SITE" }, function (resp) {
-            connectBtn.disabled = false;
-            if (chrome.runtime.lastError) {
-              setStatus(chrome.runtime.lastError.message, "err");
-              return;
-            }
-            if (resp && resp.ok) {
-              setStatus("Đã kết nối " + (resp.origin || "") + ". F5 trang web nếu vẫn chờ extension.", "ok");
-              if (resp.origin) setPreferred(resp.origin);
-            } else {
-              setStatus((resp && resp.error) || "Không kết nối được", "err");
-            }
-            refreshInspect();
-          });
-        });
-      }
-
-      if (broadBtn) {
-        broadBtn.addEventListener("click", function () {
-          broadBtn.disabled = true;
-          setStatus("Chrome sẽ hỏi quyền mọi website — chọn Cho phép.");
-          chrome.runtime.sendMessage({ action: "GRANT_BROAD_HOSTS" }, function (resp) {
-            broadBtn.disabled = false;
-            if (chrome.runtime.lastError) {
-              setStatus(chrome.runtime.lastError.message, "err");
-              return;
-            }
-            if (resp && resp.ok) {
-              setStatus(
-                "Đã cho phép mọi domain. Đổi sang host mới sẽ tự chạy (đã gắn " +
-                  (resp.connected || 0) +
-                  " tab Findmap).",
-                "ok"
-              );
-            } else {
-              setStatus((resp && resp.error) || "Chưa cấp quyền", "err");
-            }
-            refreshInspect();
-          });
         });
       }
     })();

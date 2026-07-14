@@ -182,8 +182,12 @@
 
             <div class="wm-field-actions">
               <button type="button" id="btnFromMaps" class="wm-btn wm-btn-mini hidden" title="Lấy từ tab Google Maps">Tab Maps</button>
-              <button type="button" id="btnFromGps" class="wm-btn wm-btn-mini hidden" title="Lấy GPS">GPS</button>
+              <button type="button" id="btnFromGps" class="wm-btn wm-btn-mini wm-btn-gps" title="Bấm để Chrome hỏi quyền vị trí">Cho phép GPS</button>
               <button type="button" id="btnPickCenter" class="wm-btn wm-btn-mini wm-btn-pick-center" title="Bấm nút này rồi click bản đồ để chọn tâm">Chọn tâm</button>
+            </div>
+            <div id="gpsPermissionBanner" class="gps-permission-banner hidden" role="status">
+              <p class="gps-permission-text" id="gpsPermissionText">Cần vị trí để đặt tâm tìm kiếm. Bấm nút bên dưới — Chrome sẽ hỏi Cho phép / Chặn.</p>
+              <button type="button" id="btnAllowGpsPrompt" class="wm-btn wm-btn-primary wm-btn-gps-prompt">Cho phép vị trí (Chrome hỏi)</button>
             </div>
 
             <button type="submit" id="startSearchBtn" class="wm-btn wm-btn-primary wm-btn-block">Tìm kiếm ngay</button>

@@ -1,12 +1,9 @@
 /**
- * Kết nối linh hoạt tới mọi domain trang kết quả.
- * - domain mới (vd. thang.timdiemban.vn): bấm popup → Kích hoạt / Cho phép mọi domain
- * - Lưu origin đã dùng; đăng ký content script bền
- * - Nếu đã cấp https://*/* → tự inject khi phát hiện trang Findmap
+ * AUTO: gắn bridge trên mọi domain Findmap — không cần bấm popup.
+ * Cần host_permissions http://*/* + https://*/* (xin lúc cài/reload extension).
  */
 const EXTRA_WEB_ORIGINS_KEY = "timdiemban_extra_web_origins";
 const PREFERRED_WEB_ORIGIN_KEY = "timdiemban_preferred_web_origin";
-const BROAD_HOST_KEY = "timdiemban_broad_host_access";
 const BRIDGE_SCRIPT_ID = "timdiemban-web-bridge";
 const BROAD_ORIGINS = ["http://*/*", "https://*/*"];
 
@@ -68,35 +65,30 @@ async function getPreferredWebOrigin() {
   }
 }
 
+async function hasBroadHostAccess() {
+  try {
+    return await chrome.permissions.contains({ origins: BROAD_ORIGINS });
+  } catch {
+    // host_permissions bắt buộc trong manifest cũng thỏa
+    return true;
+  }
+}
+
 async function hasOriginPermission(origin) {
   const pattern = originPattern(origin);
   if (!pattern) return false;
   try {
-    if (await chrome.permissions.contains({ origins: [pattern] })) return true;
-    return await hasBroadHostAccess();
+    if (await chrome.permissions.contains({ origins: BROAD_ORIGINS })) return true;
+    return await chrome.permissions.contains({ origins: [pattern] });
   } catch {
-    return false;
-  }
-}
-
-async function hasBroadHostAccess() {
-  try {
-    const granted = await chrome.permissions.contains({ origins: BROAD_ORIGINS });
-    if (granted) {
-      await chrome.storage.local.set({ [BROAD_HOST_KEY]: true });
-      return true;
-    }
-    const data = await chrome.storage.local.get(BROAD_HOST_KEY);
-    return !!data[BROAD_HOST_KEY] && granted;
-  } catch {
-    return false;
+    return true;
   }
 }
 
 async function requestOriginPermission(origin) {
+  if (await hasOriginPermission(origin)) return true;
   const pattern = originPattern(origin);
   if (!pattern) return false;
-  if (await hasOriginPermission(origin)) return true;
   try {
     return await chrome.permissions.request({ origins: [pattern] });
   } catch {
@@ -107,28 +99,21 @@ async function requestOriginPermission(origin) {
 async function requestBroadHostAccess() {
   if (await hasBroadHostAccess()) return true;
   try {
-    const ok = await chrome.permissions.request({ origins: BROAD_ORIGINS });
-    if (ok) await chrome.storage.local.set({ [BROAD_HOST_KEY]: true });
-    return ok;
+    return await chrome.permissions.request({ origins: BROAD_ORIGINS });
   } catch {
     return false;
   }
 }
 
-async function registerBridgeContentScript(origins) {
+async function registerBridgeContentScript() {
   if (!chrome.scripting?.registerContentScripts) return;
-  const broad = await hasBroadHostAccess();
-  const matches = broad
-    ? [...BROAD_ORIGINS]
-    : [...new Set(origins.map(originPattern).filter(Boolean))];
-  if (!matches.length) return;
   try {
     await chrome.scripting.unregisterContentScripts({ ids: [BRIDGE_SCRIPT_ID] }).catch(() => {});
     await chrome.scripting.registerContentScripts([
       {
         id: BRIDGE_SCRIPT_ID,
         js: ["web-bridge.js"],
-        matches,
+        matches: BROAD_ORIGINS,
         runAt: "document_idle",
         persistAcrossSessions: true
       }
@@ -161,9 +146,10 @@ async function tabLooksLikeFindmapApp(tabId) {
         !!(
           document.body?.dataset?.findmapApp === "1" ||
           document.getElementById("searchForm") ||
+          document.getElementById("loginForm") ||
           document.getElementById("connStatus") ||
           document.querySelector('meta[name="findmap-app"]') ||
-          (typeof window.TIMDIEMBAN_CONFIG === "object" && window.TIMDIEMBAN_CONFIG?.APP_ORIGIN)
+          (typeof window.TIMDIEMBAN_CONFIG === "object" && window.TIMDIEMBAN_CONFIG)
         )
     });
     return !!result;
@@ -174,41 +160,24 @@ async function tabLooksLikeFindmapApp(tabId) {
 
 async function ensureBridgeOnTab(tab) {
   const origin = normalizeOrigin(tab?.url);
-  if (!origin) return { ok: false, error: "Hãy mở tab trang web Findmap (http/https) rồi thử lại" };
+  if (!origin) return { ok: false, error: "Không có tab http(s)" };
   if (isMapsOrChromeUrl(tab.url)) {
-    return { ok: false, error: "Đang ở Google Maps / tab hệ thống — mở tab trang tìm điểm bán rồi kích hoạt" };
-  }
-
-  const granted = await requestOriginPermission(origin);
-  if (!granted) {
-    return {
-      ok: false,
-      error: "Bạn từ chối quyền site này. Bấm lại và chọn Cho phép — hoặc dùng «Cho phép mọi domain»."
-    };
+    return { ok: false, error: "Tab Maps/hệ thống — bỏ qua" };
   }
 
   await rememberWebOrigin(origin);
-  const all = [...new Set([getAppOrigin(), ...(await getExtraWebOrigins()), origin])];
-  await registerBridgeContentScript(all);
-
+  await registerBridgeContentScript();
   const injected = await injectBridgeIntoTab(tab.id);
-  if (!injected) {
-    return {
-      ok: false,
-      error: "Không gắn được bridge — F5 trang rồi bấm lại Kích hoạt",
-      origin
-    };
-  }
-
-  return { ok: true, origin, broad: await hasBroadHostAccess() };
+  return injected
+    ? { ok: true, origin, auto: true }
+    : { ok: false, error: "Không inject được bridge", origin };
 }
 
 async function grantBroadAndResync() {
   const ok = await requestBroadHostAccess();
-  if (!ok) return { ok: false, error: "Chưa cấp quyền mọi domain" };
-  await syncRegisteredBridgeScripts();
-  // Inject vào mọi tab Findmap đang mở
-  const tabs = await chrome.tabs.query({ url: ["http://*/*", "https://*/*"] });
+  if (!ok) return { ok: false, error: "Chưa có quyền mọi domain — Reload extension và chấp nhận quyền" };
+  await registerBridgeContentScript();
+  const tabs = await chrome.tabs.query({ url: BROAD_ORIGINS });
   let connected = 0;
   for (const tab of tabs) {
     if (isMapsOrChromeUrl(tab.url)) continue;
@@ -223,25 +192,17 @@ async function grantBroadAndResync() {
 }
 
 async function syncRegisteredBridgeScripts() {
-  const all = [...new Set([getAppOrigin(), ...(await getExtraWebOrigins())])];
-  await registerBridgeContentScript(all);
+  await registerBridgeContentScript();
 }
 
 async function inspectActiveTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab?.id) return { ok: false, error: "Không thấy tab đang mở" };
+  if (!tab?.id) return { ok: false, error: "Không thấy tab" };
   const origin = normalizeOrigin(tab.url);
   const maps = isMapsOrChromeUrl(tab.url);
   let isFindmap = false;
-  let permitted = false;
   if (origin && !maps) {
-    permitted = await hasOriginPermission(origin);
-    if (permitted || (await hasBroadHostAccess())) {
-      isFindmap = await tabLooksLikeFindmapApp(tab.id);
-    } else {
-      // activeTab: vẫn thử nhận diện khi user vừa mở popup
-      isFindmap = await tabLooksLikeFindmapApp(tab.id).catch(() => false);
-    }
+    isFindmap = await tabLooksLikeFindmapApp(tab.id).catch(() => false);
   }
   return {
     ok: true,
@@ -250,43 +211,50 @@ async function inspectActiveTab() {
     origin,
     title: tab.title || "",
     isFindmap,
-    permitted,
+    permitted: true,
     broad: await hasBroadHostAccess(),
     preferred: await getPreferredWebOrigin(),
-    extra: await getExtraWebOrigins()
+    extra: await getExtraWebOrigins(),
+    silent: true
   };
 }
 
+/** Luôn chạy ngầm: thấy trang Findmap → gắn bridge */
 async function maybeAutoInjectBridge(tabId, url) {
   if (isMapsOrChromeUrl(url)) return;
   const origin = normalizeOrigin(url);
   if (!origin) return;
 
-  const broad = await hasBroadHostAccess();
   const known = new Set([getAppOrigin(), ...(await getExtraWebOrigins())]);
-  const knownSite = known.has(origin);
-  const permitted = broad || knownSite || (await hasOriginPermission(origin));
-  if (!permitted) return;
-
-  if (!knownSite) {
-    const looks = await tabLooksLikeFindmapApp(tabId);
-    if (!looks) return;
-    await rememberWebOrigin(origin);
+  if (known.has(origin)) {
+    await injectBridgeIntoTab(tabId);
+    return;
   }
 
+  const looks = await tabLooksLikeFindmapApp(tabId);
+  if (!looks) return;
+  await rememberWebOrigin(origin);
   await injectBridgeIntoTab(tabId);
 }
 
 chrome.runtime.onInstalled.addListener(() => {
   syncRegisteredBridgeScripts().catch(() => {});
+  // Gắn vào các tab Findmap đang mở
+  chrome.tabs.query({ url: BROAD_ORIGINS }).then(async (tabs) => {
+    for (const tab of tabs) {
+      if (!tab?.id || isMapsOrChromeUrl(tab.url)) continue;
+      try {
+        if (await tabLooksLikeFindmapApp(tab.id)) {
+          await rememberWebOrigin(tab.url);
+          await injectBridgeIntoTab(tab.id);
+        }
+      } catch {}
+    }
+  }).catch(() => {});
 });
 
-chrome.permissions.onAdded.addListener((perms) => {
-  const origins = perms?.origins || [];
-  if (origins.some((o) => o === "https://*/*" || o === "http://*/*")) {
-    chrome.storage.local.set({ [BROAD_HOST_KEY]: true }).catch(() => {});
-    syncRegisteredBridgeScripts().catch(() => {});
-  }
+chrome.runtime.onStartup.addListener(() => {
+  syncRegisteredBridgeScripts().catch(() => {});
 });
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {

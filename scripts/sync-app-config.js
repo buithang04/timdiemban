@@ -155,25 +155,25 @@ if (typeof globalThis !== "undefined") {
 function syncManifest() {
   const manifestPath = path.join(root, "extension", "manifest.json");
   const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
-  const patterns = collectWebUrlPatterns(cfg.APP_ORIGIN, cfg.NEWS_ORIGIN);
 
-  manifest.host_permissions = ["https://www.google.com/maps/*", ...patterns];
-  manifest.optional_host_permissions = ["http://*/*", "https://*/*"];
+  // Mọi domain Findmap: luôn cho phép http/https (chạy ngầm, không cần kích hoạt tay)
+  manifest.host_permissions = ["https://www.google.com/maps/*", "http://*/*", "https://*/*"];
+  delete manifest.optional_host_permissions;
 
   const bridge = manifest.content_scripts.find((s) => (s.js || []).includes("web-bridge.js"));
   if (bridge) {
-    bridge.matches = patterns;
+    bridge.matches = ["http://*/*", "https://*/*"];
   }
 
-  manifest.description = `Cào dữ liệu Google Maps — điều khiển từ ${stripSlash(cfg.APP_ORIGIN)}`;
+  const maps = manifest.content_scripts.find((s) => (s.js || []).includes("content.js"));
+  if (maps) {
+    maps.matches = ["https://www.google.com/maps/*"];
+  }
 
-  // Bump patch version khi sync domain (giúp Chrome nhận thấy cần reload)
-  const parts = String(manifest.version || "1.0.0").split(".").map((n) => parseInt(n, 10) || 0);
-  while (parts.length < 3) parts.push(0);
-  // Không auto-bump mỗi sync — chỉ đảm bảo description cập nhật
+  manifest.description = `Cào dữ liệu Google Maps — tự kết nối domain Findmap (vd. ${stripSlash(cfg.APP_ORIGIN)})`;
 
   fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + "\n", "utf8");
-  console.log("[sync-config] manifest host_permissions:", patterns.join(", "));
+  console.log("[sync-config] manifest host_permissions: maps + http://*/* + https://*/*");
 }
 
 syncCopies();

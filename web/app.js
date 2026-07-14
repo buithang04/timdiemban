@@ -2690,7 +2690,7 @@ window.addEventListener("timdiemban:bridge-ready", (e) => {
     queryRescanStatus();
   } else {
     window.TimDiemBanExtVersion?.onBridgeMissing();
-      setConnStatus("Chưa thấy extension — bấm icon findmap → Kích hoạt trang này (đổi domain cũng dùng cách này)", "error");
+      setConnStatus("Chưa thấy extension — Reload findmap tại chrome://extensions rồi F5", "error");
   }
 });
 

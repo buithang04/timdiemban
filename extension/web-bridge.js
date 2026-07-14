@@ -1,4 +1,20 @@
 (function () {
+  // Chỉ gắn bridge trên trang Findmap (tránh làm phiền mọi site)
+  function isFindmapPage() {
+    try {
+      return !!(
+        document.body?.dataset?.findmapApp === "1" ||
+        document.getElementById("searchForm") ||
+        document.getElementById("loginForm") ||
+        document.getElementById("connStatus") ||
+        document.querySelector('meta[name="findmap-app"]')
+      );
+    } catch {
+      return false;
+    }
+  }
+  if (!isFindmapPage()) return;
+
   if (window.__timDiemBanBridgeLoaded) return;
   window.__timDiemBanBridgeLoaded = true;
 
