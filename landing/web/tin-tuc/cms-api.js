@@ -4,7 +4,7 @@
 (function (global) {
   const TOKEN_KEY = "findmap_cms_token";
   const LEGACY_ADMIN_KEY = "findmap_cms_token_legacy";
-  const LOGIN_URL = "/login";
+  const LOGIN_URL = "/login-admin-post";
 
   function getToken() {
     return localStorage.getItem(TOKEN_KEY) || sessionStorage.getItem(LEGACY_ADMIN_KEY) || "";

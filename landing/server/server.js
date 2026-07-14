@@ -235,6 +235,7 @@ app.get("/admin-post-trash", (_req, res) => sendTinTucPage(res, "admin-post-tras
 app.get("/admin-post-media", (_req, res) => sendTinTucPage(res, "admin-post-media.html"));
 app.get("/preview-bai-viet", (_req, res) => sendTinTucPage(res, "preview-bai-viet.html"));
 app.get("/login", (_req, res) => res.sendFile(path.join(webDir, "login.html")));
+app.get("/login-admin-post", (_req, res) => res.sendFile(path.join(webDir, "login.html")));
 
 app.use("/media", express.static(path.join(webDir, "media"), { index: false, fallthrough: true, maxAge: "7d" }));
 app.use("/tin-tuc", express.static(tinTucDir, { index: false, fallthrough: true }));
@@ -275,8 +276,7 @@ const legacyRedirects = {
   "/cms": "/admin-post-article",
   "/cms.html": "/admin-post-article",
   "/login.html": "/login",
-  "/login-admin-post": "/login",
-  "/login-admin-post.html": "/login",
+  "/login-admin-post.html": "/login-admin-post",
   "/admin-post-article.html": "/admin-post-article",
   "/admin-post-editor.html": "/admin-post-editor",
   "/admin-post-categories.html": "/admin-post-categories",
@@ -348,7 +348,7 @@ function startServer(retried = false) {
     console.log(`Giới thiệu: ${appOrigin}/gioi-thieu`);
     console.log(`Tin tức: ${appOrigin}/tin-tuc`);
     console.log(`CMS: ${appOrigin}/admin-post-article`);
-    console.log(`Đăng nhập CMS: ${appOrigin}/login`);
+    console.log(`Đăng nhập CMS: ${appOrigin}/login-admin-post`);
     console.log(`Hệ tìm kiếm: ${searchOrigin}`);
     console.log(
       `Database: MySQL (${process.env.MYSQL_HOST || "localhost"}:${process.env.MYSQL_PORT || 3306}/${process.env.MYSQL_DATABASE || "findmap_news"})`

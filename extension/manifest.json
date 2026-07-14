@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Findmap Extension",
   "version": "0.0.1",
-  "description": "Tìm điểm trên Google Maps",
+  "description": "Cào dữ liệu Google Maps — tự kết nối domain Findmap (vd. https://app.findmap.vn)",
   "permissions": [
     "activeTab",
     "tabs",
