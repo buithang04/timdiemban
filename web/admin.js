@@ -1,4 +1,5 @@
-const ADMIN_TOKEN_KEY = "timdiemban_admin_token";
+const ADMIN_TOKEN_KEY = "timdiemban_token";
+const LEGACY_ADMIN_KEY = "timdiemban_admin_token";
 
 const els = {
   adminGate: document.getElementById("adminGate"),
@@ -115,12 +116,17 @@ function formatPackageExpiry(iso) {
 }
 
 function getAdminToken() {
-  return sessionStorage.getItem(ADMIN_TOKEN_KEY) || "";
+  return localStorage.getItem(ADMIN_TOKEN_KEY) || sessionStorage.getItem(LEGACY_ADMIN_KEY) || "";
 }
 
 function setAdminToken(token) {
-  if (token) sessionStorage.setItem(ADMIN_TOKEN_KEY, token);
-  else sessionStorage.removeItem(ADMIN_TOKEN_KEY);
+  if (token) {
+    localStorage.setItem(ADMIN_TOKEN_KEY, token);
+    sessionStorage.removeItem(LEGACY_ADMIN_KEY);
+  } else {
+    localStorage.removeItem(ADMIN_TOKEN_KEY);
+    sessionStorage.removeItem(LEGACY_ADMIN_KEY);
+  }
 }
 
 async function parseApiResponse(res) {
@@ -312,44 +318,60 @@ async function loadUsers() {
 }
 
 async function unlockAdmin(adminUser) {
-  els.adminGate.classList.add("hidden");
+  if (adminUser?.role && adminUser.role !== "admin") {
+    setAdminToken("");
+    location.replace("/login");
+    return;
+  }
   els.adminPanel.classList.remove("hidden");
   if (els.adminNav) els.adminNav.classList.remove("hidden");
   if (els.adminUserBar) els.adminUserBar.classList.remove("hidden");
   if (els.adminUserEmail) els.adminUserEmail.textContent = adminUser?.email || "";
+  try {
+    const cfg = globalThis.TIMDIEMBAN_CONFIG || {};
+    const news = String(cfg.NEWS_ORIGIN || "http://localhost:3001").replace(/\/+$/, "");
+    const link = document.getElementById("adminNewsCmsLink");
+    if (link) link.href = `${news}/admin-post-article`;
+  } catch {
+    /* ignore */
+  }
   switchAdminPanel("users");
   await Promise.all([loadUsers(), loadVietqrConfig(), loadSystemConfig()]);
 }
-
-els.adminGateForm?.addEventListener("submit", async (e) => {
-  e.preventDefault();
-  els.adminGateError.classList.add("hidden");
-  try {
-    const res = await fetch("/api/admin/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        email: els.adminEmail.value.trim(),
-        password: els.adminPassword.value
-      })
-    });
-    const data = await parseApiResponse(res);
-    setAdminToken(data.token);
-    await unlockAdmin(data.user);
-  } catch (err) {
-    setAdminToken("");
-    els.adminGateError.textContent = err.message;
-    els.adminGateError.classList.remove("hidden");
-  }
-});
 
 els.adminLogoutBtn?.addEventListener("click", async () => {
   try {
     await adminFetch("/api/auth/logout", { method: "POST" });
   } catch {}
   setAdminToken("");
-  location.reload();
+  location.replace("/login");
 });
+
+function escapeHtml(s) {
+  return String(s || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+if (!getAdminToken()) {
+  location.replace("/login");
+} else {
+  adminFetch("/api/admin/me")
+    .then((data) => {
+      if (data.user?.role !== "admin") {
+        setAdminToken("");
+        location.replace("/login");
+        return;
+      }
+      return unlockAdmin(data.user);
+    })
+    .catch(() => {
+      setAdminToken("");
+      location.replace("/login");
+    });
+}
 
 els.createUserForm?.addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -779,9 +801,3 @@ document.getElementById("smtpTestBtn")?.addEventListener("click", async () => {
 document.getElementById("refreshUsersBtn")?.addEventListener("click", () => {
   loadUsers().catch((err) => alert(err.message));
 });
-
-if (getAdminToken()) {
-  adminFetch("/api/admin/me")
-    .then((data) => unlockAdmin(data.user))
-    .catch(() => setAdminToken(""));
-}

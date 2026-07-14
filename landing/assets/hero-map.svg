@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 480" role="img">
+  <title>Findmap — quét khu vực trên bản đồ, gom điểm bán</title>
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0.8" y2="1">
+      <stop offset="0%" stop-color="#dfe8ff"/>
+      <stop offset="55%" stop-color="#e8f4ef"/>
+      <stop offset="100%" stop-color="#f4f7fb"/>
+    </linearGradient>
+    <linearGradient id="land" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#c7d9ff"/>
+      <stop offset="100%" stop-color="#b8e8d4"/>
+    </linearGradient>
+    <radialGradient id="scan" cx="48%" cy="46%" r="42%">
+      <stop offset="0%" stop-color="#2b59ff" stop-opacity="0.22"/>
+      <stop offset="55%" stop-color="#2b59ff" stop-opacity="0.08"/>
+      <stop offset="100%" stop-color="#2b59ff" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="soft" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="14" stdDeviation="20" flood-color="#1e3a8a" flood-opacity="0.12"/>
+    </filter>
+  </defs>
+
+  <!-- canvas -->
+  <rect width="720" height="480" rx="28" fill="url(#sky)"/>
+
+  <!-- abstract city blocks -->
+  <g opacity="0.55" fill="#9bb6f5">
+    <rect x="70" y="90" width="88" height="62" rx="10"/>
+    <rect x="180" y="70" width="70" height="50" rx="10"/>
+    <rect x="270" y="110" width="96" height="70" rx="12"/>
+    <rect x="90" y="190" width="110" height="80" rx="12"/>
+    <rect x="230" y="210" width="74" height="58" rx="10"/>
+    <rect x="400" y="80" width="84" height="54" rx="10"/>
+    <rect x="510" y="120" width="100" height="72" rx="12"/>
+    <rect x="430" y="200" width="120" height="66" rx="12"/>
+    <rect x="560" y="230" width="70" height="50" rx="10"/>
+    <rect x="120" y="310" width="130" height="70" rx="12"/>
+    <rect x="280" y="330" width="90" height="56" rx="10"/>
+    <rect x="420" y="300" width="110" height="78" rx="12"/>
+    <rect x="560" y="320" width="80" height="60" rx="10"/>
+  </g>
+
+  <!-- roads -->
+  <g fill="none" stroke="#ffffff" stroke-width="14" stroke-linecap="round" opacity="0.85">
+    <path d="M40 250 C160 210, 240 310, 360 250 S560 160, 700 220"/>
+    <path d="M120 40 C180 160, 160 280, 220 440"/>
+    <path d="M480 30 C500 150, 460 260, 540 450"/>
+  </g>
+  <g fill="none" stroke="#dbe4ff" stroke-width="3" stroke-linecap="round" stroke-dasharray="10 12" opacity="0.9">
+    <path d="M40 250 C160 210, 240 310, 360 250 S560 160, 700 220"/>
+  </g>
+
+  <!-- scan radius -->
+  <circle cx="340" cy="230" r="150" fill="url(#scan)"/>
+  <circle cx="340" cy="230" r="118" fill="none" stroke="#2b59ff" stroke-width="2.5" stroke-dasharray="8 7" opacity="0.85"/>
+  <circle cx="340" cy="230" r="8" fill="#2b59ff"/>
+  <circle cx="340" cy="230" r="18" fill="none" stroke="#2b59ff" stroke-width="2" opacity="0.35"/>
+
+  <!-- pins cluster -->
+  <g>
+    <path d="M270 170c0-16 13-29 29-29s29 13 29 29c0 22-29 48-29 48s-29-26-29-48z" fill="#2b59ff"/>
+    <circle cx="299" cy="168" r="9" fill="#fff"/>
+    <path d="M390 150c0-14 11-25 25-25s25 11 25 25c0 19-25 42-25 42s-25-23-25-42z" fill="#2cc981"/>
+    <circle cx="415" cy="148" r="8" fill="#fff"/>
+    <path d="M350 280c0-14 11-25 25-25s25 11 25 25c0 19-25 42-25 42s-25-23-25-42z" fill="#2b59ff"/>
+    <circle cx="375" cy="278" r="8" fill="#fff"/>
+    <path d="M230 250c0-12 10-22 22-22s22 10 22 22c0 16-22 36-22 36s-22-20-22-36z" fill="#1a3fd4"/>
+    <circle cx="252" cy="248" r="7" fill="#fff"/>
+    <path d="M430 250c0-12 10-22 22-22s22 10 22 22c0 16-22 36-22 36s-22-20-22-36z" fill="#2cc981"/>
+    <circle cx="452" cy="248" r="7" fill="#fff"/>
+    <path d="M310 120c0-11 9-20 20-20s20 9 20 20c0 15-20 32-20 32s-20-17-20-32z" fill="#3d6bff"/>
+    <circle cx="330" cy="118" r="6" fill="#fff"/>
+  </g>
+
+  <!-- quiet legend chips -->
+  <g filter="url(#soft)">
+    <rect x="36" y="36" width="118" height="36" rx="18" fill="#fff"/>
+    <circle cx="58" cy="54" r="8" fill="#2b59ff"/>
+    <text x="74" y="59" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="700" fill="#0f172a">Khu vực</text>
+  </g>
+  <g filter="url(#soft)">
+    <rect x="540" y="400" width="140" height="36" rx="18" fill="#fff"/>
+    <circle cx="562" cy="418" r="8" fill="#2cc981"/>
+    <text x="578" y="423" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="700" fill="#0f172a">Điểm bán</text>
+  </g>
+</svg>

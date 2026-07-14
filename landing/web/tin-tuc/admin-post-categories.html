@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Danh mục — Findmap CMS</title>
+  <meta name="robots" content="noindex, nofollow" />
+  <link rel="icon" href="/assets/icons/favicon.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800&family=Manrope:wght@700;800&display=swap" rel="stylesheet" />
+  <base href="/" />
+  <link rel="stylesheet" href="/tin-tuc/cms.css" />
+</head>
+<body class="cms-app">
+  <aside class="cms-sidebar">
+    <div class="cms-sidebar-top">
+      <a class="cms-brand" href="/admin-post-article" aria-label="Findmap CMS">
+        <img class="cms-brand-logo" src="/landing/assets/logo.svg" alt="Findmap" />
+      </a>
+      <nav class="cms-nav" aria-label="CMS">
+        <a class="cms-nav-item" href="/admin-post-article">Bài viết</a>
+        <a class="cms-nav-item" href="/admin-post-media">Media</a>
+        <a class="cms-nav-item" href="/admin-post-categories">Danh mục</a>
+        <a class="cms-nav-item" href="/admin-post-seo">SEO &amp; GSC</a>
+      </nav>
+    </div>
+    <div class="cms-sidebar-foot">
+      <a href="/tin-tuc" class="cms-foot-link" target="_blank" rel="noopener">Xem trang tin</a>
+      <a href="/admin" class="cms-foot-link" id="cmsLinkAdmin">Quản trị hệ thống</a>
+      <button type="button" id="cmsLogoutBtn" class="cms-foot-link cms-foot-btn">Đăng xuất</button>
+    </div>
+  </aside>
+  <div class="cms-shell">
+    <header class="cms-header">
+      <div>
+        <h1 class="cms-header-title">Danh mục</h1>
+        <p class="cms-header-sub">Nhóm bài viết theo chủ đề</p>
+      </div>
+      <div class="cms-user">
+        <span id="cmsUserEmail" class="cms-user-email">…</span>
+        <span id="cmsUserRole" class="cms-user-role">CMS</span>
+      </div>
+    </header>
+    <main class="cms-main">
+      <div class="cms-toolbar">
+        <h2 class="cms-panel-title">Danh mục tin</h2>
+        <button type="button" id="newCatBtn" class="cms-btn cms-btn-primary cms-btn-sm">+ Danh mục</button>
+      </div>
+      <form id="catForm" class="cms-cat-form hidden">
+        <input type="hidden" id="catId" />
+        <input type="text" id="catName" placeholder="Tên danh mục" required />
+        <input type="text" id="catSlug" placeholder="slug" />
+        <input type="text" id="catDesc" placeholder="Mô tả ngắn" />
+        <button type="submit" class="cms-btn cms-btn-primary cms-btn-sm">Lưu</button>
+        <button type="button" id="catCancelBtn" class="cms-btn cms-btn-ghost cms-btn-sm">Hủy</button>
+      </form>
+      <div class="cms-table-wrap">
+        <table class="cms-table">
+          <thead>
+            <tr><th>Tên</th><th>Slug</th><th>Số bài</th><th></th></tr>
+          </thead>
+          <tbody id="catsBody"></tbody>
+        </table>
+      </div>
+    </main>
+  </div>
+  <script src="/tin-tuc/cms-api.js"></script>
+  <script src="/tin-tuc/cms-shell.js"></script>
+  <script src="/tin-tuc/cms-categories.js"></script>
+</body>
+</html>

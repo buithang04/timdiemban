@@ -1,0 +1,19 @@
+{
+  "name": "findmap-landing",
+  "version": "1.0.0",
+  "description": "Trang giới thiệu + tin tức + CMS Findmap (tách khỏi hệ tìm kiếm)",
+  "main": "server/server.js",
+  "scripts": {
+    "start": "node server/server.js",
+    "dev": "node server/server.js",
+    "migrate-from-search": "node server/migrate-from-search.js",
+    "purge-search-cms": "node server/purge-search-cms.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "multer": "^2.2.0",
+    "mysql2": "^3.22.5",
+    "xlsx": "^0.18.5"
+  }
+}

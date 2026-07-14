@@ -1,25 +1,35 @@
-# timdiemban
+# timdiemban / Findmap
 
-Tìm điểm bán trên Google Maps — Chrome Extension + Web + Server Node.js.
+Tìm điểm bán trên Google Maps — Chrome Extension + Web tìm kiếm + Landing/CMS tin tức.
 
 ## Cấu trúc
 
-- `extension/` — Chrome Extension MV3 (quét Google Maps)
-- `web/` — Giao diện kết quả (Vanilla JS + Leaflet)
-- `server/` — API Node.js + MySQL
-- `config/` — Cấu hình deploy (`app-config.js`)
+| Folder | Vai trò |
+|--------|---------|
+| `extension/` | Chrome Extension MV3 |
+| `web/` | Giao diện tìm kiếm + admin điểm |
+| `server/` | API tìm kiếm + MySQL `timdiemban` (port 3000) |
+| `landing/` | Giới thiệu + tin tức + CMS (port 3001, DB `findmap_news`) |
+| `config/` | `APP_ORIGIN` / `NEWS_ORIGIN` |
 
 ## Chạy local
 
 ```bash
+# 1. Hệ tìm kiếm
 cd server
 npm install
 npm start
-```
+# → http://localhost:3000
 
-Mở `http://localhost:3000`, cài extension từ thư mục `extension/`.
+# 2. Landing / tin / CMS
+cd landing
+npm install
+npm start
+# → http://localhost:3001/gioi-thieu
+```
 
 ## Cấu hình
 
-- Copy `server/.env.example` thành `server/.env` (không commit file `.env`)
-- Chỉnh domain/IP: `node scripts/sync-app-config.js`
+- Copy `server/.env.example` → `server/.env`
+- Copy `landing/server/.env.example` → `landing/server/.env`
+- Domain: sửa `config/app-config.js` rồi `node scripts/sync-app-config.js`

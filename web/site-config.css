@@ -25,6 +25,8 @@ body.page-site-config {
 }
 
 .wm-config-card {
+  min-width: 0;
+  overflow: hidden;
   background: var(--wm-surface, #fff);
   border: 1px solid var(--wm-border, #e2e8f0);
   border-radius: 12px;
@@ -93,6 +95,9 @@ body.page-site-config {
   font-size: 0.75rem;
   color: #64748b;
   line-height: 1.4;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .wm-url-mode-hint code,
@@ -101,6 +106,8 @@ body.page-site-config {
   background: #f1f5f9;
   padding: 0.1rem 0.3rem;
   border-radius: 4px;
+  word-break: break-all;
+  overflow-wrap: anywhere;
 }
 
 .wm-resolved-url-hint {
@@ -234,6 +241,7 @@ body.page-site-config {
 .wm-curl-preview {
   margin: 0;
   width: 100%;
+  max-width: 100%;
   box-sizing: border-box;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 0.76rem;
@@ -245,7 +253,8 @@ body.page-site-config {
   color: #e2e8f0;
   white-space: pre-wrap;
   word-break: break-word;
-  overflow: visible;
+  overflow-wrap: anywhere;
+  overflow-x: auto;
 }
 
 .wm-config-status {

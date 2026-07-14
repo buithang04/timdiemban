@@ -91,12 +91,20 @@ app.set("json escape", true);
 const appConfig = require(path.join(__dirname, "..", "config", "app-config.js"));
 const appOrigin = String(process.env.APP_ORIGIN || appConfig.APP_ORIGIN || "")
   .replace(/\/$/, "") || `http://localhost:${PORT}`;
+const newsOrigin = String(
+  process.env.NEWS_ORIGIN ||
+    (require("../config/app-config.js").NEWS_ORIGIN || "http://localhost:3001")
+).replace(/\/+$/, "");
+
 const allowedOrigins = new Set([
   appOrigin,
+  newsOrigin,
   `http://localhost:${PORT}`,
   `http://127.0.0.1:${PORT}`,
   "http://localhost:3000",
-  "http://127.0.0.1:3000"
+  "http://127.0.0.1:3000",
+  "http://localhost:3001",
+  "http://127.0.0.1:3001"
 ]);
 
 function createRateLimiter({ windowMs, max, keyPrefix }) {
@@ -124,14 +132,16 @@ function createRateLimiter({ windowMs, max, keyPrefix }) {
 const apiRateLimit = createRateLimiter({ windowMs: 60 * 1000, max: 600, keyPrefix: "api" });
 const authWriteRateLimit = createRateLimiter({ windowMs: 60 * 1000, max: 30, keyPrefix: "authw" });
 
-function sanitizeValue(val) {
+function sanitizeValue(val, key) {
   if (typeof val === "string") {
-    return val.replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, "").replace(/[<>]/g, "").trim();
+    let s = val.replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, "");
+    s = s.replace(/[<>]/g, "");
+    return s.trim();
   }
-  if (Array.isArray(val)) return val.map(sanitizeValue);
+  if (Array.isArray(val)) return val.map((item) => sanitizeValue(item, key));
   if (val && typeof val === "object") {
     const out = {};
-    for (const [k, v] of Object.entries(val)) out[k] = sanitizeValue(v);
+    for (const [k, v] of Object.entries(val)) out[k] = sanitizeValue(v, k);
     return out;
   }
   return val;
@@ -191,7 +201,7 @@ app.use(cors({
   },
   credentials: true
 }));
-app.use(express.json({ limit: "1mb" }));
+app.use(express.json({ limit: "5mb" }));
 app.use(requestSanitizer);
 app.use(csrfOriginGuard);
 app.use("/api/", apiRateLimit);
@@ -223,7 +233,7 @@ async function requireAuth(req, res, next) {
 async function requireAdmin(req, res, next) {
   try {
     const admin = await getAdminFromToken(getToken(req));
-    if (!admin) return res.status(403).json({ error: "Cần đăng nhập quản trị viên" });
+    if (!admin) return res.status(403).json({ error: "Cần đăng nhập quản trị viên hệ thống" });
     req.admin = admin;
     next();
   } catch (err) {
@@ -506,8 +516,14 @@ app.post("/api/admin/login", authWriteRateLimit, guardSensitiveInput("email", "p
   }
 });
 
-app.get("/api/admin/me", requireAdmin, (req, res) => {
-  res.json({ user: req.admin });
+app.get("/api/admin/me", async (req, res, next) => {
+  try {
+    const admin = await getAdminFromToken(getToken(req));
+    if (!admin) return res.status(403).json({ error: "Cần đăng nhập quản trị" });
+    res.json({ user: admin });
+  } catch (err) {
+    next(err);
+  }
 });
 
 app.get("/api/admin/packages", requireAdmin, async (req, res) => {
@@ -1083,7 +1099,53 @@ function sendWebPage(res, file) {
   res.sendFile(path.join(webDir, file));
 }
 
-/** Route trang — URL sạch, file HTML giữ trong web/ */
+function redirectToNews(req, res) {
+  const qs = req.url.includes("?") ? req.url.slice(req.url.indexOf("?")) : "";
+  const dest = `${newsOrigin}${req.path}${qs}`;
+  res.redirect(302, dest);
+}
+
+/** Tin tức / giới thiệu / CMS đã tách sang hệ news — chuyển hướng. */
+[
+  "/gioi-thieu",
+  "/tin-tuc",
+  "/sitemap.xml",
+  "/admin-post-article",
+  "/admin-post-editor",
+  "/admin-post-categories",
+  "/admin-post-seo",
+  "/admin-post-trash",
+  "/admin-post-media",
+  "/preview-bai-viet",
+  "/cms",
+  "/login-admin-post"
+].forEach((route) => {
+  app.get(route, redirectToNews);
+});
+app.get(/^\/tin-tuc(\/.*)?$/, redirectToNews);
+app.get(/^\/admin-post-/, redirectToNews);
+app.get(/^\/media(\/.*)?$/, redirectToNews);
+app.get(/^\/landing(\/.*)?$/, redirectToNews);
+
+app.get("/robots.txt", (_req, res) => {
+  const body = [
+    "User-agent: *",
+    "Allow: /",
+    "Disallow: /admin",
+    "Disallow: /api/",
+    "Disallow: /login",
+    "Disallow: /nap-diem",
+    "Disallow: /dat-lai-mat-khau",
+    "Disallow: /quen-mat-khau",
+    `Sitemap: ${newsOrigin}/sitemap.xml`,
+    ""
+  ].join("\n");
+  res.setHeader("Cache-Control", "public, max-age=300");
+  res.type("text/plain; charset=utf-8").send(body);
+});
+
+app.get("/login-admin", (_req, res) => res.redirect(301, "/login"));
+
 const webPages = {
   "/login": "login.html",
   "/admin": "admin.html",
@@ -1097,40 +1159,108 @@ for (const [route, file] of Object.entries(webPages)) {
   app.get(route, (req, res) => sendWebPage(res, file));
 }
 
-/** Chuyển hướng URL .html cũ → route chuẩn */
 const legacyHtmlRedirects = {
   "/login.html": "/login",
   "/admin.html": "/admin",
+  "/login-admin.html": "/login",
   "/nap-diem.html": "/nap-diem",
   "/cau-hinh-site.html": "/cau-hinh-site",
   "/quen-mat-khau.html": "/quen-mat-khau",
   "/dat-lai-mat-khau.html": "/dat-lai-mat-khau",
-  "/index.html": "/"
+  "/index.html": "/",
+  "/cms.html": `${newsOrigin}/admin-post-article`,
+  "/admin-post-article.html": `${newsOrigin}/admin-post-article`,
+  "/preview-bai-viet.html": `${newsOrigin}/preview-bai-viet`
 };
 
 for (const [from, to] of Object.entries(legacyHtmlRedirects)) {
   app.get(from, (req, res) => {
     const qs = req.url.includes("?") ? req.url.slice(req.url.indexOf("?")) : "";
-    res.redirect(301, to + qs);
+    res.redirect(301, to.startsWith("http") ? to + qs : to + qs);
   });
 }
 
 app.use(express.static(webDir));
 
-const server = app.listen(PORT, () => {
-  console.log(`Trang web: ${appOrigin}`);
-  console.log(`Trang quản trị: ${appOrigin}/admin`);
-  console.log(`Quên MK: ${appOrigin}/quen-mat-khau`);
-  console.log(`Database: MySQL (${process.env.MYSQL_HOST || "localhost"}:${process.env.MYSQL_PORT || 3306}/${process.env.MYSQL_DATABASE || "timdiemban"})`);
+const { execSync } = require("child_process");
 
-});
-
-server.on("error", (err) => {
-  if (err.code === "EADDRINUSE") {
-    console.error(`Port ${PORT} đang được dùng. Dừng server cũ:`);
-    console.error(`  sudo ss -ltnp | grep ':${PORT}'`);
-console.error(`  kill <PID>`);
-    process.exit(1);
+function freePort(port) {
+  const self = String(process.pid);
+  if (process.platform === "win32") {
+    let out = "";
+    try {
+      out = execSync(`netstat -ano | findstr :${port} | findstr LISTENING`, {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"]
+      });
+    } catch {
+      return false;
+    }
+    const pids = new Set();
+    for (const line of String(out).split(/\r?\n/)) {
+      const m = line.trim().match(/\s(\d+)\s*$/);
+      if (m && m[1] !== self) pids.add(m[1]);
+    }
+    let killed = false;
+    for (const pid of pids) {
+      try {
+        execSync(`taskkill /PID ${pid} /F`, { stdio: "ignore" });
+        killed = true;
+      } catch {
+        /* ignore */
+      }
+    }
+    return killed;
   }
-  throw err;
-});
+  try {
+    execSync(`fuser -k ${port}/tcp`, { stdio: "ignore" });
+    return true;
+  } catch {
+    try {
+      const out = execSync(`lsof -ti tcp:${port}`, {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"]
+      });
+      for (const pid of String(out).split(/\s+/).filter(Boolean)) {
+        if (pid === self) continue;
+        try {
+          process.kill(Number(pid), "SIGTERM");
+        } catch {
+          /* ignore */
+        }
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
+
+function startServer(retried = false) {
+  const server = app.listen(PORT, () => {
+    console.log(`Hệ tìm kiếm: ${appOrigin}`);
+    console.log(`Trang quản trị: ${appOrigin}/admin`);
+    console.log(`Đăng nhập: ${appOrigin}/login`);
+    console.log(`Hệ tin tức / CMS: ${newsOrigin}`);
+    console.log(`Quên MK: ${appOrigin}/quen-mat-khau`);
+    console.log(
+      `Database: MySQL (${process.env.MYSQL_HOST || "localhost"}:${process.env.MYSQL_PORT || 3306}/${process.env.MYSQL_DATABASE || "timdiemban"})`
+    );
+  });
+
+  server.on("error", (err) => {
+    if (err.code === "EADDRINUSE" && !retried) {
+      console.warn(`Port ${PORT} đang bận — đang tắt process cũ rồi chạy lại…`);
+      freePort(PORT);
+      setTimeout(() => startServer(true), 600);
+      return;
+    }
+    if (err.code === "EADDRINUSE") {
+      console.error(`Không mở được port ${PORT} (vẫn bị chiếm).`);
+      process.exit(1);
+    }
+    throw err;
+  });
+}
+
+startServer();

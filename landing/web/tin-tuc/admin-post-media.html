@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Media — Findmap CMS</title>
+  <meta name="robots" content="noindex, nofollow" />
+  <link rel="icon" href="/assets/icons/favicon.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800&family=Manrope:wght@700;800&display=swap" rel="stylesheet" />
+  <base href="/" />
+  <link rel="stylesheet" href="/tin-tuc/cms.css" />
+</head>
+<body class="cms-app">
+  <aside class="cms-sidebar">
+    <div class="cms-sidebar-top">
+      <a class="cms-brand" href="/admin-post-article" aria-label="Findmap CMS">
+        <img class="cms-brand-logo" src="/landing/assets/logo.svg" alt="Findmap" />
+      </a>
+      <nav class="cms-nav" aria-label="CMS">
+        <a class="cms-nav-item" href="/admin-post-article">Bài viết</a>
+        <a class="cms-nav-item" href="/admin-post-media">Media</a>
+        <a class="cms-nav-item" href="/admin-post-categories">Danh mục</a>
+        <a class="cms-nav-item" href="/admin-post-seo">SEO &amp; GSC</a>
+      </nav>
+    </div>
+    <div class="cms-sidebar-foot">
+      <a href="/tin-tuc" class="cms-foot-link" target="_blank" rel="noopener">Xem trang tin</a>
+      <a href="/admin" class="cms-foot-link" id="cmsLinkAdmin">Quản trị hệ thống</a>
+      <button type="button" id="cmsLogoutBtn" class="cms-foot-link cms-foot-btn">Đăng xuất</button>
+    </div>
+  </aside>
+  <div class="cms-shell">
+    <header class="cms-header">
+      <div>
+        <h1 class="cms-header-title">Thư viện Media</h1>
+        <p class="cms-header-sub">Ảnh &amp; video tại <code>/media</code> — bấm ảnh để xem to và chỉnh sửa</p>
+      </div>
+      <div class="cms-user">
+        <span id="cmsUserEmail" class="cms-user-email">…</span>
+        <span id="cmsUserRole" class="cms-user-role">CMS</span>
+      </div>
+    </header>
+    <main class="cms-main">
+      <div class="cms-toolbar">
+        <div class="cms-toolbar-left">
+          <select id="mediaTypeFilter">
+            <option value="all">Tất cả</option>
+            <option value="image">Ảnh</option>
+            <option value="video">Video</option>
+          </select>
+          <p id="mediaUploadMsg" class="cms-msg"></p>
+        </div>
+        <div class="cms-toolbar-right">
+          <label class="cms-btn cms-btn-primary cms-upload-label">
+            Tải lên
+            <input type="file" id="mediaUploadInput" class="cms-file-input" accept="image/*,video/mp4,video/webm,video/ogg,.mp4,.webm,.mov" />
+          </label>
+        </div>
+      </div>
+      <div id="mediaPageGrid" class="cms-media-grid cms-media-grid-page"></div>
+    </main>
+  </div>
+
+  <div id="mediaDetailModal" class="cms-modal hidden" aria-hidden="true">
+    <div class="cms-modal-backdrop" data-close-detail></div>
+    <div class="cms-modal-panel cms-media-detail-panel" role="dialog" aria-modal="true" aria-labelledby="mediaDetailTitle">
+      <div class="cms-modal-head">
+        <h2 id="mediaDetailTitle">Chi tiết media</h2>
+        <button type="button" class="cms-modal-x" data-close-detail aria-label="Đóng">×</button>
+      </div>
+      <div class="cms-media-detail">
+        <div class="cms-media-detail-preview" id="mediaDetailPreview"></div>
+        <div class="cms-media-detail-side">
+          <p class="cms-media-detail-meta" id="mediaDetailMeta"></p>
+          <div class="field">
+            <label for="mediaDetailName">Tên file</label>
+            <div class="cms-media-field">
+              <input type="text" id="mediaDetailName" autocomplete="off" />
+              <button type="button" class="cms-btn cms-btn-primary" id="mediaDetailSaveName">Lưu tên</button>
+            </div>
+          </div>
+          <div class="field">
+            <label for="mediaDetailUrl">URL</label>
+            <div class="cms-media-field">
+              <input type="text" id="mediaDetailUrl" readonly />
+              <button type="button" class="cms-btn cms-btn-ghost" id="mediaDetailCopyUrl">Copy</button>
+            </div>
+          </div>
+          <div class="cms-media-detail-section" id="mediaRotateActions">
+            <p class="cms-media-detail-section-label">Xoay ảnh</p>
+            <div class="cms-media-detail-actions cms-media-detail-actions-3">
+              <button type="button" class="cms-btn cms-btn-ghost" id="mediaRotateLeft">Xoay trái</button>
+              <button type="button" class="cms-btn cms-btn-ghost" id="mediaRotateRight">Xoay phải</button>
+              <button type="button" class="cms-btn cms-btn-ghost" id="mediaRotateSave">Lưu xoay</button>
+            </div>
+          </div>
+          <div class="cms-media-detail-section">
+            <p class="cms-media-detail-section-label">Thao tác file</p>
+            <div class="cms-media-detail-actions cms-media-detail-actions-2">
+              <label class="cms-btn cms-btn-ghost cms-upload-label" for="mediaDetailReplaceInput">
+                Thay file
+                <input type="file" id="mediaDetailReplaceInput" class="cms-file-input" accept="image/*,video/mp4,video/webm,video/ogg,.mp4,.webm,.mov" />
+              </label>
+              <button type="button" class="cms-btn cms-btn-ghost danger" id="mediaDetailDelete">Xóa</button>
+            </div>
+          </div>
+          <p id="mediaDetailMsg" class="cms-msg"></p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/tin-tuc/cms-api.js"></script>
+  <script src="/tin-tuc/cms-shell.js"></script>
+  <script src="/tin-tuc/cms-media-page.js"></script>
+</body>
+</html>

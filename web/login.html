@@ -14,8 +14,8 @@
 <body class="auth-page">
   <main class="main auth-page-main">
     <div class="admin-card auth-page-card">
-      <h1>Đăng nhập findmap</h1>
-      <p class="admin-hint">Đăng nhập để tìm kiếm điểm bán và đồng bộ dữ liệu từ extension.</p>
+      <h1>Đăng nhập Findmap</h1>
+      <p class="admin-hint">Đăng nhập hệ tìm kiếm điểm bán. CMS tin tức dùng cổng riêng.</p>
       <form id="loginForm">
         <label for="loginEmail">Email</label>
         <input type="email" id="loginEmail" required placeholder="email@example.com" autocomplete="username" />
@@ -71,7 +71,44 @@
 
   <script>
     const AUTH_TOKEN_KEY = "timdiemban_token";
-    const existingToken = localStorage.getItem(AUTH_TOKEN_KEY);
+    const LEGACY_ADMIN_KEY = "timdiemban_admin_token";
+
+    function homeForRole(role) {
+      if (role === "admin") return "/admin";
+      return "/";
+    }
+
+    function setSessionToken(token) {
+      localStorage.setItem(AUTH_TOKEN_KEY, token);
+      sessionStorage.removeItem(LEGACY_ADMIN_KEY);
+    }
+
+    async function redirectIfLoggedIn() {
+      const token = localStorage.getItem(AUTH_TOKEN_KEY) || sessionStorage.getItem(LEGACY_ADMIN_KEY) || "";
+      if (!token) return;
+      try {
+        const res = await fetch("/api/auth/me", { headers: { Authorization: `Bearer ${token}` } });
+        if (!res.ok) {
+          localStorage.removeItem(AUTH_TOKEN_KEY);
+          sessionStorage.removeItem(LEGACY_ADMIN_KEY);
+          return;
+        }
+        const data = await res.json();
+        const role = data.user?.role;
+        if (role === "admin") {
+          setSessionToken(token);
+          window.location.replace(homeForRole(role));
+          return;
+        }
+        // user thường: giữ flow cũ (có thể cần terms) — chỉ auto vào app nếu đã accept
+        if (data.user?.termsAccepted) {
+          window.location.replace("/");
+        }
+      } catch {}
+    }
+
+    redirectIfLoggedIn();
+
     const form = document.getElementById("loginForm");
     const errorEl = document.getElementById("loginError");
     const registerModal = document.getElementById("registerModal");
@@ -198,12 +235,19 @@
         if (!res.ok) throw new Error(data.error || "Đăng nhập thất bại");
 
         localStorage.setItem(AUTH_TOKEN_KEY, data.token);
+        sessionStorage.removeItem(LEGACY_ADMIN_KEY);
         try {
           window.postMessage(
             { source: "timdiemban-web", type: "LOGIN", payload: { token: data.token, user: data.user } },
             window.location.origin
           );
         } catch {}
+
+        const role = data.user?.role;
+        if (role === "admin") {
+          window.location.href = homeForRole(role);
+          return;
+        }
 
         if (data.user?.termsAccepted) {
           window.location.href = "/";

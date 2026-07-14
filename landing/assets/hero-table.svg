@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 280" role="img">
+  <title>Findmap — danh sách điểm bán đã gom</title>
+  <defs>
+    <linearGradient id="paper" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#f3f6fb"/>
+    </linearGradient>
+    <filter id="lift" x="-15%" y="-15%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="10" stdDeviation="14" flood-color="#0f172a" flood-opacity="0.1"/>
+    </filter>
+  </defs>
+  <rect width="420" height="280" rx="22" fill="url(#paper)" filter="url(#lift)"/>
+
+  <!-- big metric -->
+  <text x="28" y="58" font-family="Arial, Helvetica, sans-serif" font-size="42" font-weight="800" fill="#2b59ff">128</text>
+  <text x="128" y="52" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="600" fill="#64748b">điểm</text>
+
+  <!-- row cards — visual only -->
+  <g>
+    <rect x="28" y="80" width="364" height="40" rx="12" fill="#eef2ff"/>
+    <circle cx="52" cy="100" r="9" fill="#2b59ff"/>
+    <rect x="72" y="92" width="150" height="8" rx="4" fill="#c7d2fe"/>
+    <rect x="72" y="106" width="90" height="6" rx="3" fill="#dde5ff"/>
+    <rect x="300" y="90" width="72" height="20" rx="10" fill="#dcfce7"/>
+
+    <rect x="28" y="132" width="364" height="40" rx="12" fill="#f8fafc"/>
+    <circle cx="52" cy="152" r="9" fill="#2cc981"/>
+    <rect x="72" y="144" width="170" height="8" rx="4" fill="#cbd5e1"/>
+    <rect x="72" y="158" width="100" height="6" rx="3" fill="#e2e8f0"/>
+    <rect x="300" y="142" width="72" height="20" rx="10" fill="#dcfce7"/>
+
+    <rect x="28" y="184" width="364" height="40" rx="12" fill="#eef2ff"/>
+    <circle cx="52" cy="204" r="9" fill="#1a3fd4"/>
+    <rect x="72" y="196" width="140" height="8" rx="4" fill="#c7d2fe"/>
+    <rect x="72" y="210" width="110" height="6" rx="3" fill="#dde5ff"/>
+    <rect x="300" y="194" width="72" height="20" rx="10" fill="#fef3c7"/>
+  </g>
+
+  <text x="28" y="256" font-family="Arial, Helvetica, sans-serif" font-size="12" font-weight="600" fill="#64748b">1 bảng kết quả</text>
+</svg>

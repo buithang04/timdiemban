@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Soạn thảo — Findmap CMS</title>
+  <meta name="robots" content="noindex, nofollow" />
+  <link rel="icon" href="/assets/icons/favicon.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800&family=Manrope:wght@700;800&display=swap" rel="stylesheet" />
+  <base href="/" />
+  <link rel="stylesheet" href="/tin-tuc/cms.css" />
+</head>
+<body class="cms-app">
+  <aside class="cms-sidebar">
+    <div class="cms-sidebar-top">
+      <a class="cms-brand" href="/admin-post-article" aria-label="Findmap CMS">
+        <img class="cms-brand-logo" src="/landing/assets/logo.svg" alt="Findmap" />
+      </a>
+      <nav class="cms-nav" aria-label="CMS">
+        <a class="cms-nav-item" href="/admin-post-article">Bài viết</a>
+        <a class="cms-nav-item" href="/admin-post-media">Media</a>
+        <a class="cms-nav-item" href="/admin-post-categories">Danh mục</a>
+        <a class="cms-nav-item" href="/admin-post-seo">SEO &amp; GSC</a>
+      </nav>
+    </div>
+    <div class="cms-sidebar-foot">
+      <a href="/tin-tuc" class="cms-foot-link" target="_blank" rel="noopener">Xem trang tin</a>
+      <a href="/admin" class="cms-foot-link" id="cmsLinkAdmin">Quản trị hệ thống</a>
+      <button type="button" id="cmsLogoutBtn" class="cms-foot-link cms-foot-btn">Đăng xuất</button>
+    </div>
+  </aside>
+  <div class="cms-shell">
+    <header class="cms-header">
+      <div>
+        <h1 class="cms-header-title">Soạn thảo bài viết</h1>
+        <p class="cms-header-sub"></p>
+      </div>
+      <div class="cms-user">
+        <span id="cmsUserEmail" class="cms-user-email">…</span>
+        <span id="cmsUserRole" class="cms-user-role">CMS</span>
+      </div>
+    </header>
+    <main class="cms-main">
+      <form id="postForm" class="cms-editor-layout">
+        <input type="hidden" id="postId" />
+        <div class="cms-editor-main">
+          <div class="field">
+            <label for="postTitle">Tiêu đề</label>
+            <input type="text" id="postTitle" required placeholder="Tiêu đề bài viết" />
+          </div>
+          <div class="field">
+            <label for="postSlug">Slug URL</label>
+            <div class="cms-slug-row">
+              <select id="urlPathPreset" class="cms-url-path-select" aria-label="Tiền tố URL">
+                <option value="tin-tuc">/tin-tuc/</option>
+                <option value="">/</option>
+                <option value="__custom">Tùy chỉnh…</option>
+              </select>
+              <input type="text" id="urlPathCustom" class="cms-url-path-custom hidden" placeholder="vd: blog" />
+              <input type="text" id="postSlug" placeholder="tu-khoa-bai-viet" />
+              <button type="button" id="genSlugBtn" class="cms-btn cms-btn-ghost cms-btn-sm">Tạo slug</button>
+            </div>
+            <p class="cms-url-preview" id="urlPreview">URL công khai: /tin-tuc/…</p>
+          </div>
+
+          <div class="cms-wp-editor" id="wpEditor">
+            <div class="cms-wp-editor-top">
+              <button type="button" id="addMediaBtn" class="cms-btn cms-btn-ghost cms-add-media">
+                <span aria-hidden="true">🖼</span> Thêm Media
+              </button>
+              <div class="cms-wp-tabs" role="tablist">
+                <button type="button" class="cms-wp-tab active" role="tab" data-mode="visual" aria-selected="true">Trực quan</button>
+                <button type="button" class="cms-wp-tab" role="tab" data-mode="text" aria-selected="false">Văn bản</button>
+              </div>
+            </div>
+
+            <div id="visualPane" class="cms-wp-pane">
+              <textarea id="tinymceEditor"></textarea>
+            </div>
+
+            <div id="textPane" class="cms-wp-pane hidden">
+              <div class="cms-quicktags" id="quicktags">
+                <button type="button" data-tag="b"><b>b</b></button>
+                <button type="button" data-tag="i"><i>i</i></button>
+                <button type="button" data-tag="link">link</button>
+                <button type="button" data-tag="b-quote">b-quote</button>
+                <button type="button" data-tag="del">del</button>
+                <button type="button" data-tag="ins">ins</button>
+                <button type="button" data-tag="img">img</button>
+                <button type="button" data-tag="ul">ul</button>
+                <button type="button" data-tag="ol">ol</button>
+                <button type="button" data-tag="li">li</button>
+                <button type="button" data-tag="code">code</button>
+                <button type="button" data-tag="more">more</button>
+                <button type="button" data-tag="close">đóng thẻ</button>
+              </div>
+              <textarea id="textEditor" class="cms-text-editor" rows="22" spellcheck="false"></textarea>
+              <div class="cms-wp-statusbar"><span id="textWordCount">Số từ: 0</span></div>
+            </div>
+          </div>
+
+          <div class="cms-excerpt-box">
+            <div class="cms-excerpt-head">
+              <h3>Tóm tắt</h3>
+            </div>
+            <textarea id="postExcerpt" rows="3" placeholder="Mô tả ngắn…"></textarea>
+            <p class="cms-excerpt-help">
+              Mô tả ngắn là một đoạn mô tả về nội dung mà bạn tự nhập bằng tay, có thể được sử dụng để hiển thị trong giao diện của bạn.
+            </p>
+          </div>
+        </div>
+        <aside class="cms-editor-side">
+          <div class="cms-side-card">
+            <h3>Xuất bản</h3>
+            <div class="field">
+              <label for="postStatus">Trạng thái</label>
+              <select id="postStatus">
+                <option value="draft">Nháp</option>
+                <option value="published">Xuất bản</option>
+                <option value="hidden">Ẩn</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="postCategory">Danh mục</label>
+              <select id="postCategory"></select>
+            </div>
+            <div class="cms-side-actions">
+              <button type="submit" class="cms-btn cms-btn-primary">Lưu bài</button>
+              <button type="button" id="previewPostBtn" class="cms-btn cms-btn-ghost">Xem trước</button>
+              <button type="button" id="duplicatePostBtn" class="cms-btn cms-btn-ghost hidden">Nhân đôi</button>
+            </div>
+            <p id="postSaveMsg" class="cms-msg"></p>
+          </div>
+          <div class="cms-side-card">
+            <h3>Ảnh &amp; media</h3>
+            <div class="field">
+              <label for="postCover">Ảnh nổi bật (đại diện)</label>
+              <div class="cms-media-field">
+                <input type="url" id="postCover" placeholder="/media/… hoặc https://…" />
+                <button type="button" class="cms-btn cms-btn-ghost cms-btn-sm" data-pick="cover">Chọn</button>
+              </div>
+              <div class="cms-cover-actions">
+                <button type="button" class="cms-btn cms-btn-ghost cms-btn-sm" id="useFirstImageBtn">Lấy ảnh đầu trong bài</button>
+              </div>
+              <p class="cms-hint" style="margin:0.45rem 0 0;font-size:0.82rem;color:var(--muted,#64748b)">
+                Nếu để trống, trang tin/bài viết vẫn hiện tạm ảnh đầu trong nội dung — không lưu thành ảnh đại diện.
+              </p>
+              <div class="cms-cover-preview" id="coverPreview" hidden></div>
+            </div>
+            <div class="field">
+              <label for="postOg">OG image</label>
+              <div class="cms-media-field">
+                <input type="url" id="postOg" placeholder="Để trống = dùng ảnh nổi bật" />
+                <button type="button" class="cms-btn cms-btn-ghost cms-btn-sm" data-pick="og">Chọn</button>
+              </div>
+            </div>
+          </div>
+          <div class="cms-side-card">
+            <h3>SEO On-page</h3>
+            <div class="field">
+              <label for="focusKeyword">Từ khóa chính</label>
+              <input type="text" id="focusKeyword" placeholder="focus keyword" />
+            </div>
+            <div class="field">
+              <label for="secondaryKeywords">Từ khóa phụ</label>
+              <input type="text" id="secondaryKeywords" placeholder="kw1, kw2, kw3" />
+              <span class="cms-char-count">Phân tách bằng dấu phẩy</span>
+            </div>
+            <div class="field">
+              <label for="seoTitle">Tiêu đề SEO</label>
+              <input type="text" id="seoTitle" maxlength="70" />
+              <span class="cms-char-count" id="seoTitleCount">0/60</span>
+            </div>
+            <div class="field">
+              <label for="seoDesc">Mô tả meta</label>
+              <textarea id="seoDesc" rows="3" maxlength="180"></textarea>
+              <span class="cms-char-count" id="seoDescCount">0/160</span>
+            </div>
+            <div class="field">
+              <label for="canonicalUrl">Canonical URL</label>
+              <input type="url" id="canonicalUrl" />
+            </div>
+            <label class="cms-check">
+              <input type="checkbox" id="postNoindex" />
+              noindex
+            </label>
+            <button type="button" id="refreshGoogleSeoBtn" class="cms-btn cms-btn-primary cms-btn-sm cms-seo-refresh">Chấm lại từ Google</button>
+            <div id="googleScoreBox" class="cms-seo-score cms-google-score">
+              <div class="cms-seo-score-head">
+                <span class="cms-seo-label">Điểm Google (Lighthouse)</span>
+                <strong id="googleSeoValue">—</strong>
+                <span id="googleSeoHint" class="cms-muted"></span>
+              </div>
+              <p id="googleSeoNote" class="cms-muted cms-seo-note">
+                Điểm Lighthouse SEO từ PageSpeed Insights (công cụ của Google). Không phải điểm xếp hạng tìm kiếm. Cần bài đã public trên domain thật.
+              </p>
+              <p id="googlePerfLine" class="cms-muted cms-seo-words"></p>
+              <ul id="googleSeoAudits" class="cms-seo-checks"></ul>
+              <p id="googleSeoMsg" class="cms-msg"></p>
+            </div>
+            <button type="button" id="refreshSeoBtn" class="cms-btn cms-btn-ghost cms-btn-sm cms-seo-refresh">Tính checklist biên tập</button>
+            <div id="seoScoreBox" class="cms-seo-score cms-editorial-score">
+              <div class="cms-seo-score-head">
+                <span class="cms-seo-label">Checklist biên tập</span>
+                <strong id="seoScoreValue">—</strong>
+                <span id="seoScoreGrade"></span>
+              </div>
+              <p class="cms-muted cms-seo-note">Không phải điểm Google — chỉ gợi ý on-page (title, từ khóa, độ dài…).</p>
+              <p id="seoWordCount" class="cms-muted cms-seo-words"></p>
+              <ul id="seoChecks" class="cms-seo-checks"></ul>
+            </div>
+          </div>
+        </aside>
+      </form>
+    </main>
+  </div>
+
+  <div id="mediaModal" class="cms-modal hidden" aria-hidden="true">
+    <div class="cms-modal-backdrop" data-close-media></div>
+    <div class="cms-modal-panel cms-media-panel cms-media-picker-panel" role="dialog" aria-modal="true" aria-labelledby="mediaModalTitle">
+      <div class="cms-modal-head">
+        <h2 id="mediaModalTitle">Thư viện Media</h2>
+        <button type="button" class="cms-modal-x" data-close-media aria-label="Đóng">×</button>
+      </div>
+      <div class="cms-modal-toolbar">
+        <label class="cms-btn cms-btn-primary cms-upload-label">
+          Tải lên
+          <input type="file" id="mediaUploadInput" class="cms-file-input" accept="image/*,video/mp4,video/webm,video/ogg,.mp4,.webm,.mov" multiple />
+        </label>
+        <select id="mediaTypeFilter" aria-label="Lọc media">
+          <option value="all">Tất cả</option>
+          <option value="image">Ảnh</option>
+          <option value="video">Video</option>
+        </select>
+        <input type="search" id="mediaSearchInput" class="cms-media-search" placeholder="Tìm theo tên file…" autocomplete="off" />
+        <p id="mediaUploadMsg" class="cms-msg"></p>
+      </div>
+      <div class="cms-media-picker-body">
+        <div class="cms-media-picker-grid-wrap">
+          <div id="mediaGrid" class="cms-media-grid"></div>
+        </div>
+        <aside class="cms-media-picker-side" id="mediaPickerSide">
+          <div id="mediaPickerEmpty" class="cms-media-picker-empty">
+            <p>Chọn một file trong thư viện, hoặc tải lên file mới.</p>
+            <p class="cms-muted">Sau đó chỉnh alt / căn / kích thước rồi chèn vào bài.</p>
+          </div>
+          <div id="mediaPickerDetail" class="cms-media-picker-detail hidden">
+            <div class="cms-media-picker-preview" id="mediaPickerPreview"></div>
+            <p class="cms-media-picker-name" id="mediaPickerName"></p>
+            <div class="field">
+              <label for="mediaPickerUrl">URL</label>
+              <input type="text" id="mediaPickerUrl" readonly />
+            </div>
+            <div class="field" id="mediaPickerAltField">
+              <label for="mediaPickerAlt">Alt text (ảnh)</label>
+              <input type="text" id="mediaPickerAlt" placeholder="Mô tả ảnh cho SEO / accessibility" autocomplete="off" />
+            </div>
+            <div class="field" id="mediaPickerCaptionField">
+              <label for="mediaPickerCaption">Chú thích</label>
+              <input type="text" id="mediaPickerCaption" placeholder="Tùy chọn — hiện dưới ảnh" autocomplete="off" />
+            </div>
+            <div class="field" id="mediaPickerAlignField">
+              <label for="mediaPickerAlign">Căn lề</label>
+              <select id="mediaPickerAlign">
+                <option value="none">Không</option>
+                <option value="left">Trái</option>
+                <option value="center">Giữa</option>
+                <option value="right">Phải</option>
+              </select>
+            </div>
+            <div class="field" id="mediaPickerSizeField">
+              <label for="mediaPickerSize">Kích thước</label>
+              <select id="mediaPickerSize">
+                <option value="full">Đầy đủ (100%)</option>
+                <option value="large">Lớn (75%)</option>
+                <option value="medium">Vừa (50%)</option>
+                <option value="small">Nhỏ (33%)</option>
+              </select>
+            </div>
+            <div class="cms-media-picker-actions">
+              <button type="button" class="cms-btn cms-btn-ghost" id="mediaPickerCopyUrl">Copy URL</button>
+              <button type="button" class="cms-btn cms-btn-primary" id="mediaPickerInsertBtn">Chèn vào bài</button>
+            </div>
+          </div>
+        </aside>
+      </div>
+    </div>
+  </div>
+
+  <div id="linkModal" class="cms-modal hidden" aria-hidden="true">
+    <div class="cms-modal-backdrop" data-close-link></div>
+    <div class="cms-modal-panel cms-link-panel" role="dialog" aria-modal="true" aria-labelledby="linkModalTitle">
+      <div class="cms-modal-head">
+        <h2 id="linkModalTitle">Thêm/sửa đường dẫn</h2>
+        <button type="button" class="cms-modal-x" data-close-link aria-label="Đóng">×</button>
+      </div>
+
+      <div class="cms-link-section">
+        <h3 class="cms-link-section-title">Nhập địa chỉ đích</h3>
+        <div class="field">
+          <label for="linkUrl">URL</label>
+          <input type="text" id="linkUrl" placeholder="https://… hoặc /tin-tuc/…" autocomplete="off" />
+        </div>
+        <div class="field">
+          <label for="linkText">Tên đường dẫn</label>
+          <input type="text" id="linkText" placeholder="Văn bản hiển thị của liên kết" autocomplete="off" />
+        </div>
+        <label class="cms-check">
+          <input type="checkbox" id="linkNewTab" />
+          Mở liên kết trong 1 thẻ mới
+        </label>
+      </div>
+
+      <div class="cms-link-section">
+        <h3 class="cms-link-section-title">Hoặc liên kết đến nội dung đã tồn tại</h3>
+        <div class="field">
+          <label for="linkSearch">Tìm kiếm</label>
+          <input type="search" id="linkSearch" placeholder="Tìm bài viết…" autocomplete="off" />
+        </div>
+        <p id="linkSearchHint" class="cms-link-hint">Thiếu từ khóa tìm kiếm. Hiển thị các bài viết mới nhất.</p>
+        <div id="linkPostList" class="cms-link-list" role="listbox"></div>
+      </div>
+
+      <div class="cms-link-footer">
+        <button type="button" class="cms-btn cms-btn-ghost" data-close-link>Hủy</button>
+        <button type="button" class="cms-btn cms-btn-primary" id="linkSubmitBtn">Thêm liên kết</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/tinymce@7.6.0/tinymce.min.js" referrerpolicy="origin"></script>
+  <script src="/tin-tuc/cms-api.js"></script>
+  <script src="/tin-tuc/cms-shell.js"></script>
+  <script src="/tin-tuc/cms-media-ui.js"></script>
+  <script src="/tin-tuc/cms-link-ui.js"></script>
+  <script src="/tin-tuc/cms-editor.js"></script>
+</body>
+</html>

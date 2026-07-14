@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SEO &amp; GSC — Findmap CMS</title>
+  <meta name="robots" content="noindex, nofollow" />
+  <link rel="icon" href="/assets/icons/favicon.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800&family=Manrope:wght@700;800&display=swap" rel="stylesheet" />
+  <base href="/" />
+  <link rel="stylesheet" href="/tin-tuc/cms.css" />
+</head>
+<body class="cms-app">
+  <aside class="cms-sidebar">
+    <div class="cms-sidebar-top">
+      <a class="cms-brand" href="/admin-post-article" aria-label="Findmap CMS">
+        <img class="cms-brand-logo" src="/landing/assets/logo.svg" alt="Findmap" />
+      </a>
+      <nav class="cms-nav" aria-label="CMS">
+        <a class="cms-nav-item" href="/admin-post-article">Bài viết</a>
+        <a class="cms-nav-item" href="/admin-post-media">Media</a>
+        <a class="cms-nav-item" href="/admin-post-categories">Danh mục</a>
+        <a class="cms-nav-item" href="/admin-post-seo">SEO &amp; GSC</a>
+      </nav>
+    </div>
+    <div class="cms-sidebar-foot">
+      <a href="/tin-tuc" class="cms-foot-link" target="_blank" rel="noopener">Xem trang tin</a>
+      <a href="/admin" class="cms-foot-link" id="cmsLinkAdmin">Quản trị hệ thống</a>
+      <button type="button" id="cmsLogoutBtn" class="cms-foot-link cms-foot-btn">Đăng xuất</button>
+    </div>
+  </aside>
+  <div class="cms-shell">
+    <header class="cms-header">
+      <div>
+        <h1 class="cms-header-title">SEO &amp; Search Console</h1>
+        <p class="cms-header-sub">Xác minh GSC và cấu hình mặc định site</p>
+      </div>
+      <div class="cms-user">
+        <span id="cmsUserEmail" class="cms-user-email">…</span>
+        <span id="cmsUserRole" class="cms-user-role">CMS</span>
+      </div>
+    </header>
+    <main class="cms-main">
+      <div class="cms-seo-settings">
+        <h2 class="cms-panel-title">Google Search Console &amp; SEO site</h2>
+        <p class="cms-hint">
+          Sitemap:
+          <a href="/sitemap.xml" target="_blank" rel="noopener"><code>/sitemap.xml</code></a>
+          · <a href="/robots.txt" target="_blank" rel="noopener"><code>/robots.txt</code></a>
+        </p>
+        <form id="seoSettingsForm" class="cms-form">
+          <div class="field">
+            <label for="seoSiteName">Tên site</label>
+            <input type="text" id="seoSiteName" />
+          </div>
+          <div class="field">
+            <label for="seoDefaultDesc">Mô tả mặc định</label>
+            <textarea id="seoDefaultDesc" rows="3"></textarea>
+          </div>
+          <div class="field">
+            <label for="gscProperty">URL property Search Console</label>
+            <input type="url" id="gscProperty" />
+          </div>
+          <div class="field">
+            <label for="gscMeta">Thẻ meta xác minh</label>
+            <textarea id="gscMeta" rows="2"></textarea>
+          </div>
+          <div class="field">
+            <label for="pagespeedApiKey">PageSpeed Insights API Key</label>
+            <input type="password" id="pagespeedApiKey" placeholder="Dán key mới — để trống nếu giữ key cũ" autocomplete="off" />
+            <p class="cms-hint" id="pagespeedKeyHint">Chưa cấu hình key.</p>
+            <p class="cms-hint">
+              Tạo key tại
+              <a href="https://console.cloud.google.com/apis/library/pagespeedonline.googleapis.com" target="_blank" rel="noopener">Google Cloud → PageSpeed Insights API</a>.
+              Bài phải public (không dùng localhost) thì Google mới chấm được.
+            </p>
+          </div>
+          <button type="submit" class="cms-btn cms-btn-primary">Lưu cấu hình SEO</button>
+          <p id="seoSettingsMsg" class="cms-msg"></p>
+        </form>
+        <div class="cms-gsc-steps">
+          <h3>Checklist Search Console</h3>
+          <ol>
+            <li>Thêm property URL trùng domain Findmap.</li>
+            <li>Dán mã xác minh → Lưu → kiểm tra trên <code>/gioi-thieu</code>.</li>
+            <li>Gửi sitemap <code>/sitemap.xml</code>.</li>
+            <li>Bài xuất bản: dùng điểm Google (Lighthouse) trên danh sách; checklist biên tập chỉ hỗ trợ viết bài.</li>
+          </ol>
+        </div>
+      </div>
+    </main>
+  </div>
+  <script src="/tin-tuc/cms-api.js"></script>
+  <script src="/tin-tuc/cms-shell.js"></script>
+  <script src="/tin-tuc/cms-seo.js"></script>
+</body>
+</html>

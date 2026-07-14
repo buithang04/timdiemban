@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" role="img">
+  <title>Findmap — đồng bộ và xuất dữ liệu</title>
+  <defs>
+    <linearGradient id="orb" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#2b59ff"/>
+      <stop offset="100%" stop-color="#2cc981"/>
+    </linearGradient>
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="12" stdDeviation="16" flood-color="#2b59ff" flood-opacity="0.22"/>
+    </filter>
+  </defs>
+  <circle cx="120" cy="120" r="110" fill="#fff" filter="url(#glow)"/>
+  <circle cx="120" cy="120" r="78" fill="none" stroke="url(#orb)" stroke-width="10" stroke-linecap="round" stroke-dasharray="140 60"/>
+  <circle cx="120" cy="120" r="52" fill="#eef2ff"/>
+  <!-- arrow up-right = export -->
+  <path d="M96 140 L120 100 L144 140" fill="none" stroke="#2b59ff" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M120 100 V156" fill="none" stroke="#2b59ff" stroke-width="8" stroke-linecap="round"/>
+  <text x="120" y="198" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="700" fill="#0f172a">Xuất</text>
+</svg>

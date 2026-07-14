@@ -14,7 +14,9 @@
   ],
   "host_permissions": [
     "https://www.google.com/maps/*",
-    "https://findmap.app.chatplus.io.vn/*"
+    "https://findmap.app.chatplus.io.vn/*",
+    "http://localhost:3000/*",
+    "http://127.0.0.1:3000/*"
   ],
   "action": {
     "default_popup": "popup.html",
@@ -36,7 +38,9 @@
     },
     {
       "matches": [
-        "https://findmap.app.chatplus.io.vn/*"
+        "https://findmap.app.chatplus.io.vn/*",
+        "http://localhost:3000/*",
+        "http://127.0.0.1:3000/*"
       ],
       "js": [
         "web-bridge.js"

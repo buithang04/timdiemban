@@ -448,6 +448,10 @@ async function loadCurrentUser() {
   }
   try {
     const { user } = await apiRequest("/api/auth/me");
+    if (user?.role === "admin") {
+      window.location.replace("/admin");
+      return null;
+    }
     if (user && !user.termsAccepted) {
       window.location.replace("/login");
       return null;
@@ -1685,15 +1689,31 @@ function getRowsToSend() {
 
 let winmapSite = { url: "", host: "", label: "", hasToken: false, configured: false };
 
+function formatSiteHostForUi(host, maxLen = 22) {
+  const raw = String(host || "").trim();
+  if (!raw) return "";
+  let display = raw;
+  try {
+    const withProto = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+    const u = new URL(withProto);
+    display = u.host + (u.pathname && u.pathname !== "/" ? u.pathname : "");
+  } catch {
+    /* giữ raw */
+  }
+  if (display.length <= maxLen) return display;
+  return `${display.slice(0, Math.max(10, maxLen - 1))}…`;
+}
+
 function updateSendSiteButton() {
   if (!els.sendSiteBtn) return;
   const host = winmapSite.host || "";
+  const shortHost = formatSiteHostForUi(winmapSite.label || host, 20);
   const checkedCount = getCheckedKeys().length;
   const sendCount = checkedCount || currentData.length;
-  els.sendSiteBtn.textContent = host
+  els.sendSiteBtn.textContent = shortHost
     ? checkedCount
-      ? `Gửi ${checkedCount} đã chọn về ${host}`
-      : `Gửi tất cả về ${host}`
+      ? `Gửi ${checkedCount} đã chọn về ${shortHost}`
+      : `Gửi tất cả về ${shortHost}`
     : "Gửi về site";
   els.sendSiteBtn.disabled = !sendCount || !winmapSite.configured;
   els.sendSiteBtn.title = !winmapSite.configured
@@ -1855,11 +1875,12 @@ async function sendAllToWinmapSite() {
   }
   const total = snapshot.length;
   const host = winmapSite.host || "site";
+  const hostUi = formatSiteHostForUi(host, 28);
   const sentThisRun = snapshot.map((r) => getDomKey(r));
   if (els.sendSiteBtn) els.sendSiteBtn.disabled = true;
 
   const showPushProgress = ({ sent, failed, processed, total: t }) => {
-    const msg = `Đang gửi ${processed}/${t} về ${host}… (đã gửi OK: ${sent}${failed ? `, lỗi: ${failed}` : ""})`;
+    const msg = `Đang gửi ${processed}/${t} về ${hostUi}… (đã gửi OK: ${sent}${failed ? `, lỗi: ${failed}` : ""})`;
     setWinmapStatus(msg, "");
     setConnStatus(msg, "");
   };

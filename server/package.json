@@ -1,7 +1,7 @@
 {
   "name": "timdiemban-server",
   "version": "1.0.0",
-  "description": "API server nhận dữ liệu scrape từ extension",
+  "description": "API server hệ tìm kiếm Findmap",
   "main": "server.js",
   "scripts": {
     "prestart": "node ../scripts/sync-app-config.js",

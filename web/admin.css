@@ -104,6 +104,11 @@ body.admin-console {
   color: #fff;
 }
 
+a.admin-nav-link {
+  text-decoration: none;
+  box-sizing: border-box;
+}
+
 .admin-nav-item.active svg {
   opacity: 1;
 }

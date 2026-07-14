@@ -1,6 +1,12 @@
+web/media/*
+!web/media/.gitkeep
+landing/web/media/*
+!landing/web/media/.gitkeep
 node_modules/
 server/node_modules/
+landing/node_modules/
 server/.env
+landing/server/.env
 .env
 .env.*
 *.log

@@ -1,33 +1,50 @@
-# Trang giới thiệu Findmap (`landing/`)
+# Findmap Landing — giới thiệu + tin tức + CMS
 
-Trang marketing / onboarding độc lập, phong cách gần [Winmap](https://winmap.vn/) và [ChatPlus](https://chatplus.vn/) (xanh `#2B59FF` + xanh lá `#2CC981`).
+Một folder duy nhất cho trang công khai / tin / CMS. Hệ tìm kiếm nằm ở `server/` + `web/` (riêng).
 
-## Nội dung
+## Cấu trúc
 
-- Giới thiệu hệ thống (Web + Extension + Server)
-- Mục tiêu & đối tượng dùng
-- Kết quả sau mỗi lần quét
-- Chính sách người dùng (tóm tắt)
-- Quy định vận hành / pháp lý bản đồ
-- CTA đăng nhập
-
-## Xem local
-
-Mở file trực tiếp:
-
-```text
-landing/index.html
+```
+landing/
+  index.html, styles.css, script.js, news-fx.js, assets/   # trang giới thiệu
+  web/
+    login.html          # đăng nhập CMS riêng
+    tin-tuc/            # trang tin + CMS
+    media/              # ảnh/video
+  server/               # Express port 3001, DB findmap_news
+  config/app-config.js
+  package.json
 ```
 
-Hoặc serve thư mục (ví dụ):
+## Chạy
 
 ```bash
-npx --yes serve landing -p 5173
+cd landing
+npm install
+npm start
 ```
 
-Rồi mở `http://localhost:5173`.
+- Giới thiệu: http://localhost:3001/gioi-thieu
+- Tin tức: http://localhost:3001/tin-tuc
+- CMS: http://localhost:3001/admin-post-article
+- Login CMS: http://localhost:3001/login
 
-## Ghi chú
+## Database
 
-- Folder này **tách** khỏi `web/` app chính.
-- Link CTA mặc định trỏ `/login` (cùng origin khi gắn vào server). Khi mở file `file://` có thể sửa tạm thành URL production.
+DB riêng: `findmap_news` (không dùng chung `timdiemban`).
+
+```bash
+cd landing
+npm run migrate-from-search
+# PowerShell:
+$env:CONFIRM_PURGE="yes"; npm run purge-search-cms
+```
+
+## Hai hệ thống
+
+| | Tìm kiếm | Landing / tin |
+|--|--|--|
+| Folder | `server/` + `web/` | `landing/` |
+| Port | 3000 | 3001 |
+| DB | `timdiemban` | `findmap_news` |
+| Login | `/login` | `landing` `/login` |

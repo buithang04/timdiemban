@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 500" role="img">
+  <title>Findmap — tìm kiếm theo khu vực trên bản đồ</title>
+  <defs>
+    <linearGradient id="bg1" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#eef2ff"/>
+      <stop offset="100%" stop-color="#f0fdf6"/>
+    </linearGradient>
+    <linearGradient id="map1" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#dbeafe"/>
+      <stop offset="100%" stop-color="#e0f2fe"/>
+    </linearGradient>
+    <filter id="sh1" x="-10%" y="-10%" width="130%" height="140%">
+      <feDropShadow dx="0" dy="10" stdDeviation="16" flood-color="#2b59ff" flood-opacity="0.12"/>
+    </filter>
+  </defs>
+  <rect width="800" height="500" rx="24" fill="url(#bg1)"/>
+  <rect x="48" y="40" width="704" height="420" rx="16" fill="#ffffff" filter="url(#sh1)"/>
+  <rect x="48" y="40" width="704" height="48" rx="16" fill="#f8fafc"/>
+  <rect x="48" y="72" width="704" height="16" fill="#f8fafc"/>
+  <circle cx="76" cy="64" r="6" fill="#fca5a5"/>
+  <circle cx="96" cy="64" r="6" fill="#fcd34d"/>
+  <circle cx="116" cy="64" r="6" fill="#86efac"/>
+  <text x="148" y="69" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="700" fill="#2b59ff">Findmap</text>
+  <rect x="48" y="88" width="200" height="372" fill="#f8f9ff"/>
+  <rect x="68" y="112" width="120" height="12" rx="4" fill="#c7d2fe"/>
+  <rect x="68" y="144" width="160" height="36" rx="8" fill="#ffffff" stroke="#e2e8f0"/>
+  <rect x="68" y="196" width="160" height="36" rx="8" fill="#ffffff" stroke="#e2e8f0"/>
+  <rect x="68" y="248" width="160" height="36" rx="8" fill="#ffffff" stroke="#e2e8f0"/>
+  <rect x="68" y="310" width="160" height="40" rx="10" fill="#2b59ff"/>
+  <text x="100" y="335" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="700" fill="#ffffff">Tìm kiếm</text>
+  <text x="68" y="380" font-family="Arial, Helvetica, sans-serif" font-size="11" fill="#64748b">Credit</text>
+  <rect x="68" y="392" width="100" height="10" rx="5" fill="#e2e8f0"/>
+  <rect x="68" y="392" width="62" height="10" rx="5" fill="#2cc981"/>
+  <rect x="248" y="88" width="504" height="372" fill="url(#map1)"/>
+  <path d="M280 120 H720 M280 180 H720 M280 260 H720 M280 340 H720 M280 400 H720" stroke="#bfdbfe" stroke-width="8"/>
+  <path d="M320 100 V440 M420 100 V440 M540 100 V440 M640 100 V440" stroke="#bfdbfe" stroke-width="6"/>
+  <circle cx="480" cy="270" r="110" fill="#2b59ff" fill-opacity="0.08" stroke="#2b59ff" stroke-width="2" stroke-dasharray="6 4"/>
+  <circle cx="480" cy="270" r="8" fill="#2b59ff"/>
+  <g fill="#2b59ff">
+    <path d="M400 220c0-14 11-25 25-25s25 11 25 25c0 18-25 40-25 40s-25-22-25-40z"/>
+    <circle cx="425" cy="218" r="7" fill="#ffffff"/>
+    <path d="M520 300c0-14 11-25 25-25s25 11 25 25c0 18-25 40-25 40s-25-22-25-40z"/>
+    <circle cx="545" cy="298" r="7" fill="#ffffff"/>
+    <path d="M430 320c0-14 11-25 25-25s25 11 25 25c0 18-25 40-25 40s-25-22-25-40z"/>
+    <circle cx="455" cy="318" r="7" fill="#ffffff"/>
+    <path d="M560 200c0-14 11-25 25-25s25 11 25 25c0 18-25 40-25 40s-25-22-25-40z"/>
+    <circle cx="585" cy="198" r="7" fill="#ffffff"/>
+  </g>
+  <g fill="#2cc981">
+    <path d="M360 280c0-12 9-21 21-21s21 9 21 21c0 15-21 34-21 34s-21-19-21-34z"/>
+    <circle cx="381" cy="278" r="6" fill="#ffffff"/>
+  </g>
+</svg>

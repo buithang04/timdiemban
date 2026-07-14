@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Xem trước — Findmap</title>
+  <meta name="robots" content="noindex, nofollow" />
+  <meta name="description" content="" id="metaDescription" />
+  <meta property="og:type" content="article" />
+  <meta property="og:title" content="" id="ogTitle" />
+  <meta property="og:description" content="" id="ogDescription" />
+  <meta property="og:image" content="" id="ogImage" />
+  <link rel="icon" href="/landing/assets/favicon.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800&family=Manrope:wght@700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/landing/styles.css" />
+  <style>
+    .preview-banner {
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      background: #1e3a8a;
+      color: #fff;
+      text-align: center;
+      padding: 0.55rem 1rem;
+      font-size: 0.88rem;
+      font-weight: 600;
+    }
+    .preview-banner a { color: #93c5fd; }
+  </style>
+</head>
+<body class="page-article">
+  <div class="preview-banner" id="previewBanner">Đang tải xem trước…</div>
+  <main id="articleRoot">
+    <div class="container" style="padding: 3rem 0">
+      <div class="news-loading">Đang tải bài viết…</div>
+    </div>
+  </main>
+  <script src="/tin-tuc/cms-api.js"></script>
+  <script>
+    (function () {
+      const { api, escapeHtml, requireStaff } = window.CmsApi;
+
+      function formatDate(iso) {
+        if (!iso) return "";
+        const d = new Date(iso);
+        if (Number.isNaN(d.getTime())) return String(iso).slice(0, 10);
+        return d.toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit", year: "numeric" });
+      }
+
+      function formatDateLong(iso) {
+        if (!iso) return "";
+        const d = new Date(iso);
+        if (Number.isNaN(d.getTime())) return String(iso).slice(0, 10);
+        return `Tháng ${d.getMonth() + 1} ${d.getDate()}, ${d.getFullYear()}`;
+      }
+
+      function setMeta(id, attr, value) {
+        const el = document.getElementById(id);
+        if (el && value != null) el.setAttribute(attr, value);
+      }
+
+      function statusLabel(s) {
+        return { published: "Đã xuất bản", draft: "Nháp", hidden: "Đã ẩn", trash: "Thùng rác" }[s] || s;
+      }
+
+      function slugifyHeading(text) {
+        return String(text || "")
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "")
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, "-")
+          .replace(/^-+|-+$/g, "")
+          .slice(0, 60) || "muc";
+      }
+
+      function stripLeadingCoverImage(html, coverUrl) {
+        if (!html || !coverUrl) return html || "";
+        const wrap = document.createElement("div");
+        wrap.innerHTML = html;
+        const firstImg = wrap.querySelector("img");
+        if (!firstImg) return html;
+        const src = (firstImg.getAttribute("src") || "").trim();
+        if (!src || src !== coverUrl) return html;
+        const block = firstImg.closest("figure, p, div") || firstImg;
+        if (block === firstImg || (block.tagName === "P" && block.childElementCount <= 1 && !block.textContent.trim())) {
+          block.remove();
+        } else {
+          firstImg.remove();
+        }
+        return wrap.innerHTML;
+      }
+
+      function buildArticleToc(articleEl) {
+        const headings = [...articleEl.querySelectorAll("h2, h3")];
+        if (headings.length < 2) return "";
+        const used = new Set();
+        let h2n = 0;
+        const parts = [];
+        headings.forEach((h) => {
+          const text = (h.textContent || "").trim();
+          if (!text) return;
+          let id = h.id;
+          if (!id) {
+            let base = `muc-${slugifyHeading(text)}`;
+            let candidate = base;
+            let i = 2;
+            while (used.has(candidate) || document.getElementById(candidate)) {
+              candidate = `${base}-${i++}`;
+            }
+            id = candidate;
+            h.id = id;
+          }
+          used.add(id);
+          const isH2 = h.tagName === "H2";
+          if (isH2) h2n += 1;
+          const label = isH2 ? `${h2n}. ${escapeHtml(text)}` : escapeHtml(text);
+          parts.push(
+            `<a class="article-toc-item ${isH2 ? "is-h2" : "is-h3"}" href="#${escapeHtml(id)}">${label}</a>`
+          );
+        });
+        if (!parts.length) return "";
+        return `
+          <div class="article-toc" id="articleToc">
+            <button type="button" class="article-toc-toggle" id="articleTocToggle" aria-expanded="false" aria-controls="articleTocPanel">
+              <span>Tóm tắt</span>
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>
+              </svg>
+            </button>
+            <nav class="article-toc-panel" id="articleTocPanel" hidden>
+              <div class="article-toc-panel-head">
+                <strong>Tóm tắt</strong>
+                <button type="button" class="article-toc-icon" id="articleTocClose" aria-label="Thu gọn tóm tắt">
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                    <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>
+                  </svg>
+                </button>
+              </div>
+              <div class="article-toc-list">${parts.join("")}</div>
+            </nav>
+          </div>
+        `;
+      }
+
+      function bindArticleToc(root) {
+        const toc = root.querySelector("#articleToc");
+        if (!toc) return;
+        const toggle = toc.querySelector("#articleTocToggle");
+        const panel = toc.querySelector("#articleTocPanel");
+        if (!toggle || !panel) return;
+
+        function setOpen(open) {
+          panel.hidden = !open;
+          toggle.setAttribute("aria-expanded", open ? "true" : "false");
+          toc.classList.toggle("is-open", open);
+        }
+
+        toggle.addEventListener("click", () => setOpen(panel.hidden));
+        toc.addEventListener("click", (e) => {
+          if (!e.target.closest("#articleTocClose, .article-toc-icon")) return;
+          e.preventDefault();
+          setOpen(false);
+        });
+      }
+
+      async function loadRecentAside(excludeId) {
+        try {
+          const data = await api("/api/posts?limit=6&offset=0");
+          const posts = (data.posts || []).filter((p) => p.id !== excludeId).slice(0, 5);
+          if (!posts.length) return `<p class="article-aside-empty">Chưa có bài khác.</p>`;
+          return posts
+            .map((post, i) => {
+              const href = post.path || `/tin-tuc/${encodeURIComponent(post.slug || "")}`;
+              const title = escapeHtml(post.title || "Không tiêu đề");
+              const date = formatDate(post.published_at || post.updated_at);
+              const thumb =
+                i === 0 && post.cover_image
+                  ? `<div class="article-aside-thumb"><img src="${escapeHtml(post.cover_image)}" alt="" loading="lazy" /></div>`
+                  : "";
+              return `
+                <a class="article-aside-item" href="${escapeHtml(href)}">
+                  ${thumb}
+                  <span class="article-aside-item-title">${title}</span>
+                  ${date ? `<span class="article-aside-item-date">${date}</span>` : ""}
+                </a>
+              `;
+            })
+            .join("");
+        } catch {
+          return "";
+        }
+      }
+
+      async function main() {
+        const user = await requireStaff();
+        if (!user) return;
+        const id = new URLSearchParams(location.search).get("id");
+        const root = document.getElementById("articleRoot");
+        const banner = document.getElementById("previewBanner");
+        if (!id) {
+          root.innerHTML = `<div class="container" style="padding:2rem 0"><p>Thiếu id bài viết.</p></div>`;
+          return;
+        }
+        try {
+          const data = await api(`/api/admin/cms/posts/${encodeURIComponent(id)}`);
+          const post = data.post;
+          if (!post) throw new Error("Không tìm thấy");
+          const publicPath = post.path || `/tin-tuc/${post.slug}`;
+          banner.innerHTML =
+            post.status === "published"
+              ? `Bài đã xuất bản — đang chuyển sang URL công khai… · <a href="${escapeHtml(publicPath)}">Mở ngay</a> · <a href="/admin-post-editor?id=${encodeURIComponent(post.id)}">Sửa bài</a>`
+              : `XEM TRƯỚC — bài chưa công khai (${escapeHtml(statusLabel(post.status))}) · <a href="/admin-post-editor?id=${encodeURIComponent(post.id)}">Quay lại soạn thảo</a>`;
+
+          if (post.status === "published" && publicPath) {
+            location.replace(publicPath);
+            return;
+          }
+
+          const title = post.seo_title || post.title || "Bài viết";
+          const desc = post.seo_description || post.excerpt || "";
+          const storedCover = String(post.cover_image || "").trim();
+          const coverUrl = storedCover || String(post.cover_image_resolved || "").trim();
+          const coverIsTemp = Boolean(coverUrl && !storedCover);
+          const image = post.og_image || coverUrl || "";
+          document.title = `[Xem trước] ${title} — Findmap`;
+          setMeta("metaDescription", "content", desc);
+          setMeta("ogTitle", "content", title);
+          setMeta("ogDescription", "content", desc);
+          setMeta("ogImage", "content", image);
+
+          const date = formatDateLong(post.published_at || post.updated_at);
+          let bodyHtml = post.content_html || "";
+          if (coverIsTemp) bodyHtml = stripLeadingCoverImage(bodyHtml, coverUrl);
+          const cover = coverUrl
+            ? `<div class="article-cover"><img src="${escapeHtml(coverUrl)}" alt="" /></div>`
+            : "";
+          const asideHtml = await loadRecentAside(post.id);
+
+          root.innerHTML = `
+            <section class="article-page">
+              <div class="container article-layout">
+                <div class="article-main">
+                  <a class="article-back" href="/admin-post-editor?id=${encodeURIComponent(post.id)}">← Quay lại soạn thảo</a>
+                  <h1 class="article-title">${escapeHtml(post.title || "")}</h1>
+                  ${date ? `<time class="article-date" datetime="${escapeHtml(post.published_at || "")}">${date}</time>` : ""}
+                  ${cover}
+                  <div id="articleTocMount"></div>
+                  <article class="article-body" id="articleBody">${bodyHtml}</article>
+                </div>
+                <aside class="article-aside" aria-label="Bài viết mới">
+                  <h2 class="article-aside-title">Bài viết mới</h2>
+                  <div class="article-aside-card">${asideHtml}</div>
+                </aside>
+              </div>
+            </section>
+          `;
+
+          const bodyEl = root.querySelector("#articleBody");
+          const tocMount = root.querySelector("#articleTocMount");
+          if (bodyEl && tocMount) {
+            tocMount.innerHTML = buildArticleToc(bodyEl);
+            bindArticleToc(root);
+          }
+        } catch (err) {
+          banner.textContent = "Không xem trước được";
+          root.innerHTML = `<div class="container" style="padding:2rem 0"><p>${escapeHtml(err.message)}</p></div>`;
+        }
+      }
+
+      if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", main);
+      else main();
+    })();
+  </script>
+</body>
+</html>

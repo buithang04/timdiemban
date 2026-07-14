@@ -26,6 +26,9 @@ function collectWebUrlPatterns(origin) {
   } else if (base.includes("127.0.0.1")) {
     patterns.add(originToHostPattern(base.replace("127.0.0.1", "localhost")));
   }
+  // Luôn cho phép dev local (kể cả khi APP_ORIGIN đang là production)
+  patterns.add("http://localhost:3000/*");
+  patterns.add("http://127.0.0.1:3000/*");
   return [...patterns];
 }
 

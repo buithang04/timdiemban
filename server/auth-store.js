@@ -38,23 +38,13 @@ async function loginUser(email, password) {
   if (!user || user.is_active === 0 || !verifyPassword(password, user.password_hash)) {
     throw new Error("Email hoặc mật khẩu không đúng");
   }
-  if (user.role === "admin") {
-    throw new Error("Tài khoản admin — đăng nhập tại trang quản trị");
-  }
   const token = await createSessionToken(user.id);
   return { token, user: sanitizeUser(user) };
 }
 
+/** Alias — cùng loginUser (mọi role dùng một cổng đăng nhập) */
 async function loginAdmin(email, password) {
-  const user = await findUserByEmail(email);
-  if (!user || user.is_active === 0 || user.role !== "admin") {
-    throw new Error("Email hoặc mật khẩu admin không đúng");
-  }
-  if (!verifyPassword(password, user.password_hash)) {
-    throw new Error("Email hoặc mật khẩu admin không đúng");
-  }
-  const token = await createSessionToken(user.id);
-  return { token, user: sanitizeUser(user) };
+  return loginUser(email, password);
 }
 
 async function getUserFromToken(token) {
@@ -72,15 +62,23 @@ async function getAdminFromToken(token) {
   return user;
 }
 
+function normalizeRole(role) {
+  const r = String(role || "user").toLowerCase();
+  if (r === "admin" || r === "user") return r;
+  return "user";
+}
+
 async function createUser(email, password, options = {}) {
   const norm = String(email || "").trim().toLowerCase();
   const pw = String(password || "");
   const { packageId = null, points = null, role = "user", fullName = "", phone = "" } = options;
+  const finalRole = normalizeRole(role);
   const cleanName = String(fullName || "").trim();
   const cleanPhone = String(phone || "").replace(/\D/g, "");
 
   if (!norm || !norm.includes("@")) throw new Error("Email không hợp lệ");
   if (pw.length < 6) throw new Error("Mật khẩu tối thiểu 6 ký tự");
+
   if (!cleanName) throw new Error("Tên không được để trống");
   if (cleanPhone.length < 9) throw new Error("SĐT không hợp lệ");
   if (await findUserByEmail(norm)) throw new Error("Email đã tồn tại");
@@ -108,7 +106,7 @@ async function createUser(email, password, options = {}) {
   await pool.execute(
     `INSERT INTO users (id, full_name, email, phone, password_hash, role, points, package_id, package_expires_at, is_active, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
-    [id, cleanName, norm, cleanPhone, hashPassword(pw), role === "admin" ? "admin" : "user",
+    [id, cleanName, norm, cleanPhone, hashPassword(pw), finalRole === "admin" ? "admin" : "user",
      initialPoints, assignedPackage, packageExpiresAt, new Date().toISOString()]
   );
   return getUserById(id);

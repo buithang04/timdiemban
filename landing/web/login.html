@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Đăng nhập CMS tin tức — Findmap</title>
+  <meta name="robots" content="noindex, nofollow" />
+  <link rel="icon" href="/landing/assets/favicon.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800&family=Manrope:wght@700;800&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --ink: #0f172a;
+      --muted: #64748b;
+      --line: #e2e8f0;
+      --blue: #2563eb;
+      --blue-deep: #1d4ed8;
+      --bg: #f1f5f9;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      min-height: 100vh;
+      font-family: "Be Vietnam Pro", system-ui, sans-serif;
+      background:
+        radial-gradient(900px 420px at 10% -10%, rgba(37, 99, 235, 0.14), transparent 60%),
+        radial-gradient(700px 380px at 100% 0%, rgba(14, 165, 233, 0.12), transparent 55%),
+        var(--bg);
+      color: var(--ink);
+      display: grid;
+      place-items: center;
+      padding: 24px;
+    }
+    .card {
+      width: min(420px, 100%);
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 28px 26px 24px;
+      box-shadow: 0 18px 50px rgba(15, 23, 42, 0.08);
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 18px;
+      text-decoration: none;
+      color: inherit;
+    }
+    .brand img { height: 28px; }
+    h1 {
+      font-family: Manrope, "Be Vietnam Pro", sans-serif;
+      font-size: 1.35rem;
+      margin-bottom: 6px;
+    }
+    .hint { color: var(--muted); font-size: 0.92rem; margin-bottom: 18px; line-height: 1.45; }
+    label { display: block; font-size: 0.85rem; font-weight: 600; margin: 0 0 6px; }
+    input {
+      width: 100%;
+      padding: 11px 12px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      font: inherit;
+      margin-bottom: 14px;
+    }
+    input:focus { outline: 2px solid rgba(37, 99, 235, 0.25); border-color: #93c5fd; }
+    button {
+      width: 100%;
+      border: 0;
+      border-radius: 10px;
+      padding: 12px 14px;
+      background: var(--blue);
+      color: #fff;
+      font: inherit;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    button:hover { background: var(--blue-deep); }
+    .error { color: #dc2626; font-size: 0.88rem; margin: -6px 0 12px; min-height: 1.2em; }
+    .foot { margin-top: 16px; font-size: 0.85rem; color: var(--muted); text-align: center; }
+    .foot a { color: var(--blue); }
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <a class="brand" href="/gioi-thieu">
+      <img src="/landing/assets/logo.svg" alt="Findmap" />
+    </a>
+    <h1>Đăng nhập CMS tin tức</h1>
+    <p class="hint">Cổng riêng cho biên tập viên / admin tin — không dùng chung với hệ tìm kiếm.</p>
+    <form id="loginForm">
+      <label for="loginEmail">Email</label>
+      <input type="email" id="loginEmail" required autocomplete="username" placeholder="editor@example.com" />
+      <label for="loginPassword">Mật khẩu</label>
+      <input type="password" id="loginPassword" required minlength="6" autocomplete="current-password" />
+      <p id="loginError" class="error"></p>
+      <button type="submit">Đăng nhập</button>
+    </form>
+    <p class="foot">Cần Findmap tìm kiếm? <a id="searchLoginLink" href="http://localhost:3000/login">Đăng nhập hệ tìm kiếm</a></p>
+  </main>
+  <script>
+    const TOKEN_KEY = "findmap_cms_token";
+    const form = document.getElementById("loginForm");
+    const errEl = document.getElementById("loginError");
+
+    fetch("/api/config/origins")
+      .then((r) => r.json())
+      .then((d) => {
+        const a = document.getElementById("searchLoginLink");
+        if (a && d.searchOrigin) a.href = d.searchOrigin.replace(/\/+$/, "") + "/login";
+      })
+      .catch(() => {});
+
+    if (localStorage.getItem(TOKEN_KEY)) {
+      location.replace("/admin-post-article");
+    }
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      errEl.textContent = "";
+      try {
+        const res = await fetch("/api/auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            email: document.getElementById("loginEmail").value.trim(),
+            password: document.getElementById("loginPassword").value
+          })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || "Đăng nhập thất bại");
+        localStorage.setItem(TOKEN_KEY, data.token);
+        location.replace("/admin-post-article");
+      } catch (err) {
+        errEl.textContent = err.message || "Lỗi đăng nhập";
+      }
+    });
+  </script>
+</body>
+</html>

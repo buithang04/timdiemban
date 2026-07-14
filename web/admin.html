@@ -43,6 +43,9 @@
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
         Cấu hình
       </button>
+      <a href="http://localhost:3001/admin-post-article" id="adminNewsCmsLink" class="admin-nav-item admin-nav-link" target="_blank" rel="noopener">
+        Tin tức / CMS →
+      </a>
     </nav>
 
     <div class="wm-sidebar-foot">
@@ -85,27 +88,6 @@
     </header>
 
     <main class="admin-main">
-      <section id="adminGate" class="admin-gate-wrap">
-        <div class="admin-gate-card">
-          <h2>Đăng nhập quản trị</h2>
-          <p class="admin-hint">Dùng tài khoản admin (email + mật khẩu).</p>
-          <form id="adminGateForm" class="admin-form">
-            <div class="field">
-              <label for="adminEmail">Email admin</label>
-              <input type="email" id="adminEmail" required placeholder="admin@findmap.local" autocomplete="username" />
-            </div>
-            <div class="field">
-              <label for="adminPassword">Mật khẩu</label>
-              <input type="password" id="adminPassword" required placeholder="Mật khẩu admin" autocomplete="current-password" />
-            </div>
-            <p id="adminGateError" class="admin-auth-error hidden"></p>
-            <div class="admin-form-actions">
-              <button type="submit" class="admin-btn admin-btn-primary">Đăng nhập</button>
-            </div>
-          </form>
-        </div>
-      </section>
-
       <section id="adminPanel" class="hidden">
         <!-- Panel: Tài khoản -->
         <div id="adminPanelUsers" class="admin-panel active">
@@ -113,12 +95,12 @@
             <div class="admin-card-head">
               <div>
                 <h2>Thao tác nhanh</h2>
-                <p class="admin-card-desc">Tạo tài khoản, nạp gói, đặt mật khẩu, cộng credit</p>
+                <p class="admin-card-desc">Tạo tài khoản user, nạp gói, đặt mật khẩu</p>
               </div>
             </div>
             <div class="admin-card-body admin-card-body-compact">
               <div class="admin-tool-tabs" role="tablist">
-                <button type="button" class="admin-tool-tab active" data-tool="create">Tạo tài khoản</button>
+                <button type="button" class="admin-tool-tab active" data-tool="create">Tạo user</button>
                 <button type="button" class="admin-tool-tab" data-tool="package">Nạp gói</button>
                 <button type="button" class="admin-tool-tab" data-tool="reset">Đặt lại MK</button>
                 <button type="button" class="admin-tool-tab" data-tool="points">Cộng credit lẻ</button>
