@@ -691,23 +691,12 @@ function applyDistancesFromCenter(rows, search) {
 }
 
 function clearResultsForNewSearch() {
-  currentData = [];
-  rowKeyMap.clear();
-  sentKeys.clear();
-  currentPage = 1;
+  // Không còn dùng để xóa khi tìm mới — giữ hàm trống/an toàn nếu còn chỗ gọi cũ
   awaitingNewSearchResults = false;
-  extensionMergedCount = 0;
-  window.TimDiemBanMap?.clearMarkers?.();
-  if (els.resultsBody) els.resultsBody.innerHTML = "";
-  if (els.infoTotal) els.infoTotal.textContent = "0";
-  try {
-    saveResultsToStorage(true);
-  } catch {}
 }
 
-/** Bắt đầu tìm mới — xóa bảng cũ ngay, không chờ item đầu tiên. */
+/** Bắt đầu lượt tìm mới — giữ nguyên kết quả đã lưu; chỉ cập nhật phiên + bản đồ. */
 function beginFreshSearchUi(searchParams) {
-  clearResultsForNewSearch();
   if (searchParams) {
     currentSearch = {
       ...searchParams,
@@ -715,18 +704,24 @@ function beginFreshSearchUi(searchParams) {
       startedAt: new Date().toISOString()
     };
   }
-  if (els.loadingState) els.loadingState.classList.remove("hidden");
-  if (els.emptyState) els.emptyState.classList.add("hidden");
-  if (els.tableSection) els.tableSection.classList.add("hidden");
+  awaitingNewSearchResults = false;
+  extensionMergedCount = 0;
+  if (currentData.length) {
+    els.tableSection?.classList.remove("hidden");
+    els.loadingState?.classList.add("hidden");
+    els.emptyState?.classList.add("hidden");
+  } else {
+    els.loadingState?.classList.remove("hidden");
+    els.emptyState?.classList.add("hidden");
+  }
+  // Lưu meta phiên hiện tại; KHÔNG xóa data cũ
+  saveResultsToStorage(true);
   updateView();
 }
 
 function ensureSearchSession(search) {
-  const sid = search?.searchId;
-  if (!sid) return;
-  if (currentSearch?.searchId && currentSearch.searchId !== sid) {
-    clearResultsForNewSearch();
-  }
+  // Đổi searchId không xóa kết quả cũ — chỉ «Làm mới» mới xóa
+  if (!search?.searchId) return;
 }
 
 function dedupeResultRows(rows) {
@@ -2072,9 +2067,8 @@ function applyExtensionDataSync(type, payload = {}) {
       updateAuthUI();
     }
     const sp = payload.searchParams || {};
-    // Xóa dữ liệu phiên cũ ngay khi lượt tìm mới bắt đầu (tránh điểm Hà Nội còn hiện khi tìm Bắc Ninh)
+    // Giữ kết quả cũ trong bảng + localStorage — chỉ cập nhật phiên/bản đồ
     beginFreshSearchUi(sp);
-    awaitingNewSearchResults = false;
     liveProgressText = "Bắt đầu tìm kiếm...";
     if (els.infoGridCells && sp.gridCells) {
       els.infoGridCells.textContent = String(sp.gridCells);
@@ -2089,6 +2083,9 @@ function applyExtensionDataSync(type, payload = {}) {
         sp.radius,
         { gridPoints: sp.gridPoints, cellSizeKm: sp.cellSizeKm }
       );
+      // Đánh lại trong/ngoài vùng theo tâm mới (điểm cũ vẫn giữ)
+      window.TimDiemBanMap?.refreshMarkers?.(currentData);
+      window.TimDiemBanMap?.countInOut?.(currentData);
     }
     updateView();
     return;
@@ -2120,7 +2117,6 @@ function applyExtensionDataSync(type, payload = {}) {
 
   if (type === "item") {
     if (!payload.result) return;
-    if (awaitingNewSearchResults && !payload.rescan) clearResultsForNewSearch();
     upsertTableRow(payload.result);
     els.tableSection.classList.remove("hidden");
     els.loadingState.classList.add("hidden");
@@ -2146,7 +2142,6 @@ function applyExtensionDataSync(type, payload = {}) {
   if (type === "items_batch") {
     const items = payload.items || [];
     if (!items.length) return;
-    if (awaitingNewSearchResults && !payload.rescan) clearResultsForNewSearch();
     if (payload.searchParams && !currentSearch) {
       currentSearch = {
         ...payload.searchParams,
@@ -2203,20 +2198,12 @@ function applyExtensionDataSync(type, payload = {}) {
         );
       }
     }
-    if (awaitingNewSearchResults) {
-      if (!currentData.length) clearResultsForNewSearch();
-      else if (syncSearchId && syncSearchId === currentSearch?.searchId) {
-        awaitingNewSearchResults = false;
-      } else {
-        clearResultsForNewSearch();
-      }
-    }
+    awaitingNewSearchResults = false;
     const incoming = payload.results || [];
     const extCount = payload.mergedCount ?? incoming.length;
-    // Snapshot từ extension là nguồn đúng — luôn replace, không merge từng dòng
-    // (merge làm lệch ngày càng lớn khi dedupe web ≠ extension)
+    // Merge vào bảng hiện có — không replace để giữ điểm các lượt tìm trước
     if (incoming.length > 0) {
-      applyResults(incoming, search, true);
+      applyResults(incoming, search, false);
     }
     lastSyncIncoming = incoming.length;
     lastSyncApplied = currentData.length;
@@ -2257,11 +2244,9 @@ function applyExtensionDataSync(type, payload = {}) {
       startedAt: currentSearch?.startedAt || new Date().toISOString()
     };
     const incoming = payload.results || [];
-    // Complete: tin danh sách cuối của extension (đã dedupe phía Maps)
+    // Complete: merge danh sách cuối — giữ điểm các lượt tìm trước trong storage
     if (incoming.length > 0) {
-      applyResults(incoming, search, true);
-    } else if (currentData.length === 0) {
-      applyResults([], search, true);
+      applyResults(incoming, search, false);
     }
     renderFullTable();
     window.TimDiemBanMap?.refreshMarkers(currentData);
@@ -2733,10 +2718,12 @@ els.authForm.addEventListener("submit", async (e) => {
 });
 
 window.addEventListener("timdiemban:search-starting", (e) => {
-  beginFreshSearchUi(e.detail || null);
   const sp = e.detail || {};
+  beginFreshSearchUi(sp);
   if (sp.lat && sp.lng && sp.radius) {
     window.TimDiemBanMap?.setSearchArea?.({ lat: sp.lat, lng: sp.lng }, sp.radius);
+    window.TimDiemBanMap?.refreshMarkers?.(currentData);
+    window.TimDiemBanMap?.countInOut?.(currentData);
   }
 });
 
