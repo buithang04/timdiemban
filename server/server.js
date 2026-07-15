@@ -120,16 +120,76 @@ const newsOrigin = String(
   process.env.NEWS_ORIGIN || appConfig.NEWS_ORIGIN || `http://localhost:3001`
 ).replace(/\/+$/, "");
 
+function expandOriginAliases(origin) {
+  const out = new Set();
+  const raw = String(origin || "").trim().replace(/\/$/, "");
+  if (!raw) return out;
+  out.add(raw);
+  try {
+    const u = new URL(raw);
+    const host = u.hostname.toLowerCase();
+    const port = u.port ? `:${u.port}` : "";
+    const base = `${u.protocol}//${host}${port}`;
+    out.add(base);
+    if (host.startsWith("www.")) {
+      out.add(`${u.protocol}//${host.slice(4)}${port}`);
+    } else if (host !== "localhost" && !/^\d+\.\d+\.\d+\.\d+$/.test(host)) {
+      out.add(`${u.protocol}//www.${host}${port}`);
+    }
+    // Cùng hệ Findmap (apex / www / app / subdomain)
+    if (host === "findmap.vn" || host.endsWith(".findmap.vn")) {
+      out.add(`${u.protocol}//findmap.vn`);
+      out.add(`${u.protocol}//www.findmap.vn`);
+      out.add(`${u.protocol}//app.findmap.vn`);
+    }
+  } catch {}
+  return out;
+}
+
 const allowedOrigins = new Set([
-  appOrigin,
-  newsOrigin,
   `http://localhost:${PORT}`,
   `http://127.0.0.1:${PORT}`,
   "http://localhost:3000",
   "http://127.0.0.1:3000",
   "http://localhost:3001",
-  "http://127.0.0.1:3001"
+  "http://127.0.0.1:3001",
+  "https://findmap.vn",
+  "https://www.findmap.vn",
+  "https://app.findmap.vn"
 ]);
+for (const o of expandOriginAliases(appOrigin)) allowedOrigins.add(o);
+for (const o of expandOriginAliases(newsOrigin)) allowedOrigins.add(o);
+
+function hostnameOf(urlLike) {
+  try {
+    return new URL(String(urlLike || "").trim()).hostname.toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+/** Origin / Referer hợp lệ: allowlist + cùng hệ findmap.vn + host của APP/NEWS_ORIGIN */
+function isAllowedWebOrigin(originOrUrl) {
+  const raw = String(originOrUrl || "").trim();
+  if (!raw) return true;
+  const normalized = raw.replace(/\/$/, "");
+  if (allowedOrigins.has(normalized)) return true;
+  // Referer có path → so khớp prefix allowlist
+  if ([...allowedOrigins].some((o) => raw === o || raw.startsWith(`${o}/`))) return true;
+
+  const host = hostnameOf(raw.includes("://") ? raw : `https://${raw}`);
+  if (!host) return false;
+  if (host === "findmap.vn" || host.endsWith(".findmap.vn")) return true;
+  if (host === "localhost" || host === "127.0.0.1") return true;
+
+  const appHost = hostnameOf(appOrigin);
+  const newsHost = hostnameOf(newsOrigin);
+  for (const h of [appHost, newsHost].filter(Boolean)) {
+    if (host === h) return true;
+    if (host === `www.${h}` || h === `www.${host}`) return true;
+  }
+  return false;
+}
 
 function createRateLimiter({ windowMs, max, keyPrefix }) {
   const hits = new Map();
@@ -199,11 +259,7 @@ function csrfOriginGuard(req, res, next) {
   if (["GET", "HEAD", "OPTIONS"].includes(req.method)) return next();
   const origin = req.headers.origin || "";
   const referer = req.headers.referer || "";
-  const okOrigin = !origin || allowedOrigins.has(origin.replace(/\/$/, ""));
-  const okReferer =
-    !referer ||
-    [...allowedOrigins].some((o) => referer.startsWith(o));
-  if (!okOrigin || !okReferer) {
+  if (!isAllowedWebOrigin(origin) || !isAllowedWebOrigin(referer)) {
     return res.status(403).json({ error: "CSRF blocked: origin không hợp lệ." });
   }
   next();
@@ -220,8 +276,7 @@ app.use((req, res, next) => {
 app.use(cors({
   origin(origin, cb) {
     if (!origin) return cb(null, true);
-    const normalized = String(origin).replace(/\/$/, "");
-    cb(null, allowedOrigins.has(normalized));
+    cb(null, isAllowedWebOrigin(origin));
   },
   credentials: true
 }));
