@@ -2148,11 +2148,23 @@ body.consult-modal-open {
   }
 
   .hero {
-    padding: 3rem 0 2.5rem;
+    padding: 2.25rem 0 1.35rem;
   }
 
   .hero-actions {
     width: 100%;
+  }
+
+  .hero-grid {
+    gap: 0;
+  }
+
+  .hero-visual {
+    display: none;
+  }
+
+  .hero-copy {
+    margin-bottom: 1.25rem;
   }
 
   .news-rail {
@@ -2173,15 +2185,8 @@ body.consult-modal-open {
     grid-template-columns: 1fr;
   }
 
-  .hero-visual {
-    min-height: 320px;
-    max-width: 460px;
-    margin-inline: auto;
-    margin-top: 0.5rem;
-  }
-
-  .hero-visual-stack {
-    max-width: 100%;
+  .trust-strip {
+    padding-top: 0.35rem;
   }
 
   .hero-shot-table {
