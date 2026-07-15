@@ -664,17 +664,35 @@
   const GPS_DENIED_HINT = "Chrome đang chặn vị trí — xem hướng dẫn trong hộp thoại.";
   const GPS_ASKING_HINT = "Đang xin vị trí từ Chrome…";
 
+  function getGpsDeniedModalEl() {
+    return els.gpsDeniedModal || document.getElementById("gpsDeniedModal");
+  }
+
   function showGpsDeniedModal() {
-    els.gpsDeniedModal?.classList.remove("hidden");
+    const modal = getGpsDeniedModalEl();
+    if (!modal) {
+      console.warn("[Findmap] Thiếu #gpsDeniedModal trong HTML");
+      return;
+    }
+    els.gpsDeniedModal = modal;
+    if (modal.parentElement !== document.body) {
+      document.body.appendChild(modal);
+    }
+    modal.classList.remove("hidden");
+    modal.style.display = "flex";
   }
 
   function hideGpsDeniedModal() {
-    els.gpsDeniedModal?.classList.add("hidden");
+    const modal = getGpsDeniedModalEl();
+    if (!modal) return;
+    modal.classList.add("hidden");
+    modal.style.display = "";
   }
 
   function notifyGpsDenied(err) {
     showSearchStatus(humanizeGeoError(err) || GPS_DENIED_HINT, "error");
-    showGpsDeniedModal();
+    // Mở sau microtask để không bị nuốt bởi UI update đồng bộ khác
+    requestAnimationFrame(() => showGpsDeniedModal());
   }
 
   function humanizeGeoError(err) {
@@ -931,7 +949,8 @@
           center = await gpsPromise;
           window.TimDiemBanMap?.focusPoint?.(center.lat, center.lng);
         } catch (err) {
-          showSearchStatus(humanizeGeoError(err), "error");
+          if (isGeoDeniedError(err)) notifyGpsDenied(err);
+          else showSearchStatus(humanizeGeoError(err), "error");
           return;
         }
       } else if (gpsPromise) {
@@ -1158,15 +1177,32 @@
     notifyGpsDenied();
   });
 
-  els.gpsDeniedModalOk?.addEventListener("click", hideGpsDeniedModal);
-  els.gpsDeniedModalClose?.addEventListener("click", hideGpsDeniedModal);
-  els.gpsDeniedModal?.addEventListener("click", (e) => {
-    if (e.target === els.gpsDeniedModal) hideGpsDeniedModal();
+  function bindGpsDeniedModalUi() {
+    const modal = getGpsDeniedModalEl();
+    if (!modal || modal.dataset.bound === "1") return;
+    modal.dataset.bound = "1";
+    els.gpsDeniedModal = modal;
+    document.getElementById("gpsDeniedModalOk")?.addEventListener("click", hideGpsDeniedModal);
+    document.getElementById("gpsDeniedModalClose")?.addEventListener("click", hideGpsDeniedModal);
+    modal.addEventListener("click", (e) => {
+      if (e.target === modal) hideGpsDeniedModal();
+    });
+    document.getElementById("gpsDeniedPickCenter")?.addEventListener("click", () => {
+      hideGpsDeniedModal();
+      enterPickCenterMode();
+    });
+  }
+  bindGpsDeniedModalUi();
+
+  // Bấm dòng cảnh báo → mở lại hướng dẫn
+  els.searchStatus?.addEventListener("click", () => {
+    const t = els.searchStatus?.textContent || "";
+    if (/chặn vị trí|hộp thoại/i.test(t)) showGpsDeniedModal();
   });
-  els.gpsDeniedPickCenter?.addEventListener("click", () => {
-    hideGpsDeniedModal();
-    enterPickCenterMode();
-  });
+  if (els.searchStatus) {
+    els.searchStatus.style.cursor = "pointer";
+    els.searchStatus.title = "Bấm để xem hướng dẫn bật vị trí";
+  }
 
   function enterPickCenterMode() {
     pickCenterMode = true;
