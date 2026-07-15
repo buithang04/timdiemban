@@ -224,9 +224,18 @@ select {
 }
 
 .hero-actions {
-  display: flex;
-  flex-wrap: wrap;
+  display: inline-grid;
+  grid-template-columns: 1fr 1fr;
   gap: 0.75rem;
+  align-items: stretch;
+  max-width: 100%;
+}
+
+.hero-actions .btn {
+  width: 100%;
+  box-sizing: border-box;
+  text-align: center;
+  white-space: nowrap;
 }
 
 /* Hero visual — một khung minh họa hệ thống, ít chữ */
@@ -1739,9 +1748,15 @@ select {
 
 .cta-actions {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 0.65rem;
   flex-shrink: 0;
+  align-items: stretch;
+}
+
+.cta-actions .btn {
+  white-space: nowrap;
+  text-align: center;
 }
 
 .cta-box .btn-primary {
@@ -2076,6 +2091,20 @@ body.consult-modal-open {
     align-items: flex-start;
   }
 
+  .cta-actions {
+    width: 100%;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.55rem;
+  }
+
+  .cta-actions .btn {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 0.7rem 0.7rem;
+    font-size: 0.88rem;
+  }
+
   .section-head-row {
     flex-direction: column;
     align-items: flex-start;
@@ -2120,6 +2149,10 @@ body.consult-modal-open {
 
   .hero {
     padding: 3rem 0 2.5rem;
+  }
+
+  .hero-actions {
+    width: 100%;
   }
 
   .news-rail {
