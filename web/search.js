@@ -28,6 +28,10 @@
     mapsFocusModal: document.getElementById("mapsFocusModal"),
     mapsFocusModalOk: document.getElementById("mapsFocusModalOk"),
     mapsFocusModalClose: document.getElementById("mapsFocusModalClose"),
+    gpsDeniedModal: document.getElementById("gpsDeniedModal"),
+    gpsDeniedModalOk: document.getElementById("gpsDeniedModalOk"),
+    gpsDeniedModalClose: document.getElementById("gpsDeniedModalClose"),
+    gpsDeniedPickCenter: document.getElementById("gpsDeniedPickCenter"),
     mapsAutoFocus: document.getElementById("searchMapsAutoFocus"),
     mapsAutoFocusLabel: document.getElementById("searchMapsAutoFocusLabel"),
     mapsAutoReopen: document.getElementById("searchMapsAutoReopen"),
@@ -657,10 +661,21 @@
     );
   }
 
-  const GPS_DENIED_HINT =
-    "Chrome đang chặn vị trí — bấm biểu tượng định vị (bị gạch) trên thanh địa chỉ → chọn Luôn cho phép → Xong. Hoặc dùng Chọn tâm.";
-  const GPS_ASKING_HINT =
-    "Đang xin vị trí từ Chrome…";
+  const GPS_DENIED_HINT = "Chrome đang chặn vị trí — xem hướng dẫn trong hộp thoại.";
+  const GPS_ASKING_HINT = "Đang xin vị trí từ Chrome…";
+
+  function showGpsDeniedModal() {
+    els.gpsDeniedModal?.classList.remove("hidden");
+  }
+
+  function hideGpsDeniedModal() {
+    els.gpsDeniedModal?.classList.add("hidden");
+  }
+
+  function notifyGpsDenied(err) {
+    showSearchStatus(humanizeGeoError(err) || GPS_DENIED_HINT, "error");
+    showGpsDeniedModal();
+  }
 
   function humanizeGeoError(err) {
     const raw = String(err?.message || err || "");
@@ -695,7 +710,8 @@
     try {
       return await applyGpsCenter(await detectFreshGpsCenter({ force: true }));
     } catch (err) {
-      showSearchStatus(humanizeGeoError(err), "error");
+      if (isGeoDeniedError(err)) notifyGpsDenied(err);
+      else showSearchStatus(humanizeGeoError(err), "error");
       throw err;
     }
   }
@@ -973,7 +989,7 @@
       }
     } catch (err) {
       if (isGeoDeniedError(err)) {
-        showSearchStatus(humanizeGeoError(err), "error");
+        notifyGpsDenied(err);
       } else {
         showSearchStatus(
           err.message || "Cần tọa độ trung tâm — nhập lat/lng hoặc dùng Chọn tâm.",
@@ -1139,7 +1155,17 @@
   });
 
   window.addEventListener("timdiemban:gps-denied", () => {
-    showSearchStatus(GPS_DENIED_HINT, "error");
+    notifyGpsDenied();
+  });
+
+  els.gpsDeniedModalOk?.addEventListener("click", hideGpsDeniedModal);
+  els.gpsDeniedModalClose?.addEventListener("click", hideGpsDeniedModal);
+  els.gpsDeniedModal?.addEventListener("click", (e) => {
+    if (e.target === els.gpsDeniedModal) hideGpsDeniedModal();
+  });
+  els.gpsDeniedPickCenter?.addEventListener("click", () => {
+    hideGpsDeniedModal();
+    enterPickCenterMode();
   });
 
   function enterPickCenterMode() {

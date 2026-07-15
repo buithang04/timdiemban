@@ -1006,6 +1006,95 @@ body.page-winmap .top-sticky {
   max-width: 220px;
 }
 
+/* ── GPS denied help modal ── */
+.gps-denied-modal-box {
+  max-width: 480px;
+  text-align: left;
+}
+
+.gps-denied-icon-wrap {
+  display: flex;
+  justify-content: center;
+  margin: 0 0 12px;
+}
+
+.gps-denied-pin {
+  display: block;
+}
+
+.gps-denied-modal-box h2 {
+  text-align: center;
+  margin-bottom: 10px;
+}
+
+.gps-denied-lead {
+  margin-bottom: 14px;
+}
+
+.gps-denied-steps {
+  margin: 0 0 14px;
+  padding-left: 1.25rem;
+  font-size: 14px;
+  line-height: 1.55;
+  color: #334155;
+}
+
+.gps-denied-steps li {
+  margin-bottom: 0.55rem;
+}
+
+.gps-denied-steps li:last-child {
+  margin-bottom: 0;
+}
+
+.gps-denied-inline-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  vertical-align: -0.25em;
+  width: 1.55rem;
+  height: 1.55rem;
+  margin: 0 0.15rem;
+  border-radius: 6px;
+  border: 1px solid #cbd5e1;
+  background: #f8fafc;
+  color: #475569;
+}
+
+.gps-denied-alt {
+  margin: 0 0 18px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: #64748b;
+}
+
+.gps-denied-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.65rem;
+}
+
+.gps-denied-actions .btn {
+  width: 100%;
+}
+
+.gps-denied-actions .btn-outline {
+  background: #fff;
+  color: #0f172a;
+  border: 1px solid #cbd5e1;
+}
+
+.gps-denied-actions .btn-outline:hover {
+  background: #f8fafc;
+  border-color: #94a3b8;
+}
+
+@media (max-width: 420px) {
+  .gps-denied-actions {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* ── Payment Modal ── */
 .payment-modal {
   position: fixed;
