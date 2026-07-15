@@ -396,28 +396,40 @@
     return parseFloat(String(els.radius?.value || "").replace(",", "."));
   }
 
-  function dispatchMapPreview() {
+  function dispatchMapPreview(opts = {}) {
     const c = readCenterFromForm();
     const radiusKm = radiusKmFromInput();
     if (c && radiusKm > 0) {
       window.dispatchEvent(
         new CustomEvent("timdiemban:map-preview", {
-          detail: { lat: c.lat, lng: c.lng, radius: radiusKm }
+          detail: { lat: c.lat, lng: c.lng, radius: radiusKm, fit: opts.fit !== false }
         })
       );
     }
   }
 
-  function setCenterFields(lat, lng, source, extra = "") {
+  function setCenterFields(lat, lng, source, extra = "", opts = {}) {
     const c = normalizeCenterCoords(lat, lng);
     if (!c) return false;
+    const prevLat = parseCoordInput(els.lat?.value);
+    const prevLng = parseCoordInput(els.lng?.value);
+    const same =
+      Number.isFinite(prevLat) &&
+      Number.isFinite(prevLng) &&
+      Math.abs(prevLat - c.lat) < 1e-7 &&
+      Math.abs(prevLng - c.lng) < 1e-7;
+
     els.lat.value = String(c.lat);
     els.lng.value = String(c.lng);
     centerSource = source;
     lastKnownCenter = { lat: c.lat, lng: c.lng, source, accuracy: null, at: Date.now() };
     els.centerPreview.textContent = `${c.lat}, ${c.lng}${extra ? ` (${extra})` : ""}`;
     els.centerPreview.classList.remove("hidden");
-    dispatchMapPreview();
+
+    // Cùng tọa độ → không preview (tránh nháy)
+    if (!same || opts.forcePreview) {
+      dispatchMapPreview({ fit: opts.fit !== false && !same });
+    }
     return true;
   }
 
@@ -961,8 +973,8 @@
         return;
       }
 
-      // Khóa tâm đã chọn vào form trước khi gửi — không bị đè bởi GPS async
-      setCenterFields(center.lat, center.lng, centerSource || "manual");
+      // Khóa tâm vào form — không force preview nếu đã đúng tọa độ
+      setCenterFields(center.lat, center.lng, centerSource || "manual", "", { fit: false });
 
       const searchParams = {
         keyword,
@@ -998,10 +1010,11 @@
       showSearchStatus(`Tâm: ${center.lat}, ${center.lng} — đang khởi động...`, "info");
       updateSearchProgress(0, "0%");
 
-      // Vẽ vùng tìm theo tâm mới ngay lập tức
+      // Vẽ vùng đúng 1 lần khi bắt đầu tìm
       window.TimDiemBanMap?.setSearchArea?.(
         { lat: center.lat, lng: center.lng },
-        radiusKm
+        radiusKm,
+        { fit: true }
       );
 
       try {
@@ -1165,14 +1178,12 @@
     if (isFormLocked()) return;
     const { lat, lng } = e.detail || {};
     if (lat == null || lng == null) return;
-    setCenterFields(lat, lng, "map_click", "bấm bản đồ");
+    setCenterFields(lat, lng, "map_click", "bấm bản đồ", { fit: true, forcePreview: true });
     showSearchStatus(
       `Tâm: ${Number(lat).toFixed(5)}, ${Number(lng).toFixed(5)} — đã chọn`,
       "success"
     );
     exitPickCenterMode();
-    // Hiện lại vòng bán kính theo tâm mới (không còn lưới/marker phiên cũ)
-    dispatchMapPreview();
   });
 
   // Nút định vị trên bản đồ (user gesture) → đặt tâm GPS + Chrome hỏi quyền nếu cần
@@ -1273,6 +1284,7 @@
     });
   } catch {}
 
+  let previewInputTimer = null;
   [els.lat, els.lng, els.radius].forEach((input) => {
     input?.addEventListener("input", () => {
       const c = readCenterFromForm();
@@ -1280,7 +1292,8 @@
         centerSource = "manual";
         els.centerPreview.textContent = `${c.lat}, ${c.lng} (nhập tay)`;
         els.centerPreview.classList.remove("hidden");
-        dispatchMapPreview();
+        if (previewInputTimer) clearTimeout(previewInputTimer);
+        previewInputTimer = setTimeout(() => dispatchMapPreview({ fit: true }), 280);
       } else {
         els.centerPreview.classList.add("hidden");
       }

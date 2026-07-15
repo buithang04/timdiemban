@@ -1971,6 +1971,15 @@ async function sendAllToWinmapSite() {
   }
 }
 
+let _mapInvalidateTimer = null;
+function scheduleMapInvalidate() {
+  if (_mapInvalidateTimer) return;
+  _mapInvalidateTimer = setTimeout(() => {
+    _mapInvalidateTimer = null;
+    window.TimDiemBanMap?.invalidateSize?.();
+  }, 400);
+}
+
 function updateView() {
   const isRunning = currentSearch?.status === "running";
   const hasData = currentData.length > 0;
@@ -1991,8 +2000,8 @@ function updateView() {
   }
 
   updateRescanBtn();
-  window.TimDiemBanMap?.invalidateSize?.();
-  setTimeout(() => window.dispatchEvent(new Event("resize")), 100);
+  // Không invalidateSize mỗi lần updateView (gây nháy bản đồ khi đang sync)
+  scheduleMapInvalidate();
 }
 
 let extensionMergedCount = 0;
@@ -2078,14 +2087,14 @@ function applyExtensionDataSync(type, payload = {}) {
       sp.gridCells = grid.totalCells;
     }
     if (sp.lat && sp.lng && sp.radius) {
+      // Chỉ fit nếu tâm đổi; sync trước đó đã không vẽ map nữa
       window.TimDiemBanMap?.setSearchArea(
         { lat: sp.lat, lng: sp.lng },
         sp.radius,
-        { gridPoints: sp.gridPoints, cellSizeKm: sp.cellSizeKm }
+        { gridPoints: sp.gridPoints, cellSizeKm: sp.cellSizeKm, fit: true }
       );
-      // Đánh lại trong/ngoài vùng theo tâm mới (điểm cũ vẫn giữ)
-      window.TimDiemBanMap?.refreshMarkers?.(currentData);
       window.TimDiemBanMap?.countInOut?.(currentData);
+      window.TimDiemBanMap?.refreshMarkers?.(currentData);
     }
     updateView();
     return;
@@ -2190,13 +2199,7 @@ function applyExtensionDataSync(type, payload = {}) {
         }
       }
       const sp = payload.searchParams;
-      if (sp.lat && sp.lng && sp.radius) {
-        window.TimDiemBanMap?.setSearchArea(
-          { lat: sp.lat, lng: sp.lng },
-          sp.radius,
-          { gridPoints: sp.gridPoints, cellSizeKm: sp.cellSizeKm }
-        );
-      }
+      // Sync không đụng bản đồ — chỉ cập nhật bảng (tránh nháy tâm/lưới)
     }
     awaitingNewSearchResults = false;
     const incoming = payload.results || [];
@@ -2720,11 +2723,7 @@ els.authForm.addEventListener("submit", async (e) => {
 window.addEventListener("timdiemban:search-starting", (e) => {
   const sp = e.detail || {};
   beginFreshSearchUi(sp);
-  if (sp.lat && sp.lng && sp.radius) {
-    window.TimDiemBanMap?.setSearchArea?.({ lat: sp.lat, lng: sp.lng }, sp.radius);
-    window.TimDiemBanMap?.refreshMarkers?.(currentData);
-    window.TimDiemBanMap?.countInOut?.(currentData);
-  }
+  // Bản đồ: để handleSubmit / "start" vẽ 1 lần — tránh vẽ 2–3 lần liền gây nháy
 });
 
 window.addEventListener("timdiemban:search-status", (e) => {
@@ -2767,7 +2766,7 @@ loadCurrentUser().then(async () => {
       renderSearchInfo(currentSearch);
       const sp = currentSearch;
       if (sp.lat && sp.lng && sp.radius) {
-        window.TimDiemBanMap?.setSearchArea({ lat: sp.lat, lng: sp.lng }, sp.radius);
+        window.TimDiemBanMap?.setSearchArea({ lat: sp.lat, lng: sp.lng }, sp.radius, { fit: true });
       }
     }
     window.TimDiemBanMap?.refreshMarkers(currentData);
@@ -2812,12 +2811,12 @@ window.addEventListener("timdiemban:need-login", () => {
 });
 
 window.addEventListener("timdiemban:map-preview", (e) => {
-  const { lat, lng, radius } = e.detail || {};
+  const { lat, lng, radius, fit } = e.detail || {};
   if (lat != null && lng != null && radius) {
     if (typeof generateSearchGrid === "function" && els.infoGridCells) {
       const grid = generateSearchGrid(lat, lng, radius);
       els.infoGridCells.textContent = String(grid.totalCells);
     }
-    window.TimDiemBanMap?.setSearchArea({ lat, lng }, radius);
+    window.TimDiemBanMap?.setSearchArea({ lat, lng }, radius, { fit: fit !== false });
   }
 });

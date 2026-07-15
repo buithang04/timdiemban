@@ -138,11 +138,14 @@ function pingMapsTabWake(tabId) {
   chrome.tabs.sendMessage(tabId, { action: "KEEPALIVE_TICK" }).catch(() => {});
 }
 
-/** Mở tab Google Maps bình thường (active) — quét ổn định, gửi kết quả trơn tru */
-async function openMapsScrapeTab(url) {
-  const tab = await chrome.tabs.create({ url, active: true });
+/** Mở tab Google Maps — mặc định nền (không cướp cửa sổ). Chỉ focus nếu bật mapsAutoFocus. */
+async function openMapsScrapeTab(url, { focus } = {}) {
+  const shouldFocus = focus === true || (focus !== false && isMapsAutoFocusEnabled());
+  const tab = await chrome.tabs.create({ url, active: shouldFocus });
   scrapeState.mapsWindowId = tab.windowId;
-  await chrome.tabs.update(tab.id, { autoDiscardable: false, active: true }).catch(() => {});
+  await chrome.tabs
+    .update(tab.id, { autoDiscardable: false, active: shouldFocus })
+    .catch(() => {});
   return tab;
 }
 
@@ -206,6 +209,8 @@ async function scrapeKeepAliveTick() {
 }
 
 async function focusMapsTabForSearch() {
+  // Chỉ nhảy cửa sổ khi user bật "Tự chuyển sang tab Google Maps"
+  if (!isMapsAutoFocusEnabled()) return;
   if (!scrapeState.running || !scrapeState.mapsTabId) return;
   try {
     const tab = await chrome.tabs.get(scrapeState.mapsTabId);
@@ -1415,6 +1420,7 @@ async function reopenMapsTabForSearch() {
 
   scrapeState.mapsTabId = tab.id;
   scrapeState.mapsWindowId = tab.windowId;
+  // Giữ nguyên focus theo openMapsScrapeTab — không ép active:true
   await chrome.tabs.update(tab.id, { autoDiscardable: false }).catch(() => {});
   await waitTabComplete(tab.id);
   await sleep(1200);
