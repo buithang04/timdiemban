@@ -134,7 +134,7 @@ async function parseApiResponse(res) {
   if (!ct.includes("application/json")) {
     throw new Error(
       res.status === 404
-        ? `API không tồn tại — hãy khởi động lại server (npm start) và mở trang qua ${(window.TIMDIEMBAN_CONFIG?.APP_ORIGIN || window.location.origin).replace(/\/$/, "")}`
+        ? `API không tồn tại — hãy khởi động lại server (npm start) và mở trang qua ${window.location.origin}`
         : "Máy chủ trả về HTML thay vì JSON — kiểm tra server đang chạy phiên bản mới"
     );
   }
@@ -328,22 +328,10 @@ async function unlockAdmin(adminUser) {
   if (els.adminUserBar) els.adminUserBar.classList.remove("hidden");
   if (els.adminUserEmail) els.adminUserEmail.textContent = adminUser?.email || "";
   try {
-    const cfg = globalThis.TIMDIEMBAN_CONFIG || {};
-    let news = String(cfg.NEWS_ORIGIN || "").replace(/\/+$/, "");
-    try {
-      const origins = await fetch("/api/config/origins").then((r) => (r.ok ? r.json() : null));
-      if (origins?.newsOrigin) news = String(origins.newsOrigin).replace(/\/+$/, "");
-    } catch {
-      /* keep cfg */
-    }
     const link = document.getElementById("adminNewsCmsLink");
     if (link) {
-      if (news) {
-        link.href = `${news}/admin-post-article`;
-        link.classList.remove("hidden");
-      } else {
-        link.classList.add("hidden");
-      }
+      link.href = "/admin-post-article";
+      link.classList.remove("hidden");
     }
   } catch {
     /* ignore */

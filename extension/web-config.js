@@ -29,7 +29,16 @@ function getConfiguredWebOrigins() {
     ) {
       origins.add(`${u.protocol}//www.${u.hostname}${u.port ? `:${u.port}` : ""}`);
     }
+    if (u.hostname === "findmap.vn" || u.hostname.endsWith(".findmap.vn")) {
+      origins.add(`${u.protocol}//findmap.vn`);
+      origins.add(`${u.protocol}//www.findmap.vn`);
+      origins.add(`${u.protocol}//app.findmap.vn`);
+    }
   } catch {}
+  // Alias prod luôn có — popup extension vẫn mở đúng kể cả đang sync local
+  origins.add("https://findmap.vn");
+  origins.add("https://www.findmap.vn");
+  origins.add("https://app.findmap.vn");
   return [...origins];
 }
 

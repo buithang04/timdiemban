@@ -24,48 +24,49 @@
 
       window.FindmapSessionCookie?.setSessionCookie?.();
 
-      const search = stripSlash(
-        origins?.searchOrigin ||
-          origins?.SEARCH_ORIGIN ||
-          globalThis.TIMDIEMBAN_CONFIG?.SEARCH_ORIGIN ||
-          globalThis.TIMDIEMBAN_CONFIG?.APP_ORIGIN ||
-          ""
-      );
-
-      // Reload đúng 1 lần sau khi set cookie — server "/" nhận cookie → trang tìm kiếm
-      if (!search || search === stripSlash(location.origin)) {
-        if (sessionStorage.getItem("findmap_home_reload") === "1") return;
-        sessionStorage.setItem("findmap_home_reload", "1");
-        window.location.reload();
-        return;
-      }
-      window.location.replace(`${search}/`);
+      // Luôn ở lại host hiện tại (app.findmap.vn / findmap.vn) — không nhảy domain cứng.
+      if (sessionStorage.getItem("findmap_home_reload") === "1") return;
+      sessionStorage.setItem("findmap_home_reload", "1");
+      window.location.reload();
     } catch {
       /* ignore */
     }
   }
 
-  /** Gắn APP/NEWS/SEARCH origin từ config hoặc /api/config/origins — không hardcode domain. */
+  /** Gắn link tương đối — không ép https://findmap.vn khi đang mở app.*. */
   function applyOriginLinks(origins) {
-    const search = stripSlash(
+    const pageOrigin = stripSlash(typeof location !== "undefined" ? location.origin : "");
+    const searchCfg = stripSlash(
       origins?.searchOrigin ||
         origins?.SEARCH_ORIGIN ||
         globalThis.TIMDIEMBAN_CONFIG?.SEARCH_ORIGIN ||
         globalThis.TIMDIEMBAN_CONFIG?.APP_ORIGIN ||
-        ""
+        pageOrigin
     );
-    const news = stripSlash(
+    const newsCfg = stripSlash(
       origins?.newsOrigin ||
         origins?.NEWS_ORIGIN ||
         globalThis.TIMDIEMBAN_CONFIG?.NEWS_ORIGIN ||
-        (typeof location !== "undefined" ? location.origin : "")
+        pageOrigin
     );
+
+    function toHref(base, path) {
+      const p = path || "/";
+      if (p.startsWith("http")) return p;
+      const rel = p.startsWith("/") ? p : `/${p}`;
+      // Cùng origin với trang → relative (giữ subdomain đang mở)
+      if (!base || !pageOrigin || base === pageOrigin) return rel;
+      try {
+        if (new URL(base).host === new URL(pageOrigin).host) return rel;
+      } catch {
+        /* fall through */
+      }
+      return `${base}${rel}`;
+    }
 
     document.querySelectorAll("[data-href-search]").forEach((el) => {
       const path = el.getAttribute("data-href-search") || "/";
-      if (!search) return;
-      el.setAttribute("href", path.startsWith("http") ? path : `${search}${path.startsWith("/") ? path : `/${path}`}`);
-      // Đăng nhập / vào app: cùng tab (không mở tab mới)
+      el.setAttribute("href", toHref(searchCfg, path));
       if (path === "/login" || path === "/") {
         el.removeAttribute("target");
         el.removeAttribute("rel");
@@ -74,24 +75,23 @@
 
     document.querySelectorAll("[data-href-news]").forEach((el) => {
       const path = el.getAttribute("data-href-news") || "/";
-      if (!news) return;
-      el.setAttribute("href", path.startsWith("http") ? path : `${news}${path.startsWith("/") ? path : `/${path}`}`);
+      el.setAttribute("href", toHref(newsCfg, path));
     });
 
     const canon = document.querySelector('link[rel="canonical"]');
-    if (canon && news) {
+    if (canon && pageOrigin) {
       let path = location.pathname.replace(/\/+$/, "") || "/";
       if (path === "/gioi-thieu") path = "/";
-      canon.setAttribute("href", `${news}${path}`);
+      canon.setAttribute("href", `${pageOrigin}${path}`);
     }
 
     document.querySelectorAll('meta[property="og:image"]').forEach((meta) => {
       const raw = meta.getAttribute("content") || "";
-      if (raw.startsWith("/") && news) meta.setAttribute("content", `${news}${raw}`);
-      else if (raw.includes("://") && news && /localhost|127\.0\.0\.1|findmap\.app\.chatplus\.io\.vn/i.test(raw)) {
+      if (raw.startsWith("/") && pageOrigin) meta.setAttribute("content", `${pageOrigin}${raw}`);
+      else if (raw.includes("://") && pageOrigin && /localhost|127\.0\.0\.1|findmap\.app\.chatplus\.io\.vn/i.test(raw)) {
         try {
           const u = new URL(raw);
-          meta.setAttribute("content", `${news}${u.pathname}${u.search}`);
+          meta.setAttribute("content", `${pageOrigin}${u.pathname}${u.search}`);
         } catch {
           /* keep */
         }
@@ -101,8 +101,8 @@
     document.querySelectorAll("script[type='application/ld+json']").forEach((el) => {
       try {
         const data = JSON.parse(el.textContent || "{}");
-        if (data?.publisher && search) data.publisher.url = search;
-        if (data && news && !data.url) data.url = `${news}${location.pathname}`;
+        if (data?.publisher) data.publisher.url = pageOrigin || searchCfg;
+        if (data && pageOrigin && !data.url) data.url = `${pageOrigin}${location.pathname}`;
         el.textContent = JSON.stringify(data);
       } catch {
         /* ignore */

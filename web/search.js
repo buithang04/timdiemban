@@ -877,7 +877,7 @@
         window.removeEventListener("message", onMsg);
         reject(
           new Error(
-            `Extension không phản hồi — mở ${(window.TIMDIEMBAN_CONFIG?.APP_ORIGIN || window.location.origin).replace(/\/$/, "")}, reload extension findmap rồi thử lại`
+            `Extension không phản hồi — mở ${window.location.origin}, reload extension findmap rồi thử lại`
           )
         );
       }, 30000);

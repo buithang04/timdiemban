@@ -493,7 +493,30 @@ app.get("/api/packages/vietqr-status", requireAuth, async (req, res) => {
   res.json({ configured: await isVietQrConfigured() });
 });
 
-app.get("/api/config/origins", (_req, res) => {
+/** Origin public theo Host / X-Forwarded-* — để client dùng path tương đối đúng subdomain đang mở. */
+function requestPublicOrigin(req) {
+  const xfProto = String(req.headers["x-forwarded-proto"] || "")
+    .split(",")[0]
+    .trim();
+  const xfHost = String(req.headers["x-forwarded-host"] || "")
+    .split(",")[0]
+    .trim();
+  const host = xfHost || String(req.headers.host || "").trim();
+  if (!host) return "";
+  const proto = xfProto || (req.secure ? "https" : "http");
+  return `${proto}://${host}`.replace(/\/$/, "");
+}
+
+app.get("/api/config/origins", (req, res) => {
+  const page = requestPublicOrigin(req);
+  // Cùng host (nginx chung domain): trả origin đang truy cập — tránh app.* bị ép sang apex.
+  if (page && sameNewsOrigin()) {
+    return res.json({
+      searchOrigin: page,
+      newsOrigin: page,
+      appOrigin: page
+    });
+  }
   res.json({
     searchOrigin: appOrigin,
     newsOrigin,
@@ -1194,8 +1217,11 @@ function sendWebPage(res, file) {
 
 function redirectToNews(req, res) {
   const qs = req.url.includes("?") ? req.url.slice(req.url.indexOf("?")) : "";
-  const dest = `${newsOrigin}${req.path}${qs}`;
-  res.redirect(302, dest);
+  // Cùng domain reverse-proxy: redirect tương đối (giữ app.findmap.vn / findmap.vn).
+  if (sameNewsOrigin()) {
+    return res.redirect(302, `${req.path}${qs}`);
+  }
+  res.redirect(302, `${newsOrigin}${req.path}${qs}`);
 }
 
 function redirectGioiThieuToHome(req, res) {
@@ -1233,7 +1259,8 @@ app.get(/^\/admin-post-/, redirectToNews);
 app.get(/^\/media(\/.*)?$/, redirectToNews);
 app.get(/^\/landing(\/.*)?$/, redirectToNews);
 
-app.get("/robots.txt", (_req, res) => {
+app.get("/robots.txt", (req, res) => {
+  const origin = requestPublicOrigin(req) || newsOrigin;
   const body = [
     "User-agent: *",
     "Allow: /",
@@ -1243,7 +1270,7 @@ app.get("/robots.txt", (_req, res) => {
     "Disallow: /nap-diem",
     "Disallow: /dat-lai-mat-khau",
     "Disallow: /quen-mat-khau",
-    `Sitemap: ${newsOrigin}/sitemap.xml`,
+    `Sitemap: ${origin}/sitemap.xml`,
     ""
   ].join("\n");
   res.setHeader("Cache-Control", "public, max-age=300");
@@ -1280,6 +1307,9 @@ app.get("/", (req, res) => {
     return res.sendFile(landingIndexHtml);
   }
   const qs = req.url.includes("?") ? req.url.slice(req.url.indexOf("?")) : "";
+  if (sameNewsOrigin()) {
+    return res.redirect(302, `/${qs}`);
+  }
   res.redirect(302, `${newsOrigin}/${qs}`);
 });
 

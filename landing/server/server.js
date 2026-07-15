@@ -165,7 +165,32 @@ app.patch("/api/admin/editors/:id", requireCmsAdmin, async (req, res) => {
   }
 });
 
-app.get("/api/config/origins", (_req, res) => {
+function requestPublicOrigin(req) {
+  const xfProto = String(req.headers["x-forwarded-proto"] || "")
+    .split(",")[0]
+    .trim();
+  const xfHost = String(req.headers["x-forwarded-host"] || "")
+    .split(",")[0]
+    .trim();
+  const host = xfHost || String(req.headers.host || "").trim();
+  if (!host) return "";
+  const proto = xfProto || (req.secure ? "https" : "http");
+  return `${proto}://${host}`.replace(/\/$/, "");
+}
+
+function sameSearchNewsHost() {
+  try {
+    return new URL(searchOrigin).host === new URL(appOrigin).host;
+  } catch {
+    return searchOrigin.replace(/\/+$/, "") === appOrigin.replace(/\/+$/, "");
+  }
+}
+
+app.get("/api/config/origins", (req, res) => {
+  const page = requestPublicOrigin(req);
+  if (page && sameSearchNewsHost()) {
+    return res.json({ newsOrigin: page, searchOrigin: page });
+  }
   res.json({ newsOrigin: appOrigin, searchOrigin });
 });
 
@@ -245,15 +270,26 @@ app.use("/tin-tuc", express.static(tinTucDir, { index: false, fallthrough: true 
 app.use("/landing", express.static(publicLandingDir));
 app.use("/assets", express.static(path.join(webDir, "assets")));
 
-/** Config browser — luôn theo runtime NEWS_ORIGIN / SEARCH_ORIGIN (không cứng domain). */
-app.get("/app-config.js", (_req, res) => {
+/** Config browser — theo Host đang mở (path tương đối), không cứng findmap.vn. */
+app.get("/app-config.js", (req, res) => {
+  const page = requestPublicOrigin(req);
+  const search = page && sameSearchNewsHost() ? page : searchOrigin;
+  const news = page && sameSearchNewsHost() ? page : appOrigin;
   const body = `/**
- * Runtime app-config — từ NEWS_ORIGIN / SEARCH_ORIGIN của server landing.
+ * Runtime app-config — theo Host request (giữ app.findmap.vn / findmap.vn).
  */
+function __findmapPageOrigin(fallback) {
+  try {
+    if (typeof location !== "undefined" && /^https?:$/i.test(location.protocol || "")) {
+      return location.origin;
+    }
+  } catch {}
+  return String(fallback || "").replace(/\\/+$/, "");
+}
 const TIMDIEMBAN_CONFIG = {
-  APP_ORIGIN: ${JSON.stringify(searchOrigin)},
-  NEWS_ORIGIN: ${JSON.stringify(appOrigin)},
-  SEARCH_ORIGIN: ${JSON.stringify(searchOrigin)},
+  APP_ORIGIN: __findmapPageOrigin(${JSON.stringify(search)}),
+  NEWS_ORIGIN: __findmapPageOrigin(${JSON.stringify(news)}),
+  SEARCH_ORIGIN: __findmapPageOrigin(${JSON.stringify(search)}),
   MAPS_AUTO_FOCUS_MINUTES: 2,
   MAPS_AUTO_REOPEN_MAX: 5,
   EXTENSION_INSTALL_URL: ${JSON.stringify(String(process.env.EXTENSION_INSTALL_URL || rootAppConfig.EXTENSION_INSTALL_URL || ""))}

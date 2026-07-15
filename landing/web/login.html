@@ -108,23 +108,12 @@
     const form = document.getElementById("loginForm");
     const errEl = document.getElementById("loginError");
 
-    function stripSlash(o) {
-      return String(o || "").replace(/\/+$/, "");
-    }
-
-    function applySearchLoginHref(searchOrigin) {
+    function applySearchLoginHref() {
       const a = document.getElementById("searchLoginLink");
-      const search = stripSlash(searchOrigin);
-      if (a && search) a.href = `${search}/login`;
+      if (a) a.href = "/login";
     }
 
-    applySearchLoginHref(globalThis.TIMDIEMBAN_CONFIG?.SEARCH_ORIGIN || globalThis.TIMDIEMBAN_CONFIG?.APP_ORIGIN);
-
-    fetch("/api/config/origins")
-      .then((r) => r.json())
-      .then((d) => applySearchLoginHref(d.searchOrigin))
-      .catch(() => {});
-
+    applySearchLoginHref();
     if (localStorage.getItem(TOKEN_KEY)) {
       location.replace("/admin-post-article");
     }
