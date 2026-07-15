@@ -1,6 +1,6 @@
 /**
- * AUTO: gắn bridge trên mọi domain Findmap — không cần bấm popup.
- * Cần host_permissions rộng (http và https mọi host) — xin lúc cài/reload extension.
+ * Chỉ nhớ origin Findmap. Bridge gắn qua manifest content_scripts —
+ * không registerContentScripts / không executeScript (tránh "fetching the script").
  */
 const EXTRA_WEB_ORIGINS_KEY = "timdiemban_extra_web_origins";
 const PREFERRED_WEB_ORIGIN_KEY = "timdiemban_preferred_web_origin";
@@ -69,7 +69,6 @@ async function hasBroadHostAccess() {
   try {
     return await chrome.permissions.contains({ origins: BROAD_ORIGINS });
   } catch {
-    // host_permissions bắt buộc trong manifest cũng thỏa
     return true;
   }
 }
@@ -105,36 +104,21 @@ async function requestBroadHostAccess() {
   }
 }
 
-async function registerBridgeContentScript() {
-  if (!chrome.scripting?.registerContentScripts) return;
+/** Gỡ sạch mọi content script đăng ký động còn sót. */
+async function cleanupStaleRegisteredScripts() {
+  if (!chrome.scripting?.getRegisteredContentScripts) return;
   try {
-    await chrome.scripting.unregisterContentScripts({ ids: [BRIDGE_SCRIPT_ID] }).catch(() => {});
-    await chrome.scripting.registerContentScripts([
-      {
-        id: BRIDGE_SCRIPT_ID,
-        js: ["web-bridge.js"],
-        matches: BROAD_ORIGINS,
-        runAt: "document_idle",
-        persistAcrossSessions: true
-      }
-    ]);
-  } catch (err) {
-    console.warn("[findmap] registerContentScripts:", err?.message || err);
-  }
-}
-
-async function injectBridgeIntoTab(tabId) {
-  if (!tabId) return false;
-  try {
-    await chrome.scripting.executeScript({
-      target: { tabId },
-      files: ["web-bridge.js"]
-    });
-    return true;
-  } catch (err) {
-    console.warn("[findmap] inject bridge:", err?.message || err);
-    return false;
-  }
+    const all = await chrome.scripting.getRegisteredContentScripts();
+    const ids = (all || [])
+      .filter(
+        (s) =>
+          s.id === BRIDGE_SCRIPT_ID ||
+          String(s.id || "").startsWith("timdiemban-bridge-") ||
+          (s.js || []).includes("web-bridge.js")
+      )
+      .map((s) => s.id);
+    if (ids.length) await chrome.scripting.unregisterContentScripts({ ids });
+  } catch {}
 }
 
 async function tabLooksLikeFindmapApp(tabId) {
@@ -158,41 +142,42 @@ async function tabLooksLikeFindmapApp(tabId) {
   }
 }
 
+async function pingBridgeOnTab(tabId) {
+  if (!tabId) return false;
+  try {
+    const pong = await chrome.tabs.sendMessage(tabId, { action: "PING_BRIDGE" });
+    return !!pong?.ok;
+  } catch {
+    return false;
+  }
+}
+
 async function ensureBridgeOnTab(tab) {
   const origin = normalizeOrigin(tab?.url);
   if (!origin) return { ok: false, error: "Không có tab http(s)" };
   if (isMapsOrChromeUrl(tab.url)) {
     return { ok: false, error: "Tab Maps/hệ thống — bỏ qua" };
   }
-
   await rememberWebOrigin(origin);
-  await registerBridgeContentScript();
-  const injected = await injectBridgeIntoTab(tab.id);
-  return injected
-    ? { ok: true, origin, auto: true }
-    : { ok: false, error: "Không inject được bridge", origin };
+  if (await pingBridgeOnTab(tab.id)) {
+    return { ok: true, origin, auto: true };
+  }
+  return {
+    ok: false,
+    origin,
+    error: "Bridge chưa gắn — F5 trang sau khi reload extension"
+  };
 }
 
 async function grantBroadAndResync() {
   const ok = await requestBroadHostAccess();
-  if (!ok) return { ok: false, error: "Chưa có quyền mọi domain — Reload extension và chấp nhận quyền" };
-  await registerBridgeContentScript();
-  const tabs = await chrome.tabs.query({ url: BROAD_ORIGINS });
-  let connected = 0;
-  for (const tab of tabs) {
-    if (isMapsOrChromeUrl(tab.url)) continue;
-    if (await tabLooksLikeFindmapApp(tab.id)) {
-      if (await injectBridgeIntoTab(tab.id)) {
-        await rememberWebOrigin(tab.url);
-        connected += 1;
-      }
-    }
-  }
-  return { ok: true, connected, broad: true };
+  if (!ok) return { ok: false, error: "Chưa có quyền mọi domain" };
+  await cleanupStaleRegisteredScripts();
+  return { ok: true, broad: true };
 }
 
 async function syncRegisteredBridgeScripts() {
-  await registerBridgeContentScript();
+  await cleanupStaleRegisteredScripts();
 }
 
 async function inspectActiveTab() {
@@ -219,45 +204,12 @@ async function inspectActiveTab() {
   };
 }
 
-/** Luôn chạy ngầm: thấy trang Findmap → gắn bridge */
-async function maybeAutoInjectBridge(tabId, url) {
-  if (isMapsOrChromeUrl(url)) return;
-  const origin = normalizeOrigin(url);
-  if (!origin) return;
-
-  const known = new Set([getAppOrigin(), ...(await getExtraWebOrigins())]);
-  if (known.has(origin)) {
-    await injectBridgeIntoTab(tabId);
-    return;
-  }
-
-  const looks = await tabLooksLikeFindmapApp(tabId);
-  if (!looks) return;
-  await rememberWebOrigin(origin);
-  await injectBridgeIntoTab(tabId);
-}
+cleanupStaleRegisteredScripts().catch(() => {});
 
 chrome.runtime.onInstalled.addListener(() => {
-  syncRegisteredBridgeScripts().catch(() => {});
-  // Reload tab Findmap đang mở — gỡ content-script orphan (gây "context invalidated")
-  chrome.tabs.query({ url: BROAD_ORIGINS }).then(async (tabs) => {
-    for (const tab of tabs) {
-      if (!tab?.id || isMapsOrChromeUrl(tab.url)) continue;
-      try {
-        if (await tabLooksLikeFindmapApp(tab.id)) {
-          await rememberWebOrigin(tab.url);
-          await chrome.tabs.reload(tab.id);
-        }
-      } catch {}
-    }
-  }).catch(() => {});
+  cleanupStaleRegisteredScripts().catch(() => {});
 });
 
 chrome.runtime.onStartup.addListener(() => {
-  syncRegisteredBridgeScripts().catch(() => {});
-});
-
-chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  if (changeInfo.status !== "complete") return;
-  maybeAutoInjectBridge(tabId, tab?.url || changeInfo.url).catch(() => {});
+  cleanupStaleRegisteredScripts().catch(() => {});
 });

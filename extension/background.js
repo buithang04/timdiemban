@@ -2330,7 +2330,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         if (originHint && !tab?.url) {
           await rememberWebOrigin(originHint);
         }
-        const result = await ensureBridgeOnTab(tab);
+        // Popup: ping trước, chỉ reload nếu bridge chết
+        const result = await ensureBridgeOnTab(tab, { forceReload: false });
         if (result.ok && result.origin) {
           try {
             await chrome.tabs.sendMessage(tab.id, {
@@ -2597,8 +2598,7 @@ async function handleStartSearch(params) {
   if (params?.webUrl) {
     try {
       await rememberWebOrigin(params.webUrl);
-      const preTab = await findWebTab(params.webUrl);
-      if (preTab) await ensureBridgeOnTab(preTab);
+      // Không reload tab lúc START_SEARCH — bridge đã có từ manifest content_scripts
     } catch {}
   }
 

@@ -2,7 +2,6 @@
   "manifest_version": 3,
   "name": "Findmap Extension",
   "version": "0.0.1",
-  "description": "Cào dữ liệu Google Maps — tự kết nối domain Findmap (vd. https://app.findmap.vn)",
   "permissions": [
     "activeTab",
     "tabs",
@@ -14,6 +13,12 @@
   ],
   "host_permissions": [
     "https://www.google.com/maps/*",
+    "https://findmap.vn/*",
+    "https://www.findmap.vn/*",
+    "https://app.findmap.vn/*",
+    "https://*.findmap.vn/*",
+    "http://localhost/*",
+    "http://127.0.0.1/*",
     "http://*/*",
     "https://*/*"
   ],
@@ -37,8 +42,12 @@
     },
     {
       "matches": [
-        "http://*/*",
-        "https://*/*"
+        "https://findmap.vn/*",
+        "https://www.findmap.vn/*",
+        "https://app.findmap.vn/*",
+        "https://*.findmap.vn/*",
+        "http://localhost/*",
+        "http://127.0.0.1/*"
       ],
       "js": [
         "web-bridge.js"

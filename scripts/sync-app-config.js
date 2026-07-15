@@ -61,9 +61,10 @@ function collectWebUrlPatterns(...origins) {
     } catch {}
   }
   // Alias cũ + prod mặc định — tránh miss khi sync từ env local
+  patterns.add("https://findmap.vn/*");
+  patterns.add("https://www.findmap.vn/*");
   patterns.add("https://app.findmap.vn/*");
   patterns.add("https://*.findmap.vn/*");
-  patterns.add("https://findmap.vn/*");
   patterns.add("https://findmap.app.chatplus.io.vn/*");
   // Dev local luôn được phép
   patterns.add("http://localhost:3000/*");
@@ -157,13 +158,36 @@ function syncManifest() {
   const manifestPath = path.join(root, "extension", "manifest.json");
   const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
 
-  // Mọi domain Findmap: luôn cho phép http/https (chạy ngầm, không cần kích hoạt tay)
-  manifest.host_permissions = ["https://www.google.com/maps/*", "http://*/*", "https://*/*"];
+  // Luôn có prod findmap.vn + localhost (kể cả khi .env đang trỏ local)
+  const bridgeMatches = [
+    "https://findmap.vn/*",
+    "https://www.findmap.vn/*",
+    "https://app.findmap.vn/*",
+    "https://*.findmap.vn/*",
+    "http://localhost/*",
+    "http://127.0.0.1/*"
+  ];
+
+  const app = stripSlash(cfg.APP_ORIGIN);
+  if (app && /^https?:\/\//i.test(app) && !/localhost|127\.0\.0\.1/i.test(app)) {
+    try {
+      bridgeMatches.unshift(`${new URL(app).origin}/*`);
+    } catch {}
+  }
+
+  manifest.host_permissions = [
+    "https://www.google.com/maps/*",
+    ...bridgeMatches,
+    "http://*/*",
+    "https://*/*"
+  ];
+  manifest.host_permissions = [...new Set(manifest.host_permissions)];
   delete manifest.optional_host_permissions;
+  if ("description" in manifest) delete manifest.description;
 
   const bridge = manifest.content_scripts.find((s) => (s.js || []).includes("web-bridge.js"));
   if (bridge) {
-    bridge.matches = ["http://*/*", "https://*/*"];
+    bridge.matches = [...new Set(bridgeMatches)];
   }
 
   const maps = manifest.content_scripts.find((s) => (s.js || []).includes("content.js"));
@@ -171,10 +195,8 @@ function syncManifest() {
     maps.matches = ["https://www.google.com/maps/*"];
   }
 
-  manifest.description = `Cào dữ liệu Google Maps — tự kết nối domain Findmap (vd. ${stripSlash(cfg.APP_ORIGIN)})`;
-
   fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + "\n", "utf8");
-  console.log("[sync-config] manifest host_permissions: maps + http://*/* + https://*/*");
+  console.log("[sync-config] manifest bridge matches:", bridge?.matches?.join(", "));
 }
 
 syncCopies();
