@@ -924,10 +924,8 @@
       return;
     }
 
-    // Xin GPS ngay trong gesture bấm Tìm kiếm (ngầm — không thêm panel/nút trong form).
-    // - Chưa có lat/lng: bắt buộc chờ GPS (Chrome hỏi trên thanh địa chỉ nếu còn "prompt")
-    // - Đã có lat/lng: vẫn kick GPS trong cùng gesture để Chrome kịp hiện UI nếu còn hỏi được;
-    //   không chặn luồng tìm. Đã "denied": Chrome không mở panel (giới hạn trình duyệt).
+    // Xin GPS chỉ khi form chưa có tọa độ.
+    // Đã chọn tâm (map/manual): tuyệt đối không chạy GPS — tránh GPS Hà Nội đè tâm Bắc Ninh.
     let center = readCenterFromForm();
     let gpsPromise = null;
 
@@ -936,8 +934,8 @@
         showSearchStatus("Trình duyệt không hỗ trợ GPS — nhập lat/lng hoặc dùng Chọn tâm.", "error");
         return;
       }
-    } else {
-      if (!center) showSearchStatus(GPS_ASKING_HINT, "info");
+    } else if (!center) {
+      showSearchStatus(GPS_ASKING_HINT, "info");
       gpsPromise = detectFreshGpsCenter({ force: true });
     }
 
@@ -956,19 +954,15 @@
           else showSearchStatus(humanizeGeoError(err), "error");
           return;
         }
-      } else if (gpsPromise) {
-        // Không await — để Chrome có thể hiện hộp thoại trong lúc tìm chạy
-        gpsPromise
-          .then((c) => {
-            if (c) window.TimDiemBanMap?.focusPoint?.(c.lat, c.lng);
-          })
-          .catch(() => {});
       }
 
       if (!center) {
         showSearchStatus("Tọa độ không hợp lệ (lat: -90..90, lng: -180..180).", "error");
         return;
       }
+
+      // Khóa tâm đã chọn vào form trước khi gửi — không bị đè bởi GPS async
+      setCenterFields(center.lat, center.lng, centerSource || "manual");
 
       const searchParams = {
         keyword,
@@ -984,6 +978,11 @@
         mapsAutoReopen: isMapsAutoReopenChecked()
       };
 
+      // Xóa bảng/marker phiên cũ ngay (trước cả khi extension trả "start")
+      window.dispatchEvent(
+        new CustomEvent("timdiemban:search-starting", { detail: searchParams })
+      );
+
       saveLastSearch({
         keyword,
         radius: radiusKm,
@@ -998,6 +997,12 @@
       lastKnownMergedCount = 0;
       showSearchStatus(`Tâm: ${center.lat}, ${center.lng} — đang khởi động...`, "info");
       updateSearchProgress(0, "0%");
+
+      // Vẽ vùng tìm theo tâm mới ngay lập tức
+      window.TimDiemBanMap?.setSearchArea?.(
+        { lat: center.lat, lng: center.lng },
+        radiusKm
+      );
 
       try {
         await requestStartSearch(searchParams);
@@ -1166,6 +1171,8 @@
       "success"
     );
     exitPickCenterMode();
+    // Hiện lại vòng bán kính theo tâm mới (không còn lưới/marker phiên cũ)
+    dispatchMapPreview();
   });
 
   // Nút định vị trên bản đồ (user gesture) → đặt tâm GPS + Chrome hỏi quyền nếu cần
@@ -1216,6 +1223,8 @@
       els.btnPickCenter.classList.add("active");
       els.btnPickCenter.textContent = "Đang chọn…";
     }
+    // Ẩn vòng bán kính / lưới / marker phiên cũ để dễ bấm chọn tâm mới
+    window.TimDiemBanMap?.clearAll?.();
     showSearchStatus("Bấm vào vị trí trên bản đồ để chọn tâm tìm kiếm", "info");
     document.body.classList.add("picking-center");
   }
@@ -1234,6 +1243,8 @@
       if (isFormLocked()) return;
       if (pickCenterMode) {
         exitPickCenterMode();
+        // Hủy chọn → vẽ lại vùng theo lat/lng đang có trên form (nếu có)
+        dispatchMapPreview();
         showSearchStatus("Đã tắt chế độ chọn tâm", "info");
       } else {
         enterPickCenterMode();

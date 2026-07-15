@@ -2595,6 +2595,30 @@ async function handleStartSearch(params) {
 
   await ensureReadyForNewSearch();
 
+  // Xóa snapshot/checkpoint phiên cũ — tránh sync lại điểm Hà Nội vào lượt Bắc Ninh
+  try {
+    await clearScrapeCheckpoint();
+    await chrome.storage.local.remove([
+      "pendingComplete",
+      "pendingSearchSync",
+      "activeSearch",
+      SCRAPE_CHECKPOINT_KEY,
+      PENDING_SYNC_KEY
+    ]);
+  } catch {}
+  if (!scrapeState.running) {
+    scrapeState.mergedPlaces = new Map();
+    scrapeState.completedCells = new Set();
+    scrapeState.gridPoints = [];
+    scrapeState.searchParams = null;
+    scrapeState.gridIndex = 0;
+    scrapeState.totalCells = 0;
+    scrapeState.phase = "grid";
+    lastSyncedMergedCount = 0;
+    lastForceSyncAt = 0;
+    pointsFinalized = false;
+  }
+
   if (params?.webUrl) {
     try {
       await rememberWebOrigin(params.webUrl);

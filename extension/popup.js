@@ -46,7 +46,7 @@ function clearScrapeLog() {
 function getWebUrl() {
   const fromInput = document.getElementById("webUrl")?.value?.trim().replace(/\/$/, "");
   const fromConfig = String(globalThis.TIMDIEMBAN_CONFIG?.APP_ORIGIN || "").replace(/\/$/, "");
-  return fromInput || fromConfig || "http://localhost:3000";
+  return fromInput || fromConfig || "https://findmap.vn";
 }
 
 async function loadSession() {

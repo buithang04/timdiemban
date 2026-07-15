@@ -193,10 +193,9 @@
     markerByKey.clear();
   }
 
-  function clearAll() {
+  function clearSearchAreaOverlays() {
     if (!map) return;
     layerGrids?.clearLayers();
-    clearMarkers();
     if (layerCircle) {
       map.removeLayer(layerCircle);
       layerCircle = null;
@@ -207,6 +206,12 @@
     }
     searchCenter = null;
     searchRadiusKm = 0;
+  }
+
+  function clearAll() {
+    if (!map) return;
+    clearSearchAreaOverlays();
+    clearMarkers();
   }
 
   function escapeHtml(str) {
@@ -283,6 +288,7 @@
     upsertMarker,
     refreshMarkers,
     clearMarkers,
+    clearSearchAreaOverlays,
     clearAll,
     countInOut,
     isInsideRadius,

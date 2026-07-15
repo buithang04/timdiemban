@@ -3,7 +3,7 @@
  */
 function getAppOrigin() {
   const origin = String(globalThis.TIMDIEMBAN_CONFIG?.APP_ORIGIN || "").replace(/\/$/, "");
-  return origin || "http://localhost:3000";
+  return origin || "https://findmap.vn";
 }
 
 function getAppOriginLabel() {

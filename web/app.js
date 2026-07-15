@@ -696,6 +696,29 @@ function clearResultsForNewSearch() {
   sentKeys.clear();
   currentPage = 1;
   awaitingNewSearchResults = false;
+  extensionMergedCount = 0;
+  window.TimDiemBanMap?.clearMarkers?.();
+  if (els.resultsBody) els.resultsBody.innerHTML = "";
+  if (els.infoTotal) els.infoTotal.textContent = "0";
+  try {
+    saveResultsToStorage(true);
+  } catch {}
+}
+
+/** Bắt đầu tìm mới — xóa bảng cũ ngay, không chờ item đầu tiên. */
+function beginFreshSearchUi(searchParams) {
+  clearResultsForNewSearch();
+  if (searchParams) {
+    currentSearch = {
+      ...searchParams,
+      status: "running",
+      startedAt: new Date().toISOString()
+    };
+  }
+  if (els.loadingState) els.loadingState.classList.remove("hidden");
+  if (els.emptyState) els.emptyState.classList.add("hidden");
+  if (els.tableSection) els.tableSection.classList.add("hidden");
+  updateView();
 }
 
 function ensureSearchSession(search) {
@@ -2048,16 +2071,11 @@ function applyExtensionDataSync(type, payload = {}) {
       currentUser = payload.user;
       updateAuthUI();
     }
-    ensureSearchSession(payload.searchParams);
-    currentSearch = {
-      ...payload.searchParams,
-      status: "running",
-      startedAt: new Date().toISOString()
-    };
-    awaitingNewSearchResults = true;
-    extensionMergedCount = 0;
-    liveProgressText = "Bắt đầu tìm kiếm...";
     const sp = payload.searchParams || {};
+    // Xóa dữ liệu phiên cũ ngay khi lượt tìm mới bắt đầu (tránh điểm Hà Nội còn hiện khi tìm Bắc Ninh)
+    beginFreshSearchUi(sp);
+    awaitingNewSearchResults = false;
+    liveProgressText = "Bắt đầu tìm kiếm...";
     if (els.infoGridCells && sp.gridCells) {
       els.infoGridCells.textContent = String(sp.gridCells);
     } else if (els.infoGridCells && sp.radius && typeof generateSearchGrid === "function") {
@@ -2153,8 +2171,16 @@ function applyExtensionDataSync(type, payload = {}) {
 
   if (type === "sync") {
     const search = payload.searchParams || currentSearch;
+    const syncSearchId = payload.searchParams?.searchId || search?.searchId;
+    // Sync thuộc phiên khác → bỏ qua (tránh đổ điểm Hà Nội vào lượt Bắc Ninh)
+    if (
+      syncSearchId &&
+      currentSearch?.searchId &&
+      syncSearchId !== currentSearch.searchId
+    ) {
+      return;
+    }
     ensureSearchSession(search);
-    const syncSearchId = payload.searchParams?.searchId;
     if (payload.searchParams) {
       if (!currentSearch || currentSearch.status !== "running") {
         if (!currentData.length || !syncSearchId || syncSearchId !== currentSearch?.searchId) {
@@ -2703,6 +2729,14 @@ els.authForm.addEventListener("submit", async (e) => {
   } catch (err) {
     els.authError.textContent = err.message;
     els.authError.classList.remove("hidden");
+  }
+});
+
+window.addEventListener("timdiemban:search-starting", (e) => {
+  beginFreshSearchUi(e.detail || null);
+  const sp = e.detail || {};
+  if (sp.lat && sp.lng && sp.radius) {
+    window.TimDiemBanMap?.setSearchArea?.({ lat: sp.lat, lng: sp.lng }, sp.radius);
   }
 });
 
