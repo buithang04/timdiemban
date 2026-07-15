@@ -1,6 +1,6 @@
 (function () {
   // Bump version mỗi lần sửa content — background sẽ reinject nếu Maps còn bản cũ
-  const CONTENT_VERSION = 51;
+  const CONTENT_VERSION = 52;
   if (window.__timDiemBanLoaded && window.__timDiemBanVersion === CONTENT_VERSION) return;
   window.__timDiemBanLoaded = true;
   window.__timDiemBanVersion = CONTENT_VERSION;
@@ -367,7 +367,7 @@
     return (io?.textContent || "").trim();
   }
 
-  /** Panel Tổng quan chứa button address/phone của quán đang mở */
+  /** Panel Tổng quan chứa button address/phone/website của quán đang mở */
   function findOverviewContactRoot() {
     const h1 = findDetailPaneH1();
     if (!h1) return null;
@@ -377,7 +377,7 @@
     for (let i = 0; i < 28 && node; i++) {
       if (node.closest('[role="feed"]')) break;
       const hasContact = node.querySelector(
-        'button[data-item-id="address"], button[data-item-id^="address"], button[data-item-id^="phone:"]'
+        'button[data-item-id="address"], button[data-item-id^="address"], button[data-item-id^="phone:"], a[data-item-id="authority"], a[data-item-id^="authority"], a[aria-label*="Trang web"], a[aria-label*="Website"]'
       );
       if (hasContact) root = node;
       node = node.parentElement;
@@ -745,9 +745,21 @@
 
       const needPhone = normalizePhone(bestPhone).length < 9 && !phoneMissing;
       const needAddr = !bestAddr && !addrMissing;
-      if (!needPhone && !needAddr) break;
-      if (!needAddr && addressLooksComplete(bestAddr) && !needPhone) break;
-      if (!needAddr && addressLooksComplete(bestAddr) && normalizePhone(bestPhone).length >= 9) break;
+      // Website thường hiện sau address/phone — chờ thêm ngắn nếu vẫn trống
+      const needWeb =
+        !bestWebsite &&
+        (!settled || overviewContactButtonExists("website") || Date.now() - fieldsSeenAt < settleTime + 900);
+
+      if (!needPhone && !needAddr && !needWeb) break;
+      if (!needAddr && addressLooksComplete(bestAddr) && !needPhone && bestWebsite) break;
+      if (
+        !needAddr &&
+        addressLooksComplete(bestAddr) &&
+        normalizePhone(bestPhone).length >= 9 &&
+        (bestWebsite || Date.now() - fieldsSeenAt > settleTime + 900)
+      ) {
+        break;
+      }
 
       if (revealRound < 6 && Date.now() - start > 300 + revealRound * 500) {
         await revealAddressIntoView(contactRoot);
@@ -1503,16 +1515,38 @@
       if (u.hostname.includes("google.") && u.searchParams.has("q")) {
         const q = u.searchParams.get("q");
         if (q && /^https?:\/\//i.test(q)) return q;
+        if (q && q.includes(".") && !/\s/.test(q) && !/google\.com\/maps/i.test(q)) {
+          return q.startsWith("http") ? q : `https://${q}`;
+        }
       }
-      if (/^https?:\/\//i.test(u.href) && !u.hostname.includes("google.com/maps")) {
+      // URL đích thật (không phải Maps) — hostname không chứa path /maps
+      if (/^https?:\/\//i.test(u.href) && !/google\.[^/]*$/i.test(u.hostname)) {
         return u.href;
       }
+      if (/^https?:\/\//i.test(u.href) && !/\/maps(\/|$)/i.test(u.pathname)) {
+        // google.com ngoài /maps (hiếm) — bỏ qua, chỉ nhận domain ngoài
+        if (!u.hostname.includes("google.")) return u.href;
+      }
     } catch {}
-    return href.startsWith("http") ? href : "";
+    if (/^https?:\/\//i.test(href) && !/google\.[^/]*\/maps/i.test(href)) return href;
+    return "";
+  }
+
+  function normalizeWebsiteUrl(raw) {
+    const s = String(raw || "").trim();
+    if (!s) return "";
+    if (/google\.[^/]*\/maps/i.test(s)) return "";
+    const unwrapped = unwrapGoogleUrl(s) || s;
+    if (!unwrapped || /google\.[^/]*\/maps/i.test(unwrapped)) return "";
+    if (/^https?:\/\//i.test(unwrapped)) return unwrapped;
+    if (unwrapped.includes(".") && !/\s/.test(unwrapped)) {
+      return `https://${unwrapped.replace(/^\/+/, "")}`;
+    }
+    return "";
   }
 
   function readWebsite(scope) {
-    const root = scope || document;
+    const root = scope || getDetailPane() || document;
     const selectors = [
       'a.CsEnBe[data-item-id="authority"]',
       'a[data-item-id="authority"]',
@@ -1520,38 +1554,59 @@
       'button[data-item-id="authority"]',
       'button[data-item-id^="authority"]',
       'a[aria-label^="Trang web:"]',
-      'a[aria-label^="Website:"]'
+      'a[aria-label^="Website:"]',
+      'a[aria-label*="Trang web"]',
+      'a[aria-label*="Website"]',
+      'a[data-tooltip="Mở trang web"]'
     ];
     for (const sel of selectors) {
       for (const el of root.querySelectorAll(sel)) {
         if (isInSearchFeed(el)) continue;
         const href = el.getAttribute("href") || el.getAttribute("data-url") || "";
-        const unwrapped = unwrapGoogleUrl(href);
-        if (unwrapped && !/google\.(com|com\.[a-z]+|co\.[a-z]+)\/maps/i.test(unwrapped)) {
-          return unwrapped;
-        }
+        const fromHref = normalizeWebsiteUrl(href);
+        if (fromHref) return fromHref;
+
         const label = (el.getAttribute("aria-label") || "").trim();
         const fromLabel = label.replace(/^(Trang web|Website)\s*:\s*/i, "").trim();
-        if (fromLabel && fromLabel.includes(".") && !/google\.com\/maps/i.test(fromLabel)) {
-          return /^https?:\/\//i.test(fromLabel) ? fromLabel : `https://${fromLabel.replace(/\s+/g, "")}`;
-        }
-        const io = el.querySelector('[class*="fontBody"], [class*="Io6YTe"]') || el;
-        const text = io?.textContent?.trim() || el.textContent?.trim() || "";
-        if (text && /^https?:\/\//i.test(text)) return text;
-        if (text && text.includes(".") && !text.includes("google.com")) {
-          return text.startsWith("http") ? text : `https://${text.replace(/\s+/g, "")}`;
-        }
+        const labeled = normalizeWebsiteUrl(fromLabel);
+        if (labeled) return labeled;
+
+        const io = el.querySelector(".Io6YTe, [class*='Io6YTe'], [class*='fontBody']") || el;
+        const text = (io?.textContent || el.textContent || "").trim();
+        const fromText = normalizeWebsiteUrl(text);
+        if (fromText) return fromText;
       }
     }
+    // Nút "Mở trang web" cạnh authority (cùng khối RcCsl)
     for (const a of root.querySelectorAll('a[href^="http"]')) {
       if (a.closest('[role="feed"]') || isInSearchFeed(a)) continue;
-      const label = (a.getAttribute("aria-label") || "").toLowerCase();
-      if (label.includes("website") || label.includes("trang web")) {
-        const u = unwrapGoogleUrl(a.href);
-        if (u && !/google\.(com|com\.[a-z]+|co\.[a-z]+)\/maps/i.test(u)) return u;
+      const label = (a.getAttribute("aria-label") || a.getAttribute("data-tooltip") || "").toLowerCase();
+      if (label.includes("mở trang web") || label.includes("open website") || label.includes("website") || label.includes("trang web")) {
+        const u = normalizeWebsiteUrl(a.getAttribute("href") || a.href || "");
+        if (u) return u;
       }
     }
     return "";
+  }
+
+  async function waitForWebsite(maxMs = 1600, scope = null) {
+    const start = Date.now();
+    let best = "";
+    while (Date.now() - start < maxMs) {
+      const pane = scope || findOverviewContactRoot() || getDetailPane();
+      best = readWebsite(pane) || best;
+      if (best) return best;
+      // Website thường nằm thấp hơn trong panel — scroll nhẹ vùng liên hệ
+      try {
+        const root = findOverviewContactRoot() || pane;
+        const link =
+          root?.querySelector('a[data-item-id="authority"], a[aria-label*="Trang web"], a[aria-label*="Website"]') ||
+          null;
+        link?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+      } catch {}
+      await sleep(140);
+    }
+    return best || readWebsite(getDetailPane());
   }
 
   function readRatingAndReviews(scope) {
@@ -2145,8 +2200,9 @@
 
     out.address = readAddressFromContactButtons(pane);
     out.phone = readPhoneFromContactButtons(pane);
+    out.website = readWebsite(pane);
 
-    if (!out.address || !out.phone) {
+    if (!out.address || !out.phone || !out.website) {
       for (const el of pane.querySelectorAll("[data-item-id], a[href], button")) {
         if (isInSearchFeed(el)) continue;
         const id = (el.getAttribute("data-item-id") || "").toLowerCase();
@@ -2161,9 +2217,9 @@
           }
         }
 
-        if (id.includes("authority") || /website|trang web/i.test(label)) {
-          const u = unwrapGoogleUrl(href || el.querySelector("a")?.getAttribute("href") || "");
-          if (u && !u.includes("google.com/maps")) out.website = u;
+        if (!out.website && (id.includes("authority") || /website|trang web|mở trang web/i.test(label))) {
+          const u = normalizeWebsiteUrl(href || el.querySelector("a")?.getAttribute("href") || "");
+          if (u) out.website = u;
         }
 
         if (!out.address && id.startsWith("address")) {
@@ -2529,11 +2585,13 @@
           readAddress(activePane)
         );
       }
-      if (needWebsite && !website) website = snap.website;
+      if (needWebsite && !website) {
+        website = snap.website || readWebsite(activePane) || website;
+      }
 
       if (phone && (!needAddress || addressLooksComplete(address)) && (!needWebsite || website)) break;
       if (phone && !needAddress && !needWebsite) break;
-      if (phone && needAddress && addressLooksComplete(address)) break;
+      if (phone && needAddress && addressLooksComplete(address) && (!needWebsite || website)) break;
 
       if (needPhone && !phone) await revealContactButtons(activePane);
       await sleep(pollMs);
@@ -2559,6 +2617,10 @@
         );
         if (retry) address = retry;
       }
+    }
+
+    if (needWebsite && !website) {
+      website = await waitForWebsite(fast ? 700 : 1200);
     }
 
     return { phone, address, website };
@@ -3072,7 +3134,8 @@
     }
 
     if (needWebsite && !website) {
-      website = readWebsite(getDetailPane()) || snap.website;
+      website = await waitForWebsite(fast || useQuick ? 900 : 1800, getDetailPane());
+      if (!website) website = readWebsite(getDetailPane()) || snap.website;
     }
 
     const hours = readHoursFromOverviewButton(pane);
@@ -3466,6 +3529,9 @@
     details.address = pickBestAddress(preContact.address, details.address);
     details.phone = pickBestPhone(preContact.phone, details.phone);
     details.website = details.website || preContact.website || "";
+    if (!details.website) {
+      details.website = await waitForWebsite(fast || quick ? 800 : 1400);
+    }
 
     // Fallback địa chỉ — bỏ qua nếu quán không có nút địa chỉ (khỏi chờ vô ích).
     if (needAddress && !details.address && overviewContactButtonExists("address")) {
