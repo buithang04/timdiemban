@@ -239,14 +239,14 @@ async function maybeAutoInjectBridge(tabId, url) {
 
 chrome.runtime.onInstalled.addListener(() => {
   syncRegisteredBridgeScripts().catch(() => {});
-  // Gắn vào các tab Findmap đang mở
+  // Reload tab Findmap đang mở — gỡ content-script orphan (gây "context invalidated")
   chrome.tabs.query({ url: BROAD_ORIGINS }).then(async (tabs) => {
     for (const tab of tabs) {
       if (!tab?.id || isMapsOrChromeUrl(tab.url)) continue;
       try {
         if (await tabLooksLikeFindmapApp(tab.id)) {
           await rememberWebOrigin(tab.url);
-          await injectBridgeIntoTab(tab.id);
+          await chrome.tabs.reload(tab.id);
         }
       } catch {}
     }

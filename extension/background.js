@@ -1775,7 +1775,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   scheduleMapsReloadRecovery();
 });
 
-const REQUIRED_CONTENT_VERSION = 50;
+const REQUIRED_CONTENT_VERSION = 53;
 
 async function ensureMapsContentReady(tabId) {
   for (let attempt = 0; attempt < 8; attempt++) {

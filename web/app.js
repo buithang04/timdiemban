@@ -2726,9 +2726,12 @@ window.addEventListener("timdiemban:bridge-ready", (e) => {
       setConnStatus(`Extension đã kết nối${ver}`, "connected");
     }
     queryRescanStatus();
+  } else if (p.dead) {
+    window.TimDiemBanExtVersion?.onBridgeMissing();
+    setConnStatus("Extension vừa reload — trang sẽ tự làm mới…", "error");
   } else {
     window.TimDiemBanExtVersion?.onBridgeMissing();
-      setConnStatus("Chưa thấy extension — Reload findmap tại chrome://extensions rồi F5", "error");
+    setConnStatus("Chưa thấy extension — Reload Findmap tại chrome://extensions rồi F5", "error");
   }
 });
 

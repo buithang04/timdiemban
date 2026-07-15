@@ -1,9 +1,56 @@
 (function () {
   // Bump version mỗi lần sửa content — background sẽ reinject nếu Maps còn bản cũ
-  const CONTENT_VERSION = 52;
+  const CONTENT_VERSION = 53;
   if (window.__timDiemBanLoaded && window.__timDiemBanVersion === CONTENT_VERSION) return;
   window.__timDiemBanLoaded = true;
   window.__timDiemBanVersion = CONTENT_VERSION;
+
+  let extAlive = true;
+  function safeSend(message, cb) {
+    if (!extAlive) return;
+    try {
+      if (!chrome?.runtime?.id) {
+        extAlive = false;
+        return;
+      }
+      const p = chrome.runtime.sendMessage(message);
+      if (p && typeof p.then === "function") {
+        p.then(
+          (resp) => {
+            if (typeof cb === "function") {
+              try {
+                cb(resp);
+              } catch {}
+            }
+          },
+          (err) => {
+            if (/context invalidated|extension context/i.test(String(err?.message || err))) {
+              extAlive = false;
+            }
+          }
+        );
+        return;
+      }
+      chrome.runtime.sendMessage(message, (resp) => {
+        try {
+          if (chrome.runtime.lastError) {
+            if (/context invalidated/i.test(chrome.runtime.lastError.message || "")) extAlive = false;
+            return;
+          }
+        } catch {
+          extAlive = false;
+          return;
+        }
+        if (typeof cb === "function") {
+          try {
+            cb(resp);
+          } catch {}
+        }
+      });
+    } catch {
+      extAlive = false;
+    }
+  }
 
   let antiThrottleStop = null;
   let scrapeInProgress = false;
@@ -102,9 +149,7 @@
     if (level === "warn") console.warn("TimDiemBan:", text);
     else console.log("TimDiemBan:", text);
     appendShieldLog();
-    try {
-      chrome.runtime.sendMessage({ action: "SCRAPE_LOG", line: text });
-    } catch {}
+    safeSend({ action: "SCRAPE_LOG", line: text });
   }
 
   function appendShieldLog() {
@@ -139,9 +184,7 @@
     } else if (!document.hidden) {
       stopBackgroundWakeLoop();
       if (scrapeInProgress) {
-        try {
-          chrome.runtime.sendMessage({ action: "MAPS_TAB_VISIBLE" }, () => {});
-        } catch {}
+        safeSend({ action: "MAPS_TAB_VISIBLE" });
       }
     }
     document.dispatchEvent(new CustomEvent("timdiemban-wake", { bubbles: true }));
@@ -301,12 +344,12 @@
 
   function sendProgress(percent, text) {
     updateShield(text, percent);
-    chrome.runtime.sendMessage({ action: "SCRAPE_PROGRESS", percent, text });
+    safeSend({ action: "SCRAPE_PROGRESS", percent, text });
   }
 
   function sendItem(result, searchParams, index, total) {
     if (result) result._webSent = true;
-    chrome.runtime.sendMessage({
+    safeSend({
       action: "SCRAPE_ITEM",
       data: { result, searchParams, index, total, phase: result._phase || "list" }
     });
@@ -3740,13 +3783,11 @@
             href: place.href || listData.href || record.href
           };
           enriched.push(merged);
-          try {
-            chrome.runtime.sendMessage({
-              action: "SEARCH_PROGRESS",
-              percent: pct,
-              text: `${progressText}${merged.phone ? " ✓SĐT" : ""}`
-            });
-          } catch {}
+          safeSend({
+            action: "SEARCH_PROGRESS",
+            percent: pct,
+            text: `${progressText}${merged.phone ? " ✓SĐT" : ""}`
+          });
         } else {
           needFallback.push(place);
         }

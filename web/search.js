@@ -368,7 +368,11 @@
     }
   }
 
+  let extBridgeDead = false;
+
   function postToExt(type, payload) {
+    // Bridge orphan sau reload extension — đừng spam postMessage
+    if (extBridgeDead && type !== "PING_EXT") return;
     window.postMessage({ source: "timdiemban-web", type, payload }, window.location.origin);
   }
 
@@ -1031,8 +1035,15 @@
     if (event.data.type === "maps_center") return;
 
     if (event.data.type === "bridge_ready") {
-      window.dispatchEvent(new CustomEvent("timdiemban:bridge-ready", { detail: event.data.payload }));
-      requestSearchStatus();
+      const payload = event.data.payload || {};
+      extBridgeDead = !!(payload.dead || (payload.ok === false && /context invalidated|reload/i.test(String(payload.error || ""))));
+      if (payload.ok) {
+        extBridgeDead = false;
+        requestSearchStatus();
+      } else {
+        clearSearchSyncPoll();
+      }
+      window.dispatchEvent(new CustomEvent("timdiemban:bridge-ready", { detail: payload }));
       return;
     }
 
