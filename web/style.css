@@ -1342,8 +1342,25 @@ body.page-winmap .scrape-log-mini {
 }
 
 .wm-table .col-phone,
+.wm-table .col-website,
 .wm-table .col-nv {
   white-space: nowrap;
+}
+
+.wm-table .col-website {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.wm-table .wm-website-link {
+  color: var(--wm-primary, #2563eb);
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.wm-table .wm-website-link:hover {
+  text-decoration: underline;
 }
 
 .wm-table .col-nv {

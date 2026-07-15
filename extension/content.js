@@ -1,6 +1,6 @@
 (function () {
   // Bump version mỗi lần sửa content — background sẽ reinject nếu Maps còn bản cũ
-  const CONTENT_VERSION = 50;
+  const CONTENT_VERSION = 51;
   if (window.__timDiemBanLoaded && window.__timDiemBanVersion === CONTENT_VERSION) return;
   window.__timDiemBanLoaded = true;
   window.__timDiemBanVersion = CONTENT_VERSION;
@@ -707,6 +707,7 @@
     const start = Date.now();
     let bestAddr = "";
     let bestPhone = "";
+    let bestWebsite = "";
     let revealRound = 0;
     let fieldsSeenAt = 0;
     // Tăng thời gian chờ DOM render khi page nặng (dựa vào số node)
@@ -732,8 +733,10 @@
 
       const addr = readAddressFromContactButtons();
       const phone = readPhoneFromContactButtons();
+      const website = readWebsite(contactRoot || getDetailPane());
       if (addr) bestAddr = pickBestAddress(bestAddr, addr);
       if (normalizePhone(phone).length >= 9) bestPhone = pickBestPhone(bestPhone, phone);
+      if (website) bestWebsite = website;
 
       const settleTime = domHeavy ? 800 : 500;
       const settled = fieldsSeenAt && Date.now() - fieldsSeenAt > settleTime;
@@ -771,12 +774,14 @@
             if (normalizePhone(ph).length >= 9) bestPhone = pickBestPhone(bestPhone, ph);
           }
         }
+        if (!bestWebsite) bestWebsite = readWebsite(pane);
       }
     }
 
     return {
       address: stillMatch ? pickBestAddress(bestAddr, readAddressFromContactButtons()) : bestAddr,
-      phone: stillMatch ? bestPhone || readPhoneFromContactButtons() : bestPhone
+      phone: stillMatch ? bestPhone || readPhoneFromContactButtons() : bestPhone,
+      website: stillMatch ? bestWebsite || readWebsite(getDetailPane()) : bestWebsite
     };
   }
 
@@ -1155,6 +1160,14 @@
   function overviewContactButtonExists(kind) {
     const pane = findOverviewContactRoot() || getDetailPane();
     if (!pane) return false;
+    if (kind === "website" || kind === "authority") {
+      for (const el of pane.querySelectorAll(
+        'a[data-item-id="authority"], a[data-item-id^="authority"], button[data-item-id="authority"], a[aria-label*="Trang web"], a[aria-label*="Website"]'
+      )) {
+        if (!isInSearchFeed(el)) return true;
+      }
+      return false;
+    }
     const sel =
       kind === "phone"
         ? 'button[data-item-id^="phone:"], button[data-item-id="phone"]'
@@ -1501,30 +1514,41 @@
   function readWebsite(scope) {
     const root = scope || document;
     const selectors = [
+      'a.CsEnBe[data-item-id="authority"]',
       'a[data-item-id="authority"]',
       'a[data-item-id^="authority"]',
       'button[data-item-id="authority"]',
-      'button[data-item-id^="authority"]'
+      'button[data-item-id^="authority"]',
+      'a[aria-label^="Trang web:"]',
+      'a[aria-label^="Website:"]'
     ];
     for (const sel of selectors) {
       for (const el of root.querySelectorAll(sel)) {
+        if (isInSearchFeed(el)) continue;
         const href = el.getAttribute("href") || el.getAttribute("data-url") || "";
         const unwrapped = unwrapGoogleUrl(href);
-        if (unwrapped && !unwrapped.includes("google.com/maps")) return unwrapped;
+        if (unwrapped && !/google\.(com|com\.[a-z]+|co\.[a-z]+)\/maps/i.test(unwrapped)) {
+          return unwrapped;
+        }
+        const label = (el.getAttribute("aria-label") || "").trim();
+        const fromLabel = label.replace(/^(Trang web|Website)\s*:\s*/i, "").trim();
+        if (fromLabel && fromLabel.includes(".") && !/google\.com\/maps/i.test(fromLabel)) {
+          return /^https?:\/\//i.test(fromLabel) ? fromLabel : `https://${fromLabel.replace(/\s+/g, "")}`;
+        }
         const io = el.querySelector('[class*="fontBody"], [class*="Io6YTe"]') || el;
         const text = io?.textContent?.trim() || el.textContent?.trim() || "";
         if (text && /^https?:\/\//i.test(text)) return text;
         if (text && text.includes(".") && !text.includes("google.com")) {
-          return text.startsWith("http") ? text : `https://${text}`;
+          return text.startsWith("http") ? text : `https://${text.replace(/\s+/g, "")}`;
         }
       }
     }
     for (const a of root.querySelectorAll('a[href^="http"]')) {
-      if (a.closest('[role="feed"]')) continue;
+      if (a.closest('[role="feed"]') || isInSearchFeed(a)) continue;
       const label = (a.getAttribute("aria-label") || "").toLowerCase();
       if (label.includes("website") || label.includes("trang web")) {
         const u = unwrapGoogleUrl(a.href);
-        if (u && !u.includes("google.com/maps")) return u;
+        if (u && !/google\.(com|com\.[a-z]+|co\.[a-z]+)\/maps/i.test(u)) return u;
       }
     }
     return "";
@@ -2948,7 +2972,7 @@
       quick = false,
       needAddress = true,
       needPhone = true,
-      needWebsite = false
+      needWebsite = true
     } = options;
     const hasCoords = listData?.lat != null && listData?.lng != null && !isNaN(listData.lat);
     const hasRating = !!(listData?.rating && /\d/.test(String(listData.rating)));
@@ -3255,7 +3279,7 @@
       quick: quick || fast,
       needAddress,
       needPhone,
-      needWebsite: false
+      needWebsite: true
     });
     const merged = finalizeEnrichedRecord(
       buildDetailRecord(listData, details, searchParams, searchParams.lat, searchParams.lng),
@@ -3269,7 +3293,7 @@
     const gotPhone = normalizePhone(merged.phone).length >= 9;
     const gotAddr = !!pickAddress(merged.address);
     tbLog(
-      `${merged.name}: ${gotPhone ? "✓SĐT" : "—SĐT"} | ${merged.rating || "—"} sao | ${gotAddr ? "✓địa chỉ" : "—địa chỉ"}`
+      `${merged.name}: ${gotPhone ? "✓SĐT" : "—SĐT"} | ${merged.website ? "✓web" : "—web"} | ${merged.rating || "—"} sao | ${gotAddr ? "✓địa chỉ" : "—địa chỉ"}`
     );
     return merged;
   }
@@ -3394,7 +3418,7 @@
       await sleep(openPollMs);
     }
 
-    const contactWait = { address: "", phone: "" };
+    const contactWait = { address: "", phone: "", website: "" };
     if (opened) {
       await ensureDetailOverviewReady(false, listData);
       if (needPhone) {
@@ -3411,12 +3435,15 @@
     const paneMatches = verifyDetailMatchesList(listData);
     const liveAddr = paneMatches ? readAddressFromContactButtons() : "";
     const livePhone = paneMatches ? readPhoneFromContactButtons() : "";
+    const liveWebsite = paneMatches ? readWebsite(getDetailPane()) : "";
 
     const hasContactData =
       !!contactWait.address ||
       normalizePhone(contactWait.phone).length >= 9 ||
       !!liveAddr ||
-      normalizePhone(livePhone).length >= 9;
+      normalizePhone(livePhone).length >= 9 ||
+      !!contactWait.website ||
+      !!liveWebsite;
 
     if (!opened && !hasContactData) {
       return null;
@@ -3424,7 +3451,8 @@
 
     const preContact = {
       address: pickBestAddress(contactWait.address, liveAddr),
-      phone: pickBestPhone(contactWait.phone, livePhone)
+      phone: pickBestPhone(contactWait.phone, livePhone),
+      website: contactWait.website || liveWebsite || ""
     };
 
     const details = await extractPlaceDetails(listData, searchParams, {
@@ -3433,10 +3461,11 @@
       quick,
       needAddress,
       needPhone,
-      needWebsite: false
+      needWebsite: true
     });
     details.address = pickBestAddress(preContact.address, details.address);
     details.phone = pickBestPhone(preContact.phone, details.phone);
+    details.website = details.website || preContact.website || "";
 
     // Fallback địa chỉ — bỏ qua nếu quán không có nút địa chỉ (khỏi chờ vô ích).
     if (needAddress && !details.address && overviewContactButtonExists("address")) {
@@ -3482,7 +3511,7 @@
     const gotPhone = normalizePhone(data.phone).length >= 9;
     const gotAddr = !!pickAddress(data.address);
     tbLog(
-      `${data.name}: ${gotPhone ? "✓SĐT" : "—SĐT"} | ${data.rating || "—"} sao | ${gotAddr ? "✓địa chỉ" : "—địa chỉ"}`
+      `${data.name}: ${gotPhone ? "✓SĐT" : "—SĐT"} | ${data.website ? "✓web" : "—web"} | ${data.rating || "—"} sao | ${gotAddr ? "✓địa chỉ" : "—địa chỉ"}`
     );
 
     await prepareForNextListClick({

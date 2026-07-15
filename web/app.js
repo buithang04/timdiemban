@@ -1141,6 +1141,7 @@ function buildRowHtml(row, stt) {
     <td class="col-name"><span title="${escapeAttr(row.name || "")}">${escapeHtml(row.name || "")}</span>${radiusBadge}</td>
     <td class="col-addr" title="${escapeAttr(row.address || "")}">${escapeHtml(row.address || "-")}</td>
     <td class="col-phone">${escapeHtml(row.phone || "-")}</td>
+    <td class="col-website">${formatWebsiteCell(row)}</td>
     <td class="col-rating">${formatRatingCell(row)}</td>
     <td class="col-coords" title="${escapeAttr(coords)}">${escapeHtml(coords)}</td>
     <td class="col-status">${statusBadge}</td>
@@ -1156,6 +1157,7 @@ function matchesFilter(row, q) {
     (row.name || "").toLowerCase().includes(q) ||
     (row.address || "").toLowerCase().includes(q) ||
     (row.phone || "").toLowerCase().includes(q) ||
+    (row.website || "").toLowerCase().includes(q) ||
     (row.category || "").toLowerCase().includes(q)
   );
 }
@@ -1287,6 +1289,20 @@ function upsertResult(result) {
   ensureStableKey(incoming);
   currentData.unshift(incoming);
   return { isNew: true, index: 0, key: getDomKey(incoming), skipped: false };
+}
+
+function formatWebsiteCell(row) {
+  const raw = String(row.website || "").trim();
+  if (!raw) return "-";
+  let href = raw;
+  if (!/^https?:\/\//i.test(href)) href = `https://${href}`;
+  let label = raw.replace(/^https?:\/\//i, "").replace(/\/$/, "");
+  try {
+    label = new URL(href).hostname.replace(/^www\./i, "") || label;
+  } catch {
+    /* keep label */
+  }
+  return `<a class="wm-website-link" href="${escapeAttr(href)}" target="_blank" rel="noopener noreferrer" title="${escapeAttr(raw)}">${escapeHtml(label)}</a>`;
 }
 
 function formatRatingCell(row) {
@@ -1433,7 +1449,7 @@ function renderEmptyTableRow() {
   els.resultsBody.innerHTML = `
     <tr class="row-empty">
       <td class="col-check"><input type="checkbox" disabled /></td>
-      <td colspan="8" class="empty-cell-msg">Hiện chưa có dữ liệu, hãy bắt đầu tìm kiếm</td>
+      <td colspan="9" class="empty-cell-msg">Hiện chưa có dữ liệu, hãy bắt đầu tìm kiếm</td>
     </tr>`;
   if (els.checkAllRows) els.checkAllRows.checked = false;
   currentPage = 1;
