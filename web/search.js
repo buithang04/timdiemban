@@ -31,7 +31,6 @@
     gpsDeniedModal: document.getElementById("gpsDeniedModal"),
     gpsDeniedModalOk: document.getElementById("gpsDeniedModalOk"),
     gpsDeniedModalClose: document.getElementById("gpsDeniedModalClose"),
-    gpsDeniedPickCenter: document.getElementById("gpsDeniedPickCenter"),
     mapsAutoFocus: document.getElementById("searchMapsAutoFocus"),
     mapsAutoFocusLabel: document.getElementById("searchMapsAutoFocusLabel"),
     mapsAutoReopen: document.getElementById("searchMapsAutoReopen"),
@@ -1186,10 +1185,6 @@
     document.getElementById("gpsDeniedModalClose")?.addEventListener("click", hideGpsDeniedModal);
     modal.addEventListener("click", (e) => {
       if (e.target === modal) hideGpsDeniedModal();
-    });
-    document.getElementById("gpsDeniedPickCenter")?.addEventListener("click", () => {
-      hideGpsDeniedModal();
-      enterPickCenterMode();
     });
   }
   bindGpsDeniedModalUi();
