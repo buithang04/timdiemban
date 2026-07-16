@@ -271,7 +271,11 @@ async function getPackageOrderById(orderId) {
   return rowToPackageOrder(rows[0]);
 }
 
-async function listPackageOrders({ status = null, userId = null } = {}) {
+async function listPackageOrders({
+  status = null,
+  userId = null,
+  paymentConfirmedOnly = false
+} = {}) {
   let sql = `
     SELECT o.*, u.email AS user_email, p.name AS package_name
     FROM package_orders o
@@ -283,6 +287,7 @@ async function listPackageOrders({ status = null, userId = null } = {}) {
   // status="all" → no filter; otherwise filter by status
   if (status && status !== "all") { sql += " AND o.status = ?"; params.push(status); }
   if (userId) { sql += " AND o.user_id = ?"; params.push(userId); }
+  if (paymentConfirmedOnly) { sql += " AND o.payment_confirmed = 1"; }
   sql += " ORDER BY o.created_at DESC";
   const [rows] = await getPool().execute(sql, params);
   return rows.map(rowToPackageOrder);
@@ -333,7 +338,7 @@ async function requestPackagePurchase(userId, packageId) {
   const [pendingRows] = await pool.execute(
     "SELECT id FROM package_orders WHERE user_id = ? AND status = 'pending' LIMIT 1", [userId]
   );
-  if (pendingRows.length) throw new Error("Bạn đã có yêu cầu mua gói credit đang chờ admin duyệt");
+  if (pendingRows.length) throw new Error("Bạn đã có đơn mua gói đang chờ thanh toán — hoàn tất chuyển khoản và bấm \"Tôi đã chuyển khoản\"");
 
   const orderId = newId("ord");
   const now = new Date().toISOString();
@@ -347,7 +352,7 @@ async function requestPackagePurchase(userId, packageId) {
   return {
     order,
     user: await getUserById(userId),
-    message: `Đã gửi yêu cầu mua ${pkg.name} (+${pkg.points.toLocaleString("vi-VN")} credit) — vui lòng thanh toán`
+    message: `Đã tạo đơn mua ${pkg.name} (+${pkg.points.toLocaleString("vi-VN")} credit) — vui lòng chuyển khoản và bấm \"Tôi đã chuyển khoản\"`
   };
 }
 
@@ -378,6 +383,9 @@ async function approvePackageOrder(orderId, adminId) {
   );
   if (!orderRows[0]) throw new Error("Không tìm thấy đơn chờ duyệt");
   const order = orderRows[0];
+  if (!order.payment_confirmed) {
+    throw new Error("User chưa xác nhận đã chuyển khoản — không thể duyệt");
+  }
 
   const [userRows] = await pool.execute("SELECT * FROM users WHERE id = ?", [order.user_id]);
   const user = userRows[0];

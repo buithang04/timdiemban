@@ -2,6 +2,8 @@
  * Form tìm kiếm trên trang kết quả — gửi lệnh tới extension qua web-bridge.
  */
 (function () {
+  const MIN_RADIUS_KM = 0.5;
+  const MAX_RADIUS_KM = 30;
   const LAST_SEARCH_KEY = "timdiemban_last_search";
   const MAPS_AUTO_FOCUS_KEY = "timdiemban_maps_auto_focus";
   const MAPS_AUTO_REOPEN_KEY = "timdiemban_maps_auto_reopen";
@@ -392,8 +394,36 @@
     return parseFloat(String(value).trim().replace(",", "."));
   }
 
+  function clampRadiusKm(km) {
+    const n = parseFloat(String(km ?? "").replace(",", "."));
+    if (!Number.isFinite(n)) return NaN;
+    const stepped = Math.round(n / 0.5) * 0.5;
+    return Math.min(MAX_RADIUS_KM, Math.max(MIN_RADIUS_KM, stepped));
+  }
+
+  function formatRadiusKm(km) {
+    const n = Number(km);
+    if (!Number.isFinite(n)) return "";
+    return Number.isInteger(n) ? String(n) : n.toFixed(1).replace(/\.0$/, "");
+  }
+
+  function enforceRadiusInput(opts = {}) {
+    if (!els.radius) return NaN;
+    const raw = parseFloat(String(els.radius.value || "").replace(",", "."));
+    if (!Number.isFinite(raw)) return NaN;
+    const clamped = clampRadiusKm(raw);
+    const formatted = formatRadiusKm(clamped);
+    if (els.radius.value !== formatted) {
+      els.radius.value = formatted;
+      if (opts.showHint && Math.abs(raw - clamped) > 1e-9) {
+        showSearchStatus(`Bán kính hợp lệ: ${MIN_RADIUS_KM}–${MAX_RADIUS_KM} km — đã chỉnh về ${formatted} km`, "info");
+      }
+    }
+    return clamped;
+  }
+
   function radiusKmFromInput() {
-    return parseFloat(String(els.radius?.value || "").replace(",", "."));
+    return clampRadiusKm(els.radius?.value);
   }
 
   function dispatchMapPreview(opts = {}) {
@@ -548,7 +578,8 @@
       if (s.keyword) els.keyword.value = s.keyword;
       if (s.radius != null) {
         const r = Number(s.radius);
-        els.radius.value = r >= 100 ? (r / 1000).toFixed(1).replace(/\.0$/, "") : String(r);
+        const km = r >= 100 ? r / 1000 : r;
+        els.radius.value = formatRadiusKm(clampRadiusKm(km));
       }
     } catch {}
   }
@@ -926,13 +957,14 @@
     }
 
     const keyword = els.keyword.value.trim();
+    enforceRadiusInput();
     const radiusKm = radiusKmFromInput();
     if (!keyword) {
       showSearchStatus("Nhập từ khóa tìm kiếm.", "error");
       return;
     }
-    if (!radiusKm || radiusKm < 0.5 || radiusKm > 50) {
-      showSearchStatus("Bán kính hợp lệ: 0.5–50 km.", "error");
+    if (!Number.isFinite(radiusKm) || radiusKm < MIN_RADIUS_KM || radiusKm > MAX_RADIUS_KM) {
+      showSearchStatus(`Bán kính hợp lệ: ${MIN_RADIUS_KM}–${MAX_RADIUS_KM} km.`, "error");
       return;
     }
 
@@ -1285,6 +1317,11 @@
   } catch {}
 
   let previewInputTimer = null;
+  els.radius?.addEventListener("blur", () => {
+    enforceRadiusInput({ showHint: true });
+    const c = readCenterFromForm();
+    if (c) dispatchMapPreview({ fit: true });
+  });
   [els.lat, els.lng, els.radius].forEach((input) => {
     input?.addEventListener("input", () => {
       const c = readCenterFromForm();
@@ -1293,7 +1330,15 @@
         els.centerPreview.textContent = `${c.lat}, ${c.lng} (nhập tay)`;
         els.centerPreview.classList.remove("hidden");
         if (previewInputTimer) clearTimeout(previewInputTimer);
-        previewInputTimer = setTimeout(() => dispatchMapPreview({ fit: true }), 280);
+        previewInputTimer = setTimeout(() => {
+          if (input === els.radius) {
+            const raw = parseFloat(String(els.radius?.value || "").replace(",", "."));
+            if (Number.isFinite(raw) && raw > MAX_RADIUS_KM) {
+              enforceRadiusInput({ showHint: true });
+            }
+          }
+          dispatchMapPreview({ fit: true });
+        }, 280);
       } else {
         els.centerPreview.classList.add("hidden");
       }

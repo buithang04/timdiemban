@@ -2652,6 +2652,7 @@ async function handleStartSearch(params) {
   params.lat = center.lat;
   params.lng = center.lng;
 
+  params.radius = clampSearchRadiusKm(params.radius);
   const grid = generateSearchGrid(params.lat, params.lng, params.radius);
 
   currentSearch = { ...params, gridCells: grid.totalCells };

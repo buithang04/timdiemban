@@ -12,6 +12,7 @@
   let layerGrids = null;
   let layerMarkers = null;
   let searchCenter = null;
+  const MAX_RADIUS_KM = 30;
   let searchRadiusKm = 0;
   let markerByKey = new Map();
   let lastGridSig = "";
@@ -148,7 +149,7 @@
 
     const nextLat = Number(center.lat);
     const nextLng = Number(center.lng);
-    const nextR = Number(radiusKm) || 0;
+    const nextR = Math.min(MAX_RADIUS_KM, Math.max(0, Number(radiusKm) || 0));
     if (!Number.isFinite(nextLat) || !Number.isFinite(nextLng)) return;
 
     const unchanged = sameSearchArea({ lat: nextLat, lng: nextLng }, nextR);

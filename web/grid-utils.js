@@ -1,4 +1,11 @@
 /** Lưới ô tìm kiếm — đồng bộ logic extension/grid.js */
+const MAX_SEARCH_RADIUS_KM = 30;
+
+function clampSearchRadiusKm(radiusKm) {
+  const r = Number(radiusKm);
+  if (!Number.isFinite(r) || r <= 0) return r;
+  return Math.min(MAX_SEARCH_RADIUS_KM, r);
+}
 function kmPerDegLng(lat) {
   return 111.32 * Math.cos((lat * Math.PI) / 180);
 }
@@ -61,6 +68,7 @@ function cellIntersectsCircle(cellLat, cellLng, centerLat, centerLng, radiusKm, 
 }
 
 function generateSearchGrid(centerLat, centerLng, radiusKm) {
+  radiusKm = clampSearchRadiusKm(radiusKm);
   const viewportM = getViewportSizeM(radiusKm);
   const sideKm = viewportM / 1000;
   const halfSide = sideKm / 2;

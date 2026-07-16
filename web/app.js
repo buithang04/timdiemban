@@ -2812,11 +2812,13 @@ window.addEventListener("timdiemban:need-login", () => {
 
 window.addEventListener("timdiemban:map-preview", (e) => {
   const { lat, lng, radius, fit } = e.detail || {};
-  if (lat != null && lng != null && radius) {
+  const safeRadius =
+    typeof clampSearchRadiusKm === "function" ? clampSearchRadiusKm(radius) : radius;
+  if (lat != null && lng != null && safeRadius) {
     if (typeof generateSearchGrid === "function" && els.infoGridCells) {
-      const grid = generateSearchGrid(lat, lng, radius);
+      const grid = generateSearchGrid(lat, lng, safeRadius);
       els.infoGridCells.textContent = String(grid.totalCells);
     }
-    window.TimDiemBanMap?.setSearchArea({ lat, lng }, radius, { fit: fit !== false });
+    window.TimDiemBanMap?.setSearchArea({ lat, lng }, safeRadius, { fit: fit !== false });
   }
 });

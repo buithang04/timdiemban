@@ -832,7 +832,10 @@ app.get("/api/packages/orders", requireAuth, async (req, res) => {
 app.get("/api/admin/package/orders", requireAdmin, async (req, res) => {
   try {
     const status = String(req.query.status || "pending").trim() || "pending";
-    const orders = await listPackageOrders({ status });
+    const orders = await listPackageOrders({
+      status,
+      paymentConfirmedOnly: status === "pending"
+    });
     res.json({ orders });
   } catch (err) {
     res.status(400).json({ error: err.message });

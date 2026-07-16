@@ -203,13 +203,17 @@ async function loadPackageOrders() {
 
   const statPending = document.getElementById("statPendingOrders");
   const statConfirmed = document.getElementById("statConfirmedOrders");
-  const pendingCount = allOrders.filter((o) => o.status === "pending").length;
-  const confirmedCount = allOrders.filter((o) => o.status === "pending" && o.paymentConfirmed).length;
-  if (statPending) statPending.textContent = pendingCount;
-  if (statConfirmed) statConfirmed.textContent = confirmedCount;
+  const awaitingAdminCount = allOrders.filter(
+    (o) => o.status === "pending" && o.paymentConfirmed
+  ).length;
+  const unconfirmedCount = allOrders.filter(
+    (o) => o.status === "pending" && !o.paymentConfirmed
+  ).length;
+  if (statPending) statPending.textContent = awaitingAdminCount;
+  if (statConfirmed) statConfirmed.textContent = unconfirmedCount;
   if (els.adminNavPendingBadge) {
-    if (pendingCount > 0) {
-      els.adminNavPendingBadge.textContent = String(pendingCount);
+    if (awaitingAdminCount > 0) {
+      els.adminNavPendingBadge.textContent = String(awaitingAdminCount);
       els.adminNavPendingBadge.classList.remove("hidden");
     } else {
       els.adminNavPendingBadge.classList.add("hidden");
@@ -219,7 +223,7 @@ async function loadPackageOrders() {
   if (!els.ordersBody) return;
 
   const emptyLabels = {
-    pending: "Không có yêu cầu chờ duyệt",
+    pending: "Không có đơn chờ duyệt (user chưa xác nhận chuyển khoản sẽ không hiện ở đây)",
     approved: "Chưa có đơn đã duyệt",
     rejected: "Chưa có đơn bị từ chối",
     cancelled: "Chưa có đơn đã hủy",

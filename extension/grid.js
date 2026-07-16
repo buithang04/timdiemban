@@ -122,7 +122,16 @@ function cellIntersectsCircle(cellLat, cellLng, centerLat, centerLng, radiusKm, 
   return d - halfDiag <= radiusKm + 0.05;
 }
 
+const MAX_SEARCH_RADIUS_KM = 30;
+
+function clampSearchRadiusKm(radiusKm) {
+  const r = Number(radiusKm);
+  if (!Number.isFinite(r) || r <= 0) return r;
+  return Math.min(MAX_SEARCH_RADIUS_KM, r);
+}
+
 function generateSearchGrid(centerLat, centerLng, radiusKm) {
+  radiusKm = clampSearchRadiusKm(radiusKm);
   const viewportM = getViewportSizeM(radiusKm);
   const sideKm = viewportM / 1000;
   const halfSide = sideKm / 2;
