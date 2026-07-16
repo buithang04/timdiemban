@@ -12,7 +12,7 @@
   let layerGrids = null;
   let layerMarkers = null;
   let searchCenter = null;
-  const MAX_RADIUS_KM = 30;
+  const MAX_RADIUS_KM = 20;
   let searchRadiusKm = 0;
   let markerByKey = new Map();
   let lastGridSig = "";

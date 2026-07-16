@@ -3,7 +3,7 @@
  */
 (function () {
   const MIN_RADIUS_KM = 0.5;
-  const MAX_RADIUS_KM = 30;
+  const MAX_RADIUS_KM = 20;
   const LAST_SEARCH_KEY = "timdiemban_last_search";
   const MAPS_AUTO_FOCUS_KEY = "timdiemban_maps_auto_focus";
   const MAPS_AUTO_REOPEN_KEY = "timdiemban_maps_auto_reopen";

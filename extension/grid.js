@@ -122,7 +122,7 @@ function cellIntersectsCircle(cellLat, cellLng, centerLat, centerLng, radiusKm, 
   return d - halfDiag <= radiusKm + 0.05;
 }
 
-const MAX_SEARCH_RADIUS_KM = 30;
+const MAX_SEARCH_RADIUS_KM = 20;
 
 function clampSearchRadiusKm(radiusKm) {
   const r = Number(radiusKm);

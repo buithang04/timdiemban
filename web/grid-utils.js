@@ -1,5 +1,5 @@
 /** Lưới ô tìm kiếm — đồng bộ logic extension/grid.js */
-const MAX_SEARCH_RADIUS_KM = 30;
+const MAX_SEARCH_RADIUS_KM = 20;
 
 function clampSearchRadiusKm(radiusKm) {
   const r = Number(radiusKm);
