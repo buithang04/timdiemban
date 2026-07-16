@@ -217,6 +217,10 @@ const apiRateLimit = createRateLimiter({ windowMs: 60 * 1000, max: 600, keyPrefi
 const authWriteRateLimit = createRateLimiter({ windowMs: 60 * 1000, max: 30, keyPrefix: "authw" });
 
 function sanitizeValue(val, key) {
+  // Không làm biến dạng mật khẩu (ký tự đặc biệt hợp lệ).
+  if (typeof val === "string" && /password/i.test(String(key || ""))) {
+    return val;
+  }
   if (typeof val === "string") {
     let s = val.replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, "");
     s = s.replace(/[<>]/g, "");
@@ -565,8 +569,14 @@ app.get("/api/auth/me", async (req, res) => {
 
 app.post("/api/auth/profile", authWriteRateLimit, requireAuth, async (req, res) => {
   try {
-    const user = await updateOwnProfile(req.user.id, req.body || {});
-    res.json({ ok: true, user, message: "Đã cập nhật hồ sơ" });
+    const body = req.body || {};
+    const user = await updateOwnProfile(req.user.id, body);
+    const changedPw = !!(String(body.newPassword || "").trim());
+    res.json({
+      ok: true,
+      user,
+      message: changedPw ? "Đã cập nhật hồ sơ và mật khẩu" : "Đã cập nhật hồ sơ"
+    });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -721,9 +731,16 @@ app.post("/api/admin/users/toggle-active", requireAdmin, async (req, res) => {
 
 app.post("/api/admin/users/update-profile", requireAdmin, async (req, res) => {
   try {
-    const { email, fullName, phone } = req.body || {};
-    const user = await adminUpdateUserProfile(email, { fullName, phone });
-    res.json({ ok: true, user, message: `Đã cập nhật hồ sơ ${user.email}` });
+    const { email, fullName, phone, newPassword } = req.body || {};
+    const user = await adminUpdateUserProfile(email, { fullName, phone, newPassword });
+    const changedPw = !!(String(newPassword || "").trim());
+    res.json({
+      ok: true,
+      user,
+      message: changedPw
+        ? `Đã cập nhật hồ sơ và mật khẩu ${user.email}`
+        : `Đã cập nhật hồ sơ ${user.email}`
+    });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
