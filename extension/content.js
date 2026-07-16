@@ -1,6 +1,6 @@
 (function () {
   // Bump version mỗi lần sửa content — background sẽ reinject nếu Maps còn bản cũ
-  const CONTENT_VERSION = 53;
+  const CONTENT_VERSION = 56;
   if (window.__timDiemBanLoaded && window.__timDiemBanVersion === CONTENT_VERSION) return;
   window.__timDiemBanLoaded = true;
   window.__timDiemBanVersion = CONTENT_VERSION;
@@ -494,52 +494,29 @@
     return /^(địa chỉ|address)\s*:/i.test(label);
   }
 
-  function isMapsUiLabel(text) {
-    const t = (text || "").trim();
-    if (!t || t.length > 90) return false;
-    return (
-      /^(tổng quan|overview|bài đánh giá|reviews?|giới thiệu|about|đường đi|directions|gần đó|nearby)$/i.test(
-        t
-      ) ||
-      /^(gửi tới điện thoại|send to (your )?phone|chia sẻ|share|xem ảnh|see photos?|ảnh|photos?|thực đơn|menu|lưu|save|đặt chỗ|reserve|đặt hàng|order|gọi điện|call|trang web|website)$/i.test(
-        t
-      ) ||
-      /^(sao chép|copy)\b/i.test(t)
-    );
+  const PF = globalThis.PlaceFields;
+  if (!PF) {
+    console.warn("[Findmap] place-fields.js chưa load — parse địa chỉ/SĐT có thể sai");
   }
 
-  /** Chuỗi gom nhầm tab/nút Maps — không phải địa chỉ */
+  function isMapsUiLabel(text) {
+    return PF ? PF.isMapsUiLabel(text) : false;
+  }
+
   function isMapsUiChromeText(text) {
-    const t = (text || "").trim();
-    if (!t) return false;
-    if (
-      /tổng quan.*bài đánh giá|overview.*reviews?|giới thiệu.*đường đi|about.*directions/i.test(
-        t
-      )
-    ) {
-      return true;
-    }
-    if (/gửi tới điện thoại|send to.*phone/i.test(t) && /tổng quan|overview|chia sẻ|share/i.test(t)) {
-      return true;
-    }
-    const parts = t.split(/[,·]/).map((s) => s.trim()).filter(Boolean);
-    if (parts.length < 2) return isMapsUiLabel(t);
-    const uiHits = parts.filter(
-      (p) =>
-        isMapsUiLabel(p) ||
-        /^(đường đi|directions|gần đó|nearby|gửi|send|chia sẻ|share|xem ảnh)/i.test(p)
-    ).length;
-    if (uiHits >= 2) return true;
-    if (uiHits >= 1 && parts.length >= 3 && !isLikelyAddress(t)) return true;
-    return false;
+    return PF ? PF.isMapsUiChromeText(text) : false;
   }
 
   function stripPhoneFromAddress(text) {
-    let t = (text || "").trim();
-    if (!t) return "";
-    t = t.replace(/\s+(?:\+?84|0)[\d\s.\-()]{8,20}\s*$/i, "").trim();
-    t = t.replace(/\s+\d{2,4}(?:[\s.\-]\d{2,4}){2,4}\s*$/i, "").trim();
-    return t;
+    return PF ? PF.stripPhoneFromAddress(text) : String(text || "").trim();
+  }
+
+  function stripMapsUiChromeFromAddress(text) {
+    return PF ? PF.stripMapsUiChromeFromAddress(text) : String(text || "").trim();
+  }
+
+  function isGarbageAddressText(text) {
+    return PF ? PF.isGarbageAddressText(text) : !String(text || "").trim();
   }
 
   function addressCompletenessScore(text) {
@@ -552,7 +529,7 @@
     if (/việt nam|vietnam/i.test(t)) score += 28;
     if (/\b\d{4,6}\b/.test(t)) score += 14;
     if (/quận|huyện|phường|thị xã|thành phố|tp\.|ward|district/i.test(t)) score += 16;
-    if (/phố|đường|đ\.|d\.|ngõ|ngh\.|ngách|hẻm|street|road|ave/i.test(t)) score += 12;
+    if (/phố|đường(?!\s*đi)|đ\.|d\.|ngõ|ngh\.|ngách|hẻm|street|road|ave/i.test(t)) score += 12;
     if (typeof isValidAddressField === "function" && isValidAddressField(t)) score += 30;
     else if (isLikelyAddress(t)) score += 10;
     if (isStreetOnlyAddress(t)) score -= 45;
@@ -787,7 +764,9 @@
       const addrMissing = settled && !overviewContactButtonExists("address");
 
       const needPhone = normalizePhone(bestPhone).length < 9 && !phoneMissing;
-      const needAddr = !bestAddr && !addrMissing;
+      const needAddr =
+        (!bestAddr || !addressLooksComplete(bestAddr) || isGarbageAddressText(bestAddr)) &&
+        !addrMissing;
       // Website thường hiện sau address/phone — chờ thêm ngắn nếu vẫn trống
       const needWeb =
         !bestWebsite &&
@@ -2702,27 +2681,6 @@
     return /₫|\bvnd\b|\d+[\d.]*\s*đ\b/i.test(text || "");
   }
 
-  function isGarbageAddressText(text) {
-    const t = (text || "").trim();
-    if (!t) return true;
-    if (typeof isVisitedLinkText === "function" && isVisitedLinkText(t)) return true;
-    if (/đường liên kết đã truy cập|visited link/i.test(t)) return true;
-    if (/mua sắm tại cửa hàng|shop in store|in-store shopping/i.test(t)) return true;
-    if (/tổng quan|overview|bài đánh giá|reviews?|giới thiệu|about|gần đó|nearby/i.test(t)) return true;
-    if (/\d[.,]\d\s*\(\d+\)/.test(t)) return true;
-    if (/\d[.,]\d\s*\/\s*(cửa hàng|shop|store|tạp hóa|bách hóa|siêu thị|quán|tiệm)/i.test(t)) return true;
-    if (
-      /(cửa hàng tiện lợi|convenience store|bách hóa|tạp hóa|siêu thị)/i.test(t) &&
-      !/,.*(quận|huyện|phường|thành phố|hà nội|việt nam|vietnam)/i.test(t)
-    ) {
-      return true;
-    }
-    if (/[A-Za-zÀ-ỹ].*\/.*[A-Za-zÀ-ỹ]/.test(t) && !/,|quận|huyện|phường|đường|phố|việt nam|vietnam/i.test(t)) {
-      return true;
-    }
-    return false;
-  }
-
   function parseRatingReviewFromPart(part) {
     const t = (part || "").trim();
     const m = t.match(/^(\d[.,]\d)\s*\(([\d.,\s]+)\)/);
@@ -2737,7 +2695,7 @@
     const raw = (text || "").trim();
     if (!raw || raw.length > 90) return false;
     if (
-      /,|\d{2,}|phố|đường|quận|huyện|thành phố|thị trấn|thôn|xã|ngõ|ngách|hẻm|ward|district|street|st\.|ave|road|rd\.|vietnam|việt nam/i.test(
+      /,|\d{2,}|phố|đường(?!\s*đi)|quận|huyện|thành phố|thị trấn|thôn|xã|ngõ|ngách|hẻm|ward|district|street|st\.|ave|road|rd\.|vietnam|việt nam/i.test(
         raw
       )
     ) {
@@ -2832,15 +2790,17 @@
     if (!t || (typeof isVisitedLinkText === "function" && isVisitedLinkText(t))) return false;
     if (isRatingReviewText(t) || isPriceRangeText(t)) return false;
     if (isOpeningHoursText(t) || isReviewSnippetText(t)) return false;
+    if (isMapsUiChromeText(t) || isGarbageAddressText(t)) return false;
     if (t.length < 5) return false;
+    // "đường đi" = Directions trên Maps — không tính là địa chỉ
     if (
-      /,|phố|đường|đ\.|d\.|ngõ|ngách|hẻm|quận|huyện|thành phố|thị trấn|thôn|xã|ấp|khu|lô|tổ|p\.|tp\.|ward|district|việt nam|vietnam/i.test(
+      /,|phố|đường(?!\s*đi)|đ\.|d\.|ngõ|ngách|hẻm|quận|huyện|thành phố|thị trấn|thôn|xã|ấp|khu|lô|tổ|p\.|tp\.|ward|district|việt nam|vietnam/i.test(
         t
       )
     ) {
       return true;
     }
-    if (/\d+\s*(đường|phố)/i.test(t)) return true;
+    if (/\d+\s*(đường(?!\s*đi)|phố)/i.test(t)) return true;
     return /\d+\s+[\p{L}]{2,}/u.test(t) || /^[\p{L}][\p{L}\s.-]{4,},\s*[\p{L}]/u.test(t);
   }
 
@@ -2875,6 +2835,8 @@
       .replace(/^,\s*/, "")
       .trim();
     t = stripPhoneFromAddress(t);
+    t = stripMapsUiChromeFromAddress(t);
+    if (isMapsUiChromeText(t) || isMapsUiLabel(t)) return "";
     if (isGarbageAddressText(t)) return "";
     if (isLikelyCategoryText(t)) return "";
     return t;

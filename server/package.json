@@ -7,7 +7,8 @@
     "prestart": "node ../scripts/sync-app-config.js",
     "start": "node server.js",
     "dev": "node server.js",
-    "sync-config": "node ../scripts/sync-app-config.js"
+    "sync-config": "node ../scripts/sync-app-config.js",
+    "test:place-fields": "node ../scripts/test-place-fields.js"
   },
   "dependencies": {
     "cors": "^2.8.5",

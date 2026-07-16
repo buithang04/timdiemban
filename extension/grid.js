@@ -1,33 +1,7 @@
-function foldTextForMatch(text) {
-  return String(text || "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/đ/gi, "d") // "đ" không có decomposition NFD (không tách được dấu) — phải thay tay
-    .toLowerCase()
-    .trim();
-}
-
-/** Nhãn Maps khi đã mở link website — không phải địa chỉ thật */
-function isVisitedLinkText(text) {
-  const folded = foldTextForMatch(text);
-  if (!folded) return false;
-  return (
-    /duong\s+lien\s+ket(\s+da)?\s+truy\s*c?ap/.test(folded) ||
-    /visited\s+link/.test(folded)
-  );
-}
-
-function sanitizeAddressField(address) {
-  const a = String(address || "").trim();
-  if (!a) return "";
-  if (isVisitedLinkText(a)) return "";
-  const folded = foldTextForMatch(a);
-  if (/mua\s+sam\s+tai\s+cua\s+hang|shop\s+in\s+store|in-?store\s+shopping/.test(folded)) {
-    return "";
-  }
-  return a;
-}
-
+/**
+ * grid.js — lưới tìm kiếm + dedupe.
+ * Cần load place-fields.js trước (sanitize / phone / enrich).
+ */
 function normalizeCenterCoords(lat, lng) {
   const la = Number(lat);
   const lo = Number(lng);
@@ -290,10 +264,6 @@ function normalizeName(name) {
     .trim();
 }
 
-function normalizePhone(phone) {
-  return (phone || "").replace(/\D/g, "");
-}
-
 function normalizeAddress(address) {
   return normalizeName(address).replace(/\d+/g, "").replace(/\s+/g, " ").trim();
 }
@@ -398,79 +368,6 @@ function isNearDuplicate(a, b) {
   return false;
 }
 
-function pickBetterAddress(a, b) {
-  const reject = (t) => {
-    const s = sanitizeAddressField(t);
-    if (!s) return true;
-    if (isVisitedLinkText(s)) return true;
-    if (/mở cửa|đóng cửa|đang mở|^["'""]/i.test(s)) return true;
-    if (/^\d[.,]\d\s*\(/.test(s)) return true;
-    if (/\d[.,]\d\s*\(\d+\)/.test(s)) return true;
-    if (
-      !/,|\d{2,}|phố|đường|quận|huyện|ngõ|ngách|ward|district|street|vietnam|việt nam/i.test(s) &&
-      /^(quán|tiệm|nhà hàng|cửa hàng|khách sạn|restaurant|cafe|coffee shop|shop|store|hotel|bar|bakery|fast food|supermarket|pharmacy|spa|salon|gym|clinic|pizza|sushi|pub|diner|bistro)\b/i.test(
-        s.toLowerCase()
-      )
-    ) {
-      return true;
-    }
-    return false;
-  };
-  if (reject(a) && reject(b)) return sanitizeAddressField(a) || sanitizeAddressField(b);
-  if (reject(a)) return sanitizeAddressField(b);
-  if (reject(b)) return sanitizeAddressField(a);
-  const aClean = sanitizeAddressField(a);
-  const bClean = sanitizeAddressField(b);
-  const aOk = isValidAddressField(aClean);
-  const bOk = isValidAddressField(bClean);
-  if (aOk && !bOk) return aClean;
-  if (bOk && !aOk) return bClean;
-  const score = (t) => {
-    const s = sanitizeAddressField(t);
-    if (!s) return -1;
-    if (/mở cửa|đóng cửa|đang mở/i.test(s)) return 0;
-    if (/^["'""]/.test(s)) return 0;
-    if (/^\d[.,]\d\s*\(/.test(s)) return 1;
-    if (/,.*(việt nam|vietnam|hà nội|quận|huyện|phường|thành phố)/i.test(s)) return 80 + s.length;
-    if (/,|phố|đường|quận|huyện/i.test(s)) return 10 + s.length;
-    if (/^\d+[\w\s./-]*?(p\.|đ\.|ng\.)/i.test(s) && !/,/.test(s)) return 2 + s.length;
-    return 3 + s.length;
-  };
-  const sa = score(a);
-  const sb = score(b);
-  if (sa >= sb) return aClean || bClean;
-  return bClean || aClean;
-}
-
-function isValidAddressField(address) {
-  const a = sanitizeAddressField(address);
-  if (!a || a.length < 6) return false;
-  if (isVisitedLinkText(a)) return false;
-  if (/mở cửa|đóng cửa|đang mở|^["'""]/i.test(a)) return false;
-  if (/^\d[.,]\d\s*\(/.test(a)) return false;
-  if (/\d[.,]\d\s*\(\d+\)/.test(a)) return false;
-  return /,|phố|đường|quận|huyện|thành phố|thị trấn|thôn|xã|ấp|ngõ|ngách|hẻm|khu|lô|tổ|sn\.|số\s*\d|vietnam|việt nam|\d+\s+[\p{L}]/iu.test(
-    a
-  );
-}
-
-function isSuspectAddress(address) {
-  const a = (address || "").trim();
-  if (!a) return true;
-  if (isValidAddressField(a)) return false;
-  if (/mở cửa|đóng cửa|^["'""]/i.test(a) && !/,/.test(a)) return true;
-  if (/^\d[.,]\d/.test(a)) return true;
-  return a.length < 8;
-}
-
-function pickBetterPhone(a, b) {
-  const pa = normalizePhone(a).length >= 9;
-  const pb = normalizePhone(b).length >= 9;
-  if (pb) return (b || "").trim();
-  if (pa) return (a || "").trim();
-  return (b || a || "").trim();
-}
-
 function pickBetterRating(a, b) {
   const ra = a && /\d/.test(String(a));
   const rb = b && /\d/.test(String(b));
@@ -485,44 +382,6 @@ function pickBetterReviews(a, b) {
   if (nb > na) return String(b).trim();
   if (na > nb) return String(a).trim();
   return (b || a || "").trim();
-}
-
-function formatPhoneVN(phone) {
-  const digits = normalizePhone(phone);
-  if (digits.length < 9) return (phone || "").trim();
-  let d = digits;
-  if (d.startsWith("84") && d.length >= 11) d = "0" + d.slice(2);
-  if (d.length === 9 && !d.startsWith("0")) d = "0" + d;
-  if (d.length === 10 && d.startsWith("0")) {
-    return `${d.slice(0, 4)} ${d.slice(4, 7)} ${d.slice(7)}`.trim();
-  }
-  return d;
-}
-
-/** Giai đoạn 2: chỉ bổ sung trường còn thiếu; fast = đã có rating/địa chỉ từ list, chỉ cần SĐT */
-function getEnrichProfile(p) {
-  if (!p) return null;
-
-  const phoneOk = normalizePhone(p.phone).length >= 9;
-  const ratingOk = !!(p.rating && /\d/.test(String(p.rating)));
-  const reviewsOk = !!(p.reviews && String(p.reviews).replace(/\D/g, "").length > 0);
-  const addrOk = isValidAddressField(p.address) && !isSuspectAddress(p.address);
-
-  if (phoneOk && ratingOk && reviewsOk && addrOk) return null;
-
-  return {
-    fast: ratingOk && reviewsOk,
-    quick: ratingOk && reviewsOk && addrOk,
-    needPhone: !phoneOk,
-    needRating: !ratingOk,
-    needReviews: !reviewsOk,
-    needAddress: !addrOk || isSuspectAddress(p.address),
-    needWebsite: false
-  };
-}
-
-function placeNeedsEnrich(p) {
-  return getEnrichProfile(p) != null;
 }
 
 function mergePlaceRecord(target, source) {
@@ -546,13 +405,23 @@ function mergePlaceRecord(target, source) {
 
   const listDistanceKm = source.listDistanceKm ?? target.listDistanceKm;
 
+  // Tách SĐT từ địa chỉ thô TRƯỚC khi sanitize xóa chuỗi rác
+  const fromTarget = recoverContactFieldsFromAddress({
+    address: target.address,
+    phone: target.phone
+  });
+  const fromSource = recoverContactFieldsFromAddress({
+    address: source.address,
+    phone: source.phone
+  });
+
   Object.assign(target, {
     ...target,
     ...source,
     googlePlaceId: cid || target.googlePlaceId,
     placeId: cid || target.placeId,
-    phone: pickBetterPhone(target.phone, source.phone),
-    address: pickBetterAddress(target.address, source.address),
+    phone: pickBetterPhone(fromTarget.phone, fromSource.phone),
+    address: pickBetterAddress(fromTarget.address, fromSource.address),
     website: source.website || target.website,
     category: source.category || target.category,
     hours: source.hours || target.hours,
@@ -569,7 +438,7 @@ function mergePlaceRecord(target, source) {
     _enrichCellLng: source._enrichCellLng ?? target._enrichCellLng,
     _enrichSearchUrl: source._enrichSearchUrl || target._enrichSearchUrl
   });
-  return target;
+  return recoverContactFieldsFromAddress(target);
 }
 
 function dedupePlaces(places) {
@@ -679,7 +548,7 @@ function sanitizePlace(place, centerLat, centerLng, radiusKm, mapLat, mapLng) {
   void mapLng;
   if (!place) return null;
   if (!isValidPlaceName(place.name)) return null;
-  const p = { ...place };
+  const p = recoverContactFieldsFromAddress({ ...place });
   const cid = getCanonicalPlaceId(p.mapsUrl || p.href || "") || p.googlePlaceId;
   if (cid) {
     p.googlePlaceId = cid;

@@ -1,4 +1,4 @@
-importScripts("app-config.js", "web-config.js", "site-bridge.js", "grid.js");
+importScripts("app-config.js", "web-config.js", "site-bridge.js", "place-fields.js", "grid.js");
 
 /** URL search Maps — cạnh ô cố định (m), chỉ đổi tâm @lat,lng */
 function buildMapsUrl(keyword, lat, lng, viewportM) {
@@ -1781,7 +1781,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   scheduleMapsReloadRecovery();
 });
 
-const REQUIRED_CONTENT_VERSION = 53;
+const REQUIRED_CONTENT_VERSION = 56;
 
 async function ensureMapsContentReady(tabId) {
   for (let attempt = 0; attempt < 8; attempt++) {
@@ -1801,9 +1801,9 @@ async function ensureMapsContentReady(tabId) {
     } catch {}
 
     try {
+      // Xóa cờ trong isolated world (cùng world với content.js) — không dùng MAIN
       await chrome.scripting.executeScript({
         target: { tabId },
-        world: "MAIN",
         func: () => {
           try {
             delete window.__timDiemBanLoaded;
@@ -1813,7 +1813,7 @@ async function ensureMapsContentReady(tabId) {
       });
       await chrome.scripting.executeScript({
         target: { tabId },
-        files: ["grid.js", "content.js"]
+        files: ["place-fields.js", "grid.js", "content.js"]
       });
     } catch {}
     await sleep(500 + attempt * 150);
@@ -2565,7 +2565,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (!scrapeState._lastShieldItemAt || Date.now() - scrapeState._lastShieldItemAt > 400) {
       scrapeState._lastShieldItemAt = Date.now();
       updateMapsShield(
-        `v50 · Bước ${cellIdx + 1}/${cells} — tổng ${total} quán đã gửi · ${merged.name || ""}`.slice(0, 140),
+        `v${REQUIRED_CONTENT_VERSION} · Bước ${cellIdx + 1}/${cells} — tổng ${total} quán đã gửi · ${merged.name || ""}`.slice(0, 140),
         Math.max(pct, 3)
       );
     }

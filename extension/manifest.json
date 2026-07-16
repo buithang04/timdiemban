@@ -35,6 +35,7 @@
         "https://www.google.com/maps/*"
       ],
       "js": [
+        "place-fields.js",
         "grid.js",
         "content.js"
       ],
