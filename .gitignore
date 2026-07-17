@@ -9,6 +9,7 @@ server/.env
 landing/server/.env
 .env
 .env.*
+!server/.env.example
 *.log
 .DS_Store
 Thumbs.db

@@ -5,6 +5,7 @@ const mysql = require("mysql2/promise");
 const crypto = require("crypto");
 const {
   isSecretSettingKey,
+  isEncrypted,
   encryptSecret,
   decryptSecret,
   migrateSecretSettings
@@ -197,6 +198,31 @@ async function createTables() {
         updated_at VARCHAR(64)  NOT NULL
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     `);
+
+    await conn.execute(`
+      CREATE TABLE IF NOT EXISTS integration_links (
+        id                  BIGINT AUTO_INCREMENT PRIMARY KEY,
+        provider            VARCHAR(40)  NOT NULL,
+        findmap_user_id     VARCHAR(64)  NOT NULL,
+        jobs_user_id        BIGINT       NOT NULL,
+        jobs_user_name      VARCHAR(255) NOT NULL DEFAULT '',
+        jobs_user_email     VARCHAR(255) NOT NULL DEFAULT '',
+        jobs_user_role      VARCHAR(64)  NOT NULL DEFAULT '',
+        jobs_department_id  BIGINT       DEFAULT NULL,
+        jobs_base_url       VARCHAR(500) NOT NULL,
+        token_encrypted     TEXT         DEFAULT NULL,
+        status              VARCHAR(20)  NOT NULL DEFAULT 'active',
+        linked_at           VARCHAR(64)  NOT NULL,
+        last_sync_at        VARCHAR(64)  DEFAULT NULL,
+        revoked_at          VARCHAR(64)  DEFAULT NULL,
+        created_at          VARCHAR(64)  NOT NULL,
+        updated_at          VARCHAR(64)  NOT NULL,
+        UNIQUE KEY uq_integration_provider_findmap (provider, findmap_user_id),
+        KEY idx_integration_provider_jobs (provider, jobs_user_id),
+        KEY idx_integration_status (provider, status),
+        CONSTRAINT fk_integration_findmap_user FOREIGN KEY (findmap_user_id) REFERENCES users(id) ON DELETE CASCADE
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
   } finally {
     conn.release();
   }
@@ -378,6 +404,126 @@ async function setSetting(key, value) {
   );
 }
 
+function integrationLinkFromRow(row, includeToken = false) {
+  if (!row) return null;
+  const link = {
+    id: Number(row.id),
+    provider: row.provider,
+    findmapUserId: row.findmap_user_id,
+    jobsUserId: Number(row.jobs_user_id),
+    jobsUserName: row.jobs_user_name || "",
+    jobsUserEmail: row.jobs_user_email || "",
+    jobsUserRole: row.jobs_user_role || "",
+    jobsDepartmentId: row.jobs_department_id == null ? null : Number(row.jobs_department_id),
+    jobsBaseUrl: row.jobs_base_url,
+    status: row.status,
+    linkedAt: row.linked_at,
+    lastSyncAt: row.last_sync_at || null,
+    revokedAt: row.revoked_at || null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+  if (includeToken) {
+    link.integrationToken = decryptJobsIntegrationToken(row.token_encrypted);
+  }
+  return link;
+}
+
+function encryptJobsIntegrationToken(token) {
+  const encrypted = encryptSecret(String(token || ""));
+  if (!encrypted || !isEncrypted(encrypted)) {
+    throw new Error("Không mã hóa được integration token Jobs ClickOn");
+  }
+  return encrypted;
+}
+
+function decryptJobsIntegrationToken(stored) {
+  return isEncrypted(stored) ? decryptSecret(stored) : "";
+}
+
+function assertJobsIntegrationEncryptionReady() {
+  encryptJobsIntegrationToken("findmap-encryption-readiness-check");
+}
+
+async function getJobsIntegrationLink(findmapUserId, options = {}) {
+  const [rows] = await getPool().execute(
+    "SELECT * FROM integration_links WHERE provider = 'jobs_clickon' AND findmap_user_id = ? LIMIT 1",
+    [String(findmapUserId)]
+  );
+  return integrationLinkFromRow(rows[0], Boolean(options.includeToken));
+}
+
+async function saveJobsIntegrationLink(findmapUserId, data) {
+  const encryptedToken = encryptJobsIntegrationToken(data.integrationToken);
+
+  const conn = await getPool().getConnection();
+  const timestamp = new Date().toISOString();
+  try {
+    await conn.beginTransaction();
+    const [existingRows] = await conn.execute(
+      "SELECT id FROM integration_links WHERE provider = 'jobs_clickon' AND findmap_user_id = ? FOR UPDATE",
+      [String(findmapUserId)]
+    );
+    const values = [
+      Number(data.jobsUserId),
+      String(data.jobsUserName || ""),
+      String(data.jobsUserEmail || ""),
+      String(data.jobsUserRole || ""),
+      data.jobsDepartmentId == null ? null : Number(data.jobsDepartmentId),
+      String(data.jobsBaseUrl || ""),
+      encryptedToken,
+      String(data.linkedAt || timestamp),
+      timestamp
+    ];
+
+    if (existingRows[0]) {
+      await conn.execute(
+        `UPDATE integration_links
+         SET jobs_user_id = ?, jobs_user_name = ?, jobs_user_email = ?, jobs_user_role = ?,
+             jobs_department_id = ?, jobs_base_url = ?, token_encrypted = ?, status = 'active',
+             linked_at = ?, last_sync_at = NULL, revoked_at = NULL, updated_at = ?
+         WHERE id = ?`,
+        [...values, existingRows[0].id]
+      );
+    } else {
+      await conn.execute(
+        `INSERT INTO integration_links
+           (provider, findmap_user_id, jobs_user_id, jobs_user_name, jobs_user_email, jobs_user_role,
+            jobs_department_id, jobs_base_url, token_encrypted, status, linked_at, created_at, updated_at)
+         VALUES ('jobs_clickon', ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)`,
+        [String(findmapUserId), ...values.slice(0, 8), timestamp, timestamp]
+      );
+    }
+    await conn.commit();
+  } catch (error) {
+    await conn.rollback().catch(() => {});
+    throw error;
+  } finally {
+    conn.release();
+  }
+
+  return getJobsIntegrationLink(findmapUserId);
+}
+
+async function revokeJobsIntegrationLink(findmapUserId) {
+  const timestamp = new Date().toISOString();
+  await getPool().execute(
+    `UPDATE integration_links
+     SET status = 'revoked', token_encrypted = NULL, revoked_at = ?, updated_at = ?
+     WHERE provider = 'jobs_clickon' AND findmap_user_id = ?`,
+    [timestamp, timestamp, String(findmapUserId)]
+  );
+}
+
+async function touchJobsIntegrationSync(findmapUserId, syncedAt = new Date().toISOString()) {
+  await getPool().execute(
+    `UPDATE integration_links
+     SET last_sync_at = ?, updated_at = ?
+     WHERE provider = 'jobs_clickon' AND findmap_user_id = ? AND status = 'active'`,
+    [syncedAt, syncedAt, String(findmapUserId)]
+  );
+}
+
 module.exports = {
   initDb,
   getPool,
@@ -395,5 +541,12 @@ module.exports = {
   listPackages,
   getSetting,
   setSetting,
+  encryptJobsIntegrationToken,
+  decryptJobsIntegrationToken,
+  assertJobsIntegrationEncryptionReady,
+  getJobsIntegrationLink,
+  saveJobsIntegrationLink,
+  revokeJobsIntegrationLink,
+  touchJobsIntegrationSync,
   purgeExpiredTokens
 };

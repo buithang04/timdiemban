@@ -5,6 +5,9 @@ let currentUser = null;
 let rowKeyMap = new Map();
 let liveProgressText = "";
 let sentKeys = new Set(); // key của các dòng đã gửi thành công về site — chỉ để hiển thị, không xóa dữ liệu
+let jobsSyncResults = new Map();
+let jobsIntegrationStatus = { linked: false };
+let jobsSyncBusy = false;
 const TABLE_PAGE_SIZE = 50;
 let currentPage = 1;
 
@@ -28,6 +31,7 @@ function saveResultsToStorage(immediate = false) {
           data: currentData,
           search: currentSearch,
           sentKeys: Array.from(sentKeys),
+          jobsSyncResults: Array.from(jobsSyncResults.entries()),
           savedAt: Date.now()
         })
       );
@@ -48,12 +52,13 @@ function loadResultsFromStorage() {
   try {
     const raw = localStorage.getItem(STORAGE_RESULTS_KEY);
     if (!raw) return false;
-    const { data, search, sentKeys: sk } = JSON.parse(raw);
+    const { data, search, sentKeys: sk, jobsSyncResults: jsr } = JSON.parse(raw);
     if (!Array.isArray(data) || !data.length) return false;
     currentData = data;
     currentSearch = search || null;
     currentData.forEach((r) => ensureStableKey(r));
     if (Array.isArray(sk)) sk.forEach((k) => sentKeys.add(k));
+    jobsSyncResults = new Map(Array.isArray(jsr) ? jsr : []);
     dedupeCurrentDataKeepFirst();
     return true;
   } catch {
@@ -119,6 +124,16 @@ const els = {
   resetBtn: document.getElementById("resetBtn"),
   rescanBtn: document.getElementById("rescanBtn"),
   sendSiteBtn: document.getElementById("sendSiteBtn"),
+  syncJobsBtn: document.getElementById("syncJobsBtn"),
+  syncJobsHint: document.getElementById("syncJobsHint"),
+  jobsSyncSummary: document.getElementById("jobsSyncSummary"),
+  jobsSyncRequestId: document.getElementById("jobsSyncRequestId"),
+  jobsSyncTotal: document.getElementById("jobsSyncTotal"),
+  jobsSyncCreated: document.getElementById("jobsSyncCreated"),
+  jobsSyncDuplicate: document.getElementById("jobsSyncDuplicate"),
+  jobsSyncInvalid: document.getElementById("jobsSyncInvalid"),
+  jobsSyncFailed: document.getElementById("jobsSyncFailed"),
+  jobsSyncMessage: document.getElementById("jobsSyncMessage"),
   searchFilter: document.getElementById("searchFilter"),
   filterCount: document.getElementById("filterCount"),
   resultsBadge: document.getElementById("resultsBadge"),
@@ -187,6 +202,7 @@ function setAuthToken(token) {
     localStorage.setItem(AUTH_TOKEN_KEY, token);
     window.FindmapSessionCookie?.setSessionCookie?.();
   } else {
+    jobsIntegrationStatus = { linked: false };
     localStorage.removeItem(AUTH_TOKEN_KEY);
     window.FindmapSessionCookie?.clearSessionCookie?.();
   }
@@ -200,7 +216,12 @@ async function parseApiResponse(res) {
     );
   }
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || `Lỗi ${res.status}`);
+  if (!res.ok) {
+    const error = new Error(data.error || `Lỗi ${res.status}`);
+    error.status = res.status;
+    error.code = data.code || "";
+    throw error;
+  }
   return data;
 }
 
@@ -268,6 +289,7 @@ function updateAuthUI() {
     if (adminNav) adminNav.classList.add("hidden");
   }
   updateStatUsed();
+  updateSyncJobsButton();
   renderPackageButtons();
   renderPendingPackageNotice();
 }
@@ -1137,6 +1159,23 @@ const MAP_PIN_ICON =
 const TRASH_ICON =
   '<svg width="18" height="18" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" /></svg>';
 
+function jobsStatusBadge(row) {
+  const result = jobsSyncResults.get(getDomKey(row));
+  if (!result) return "";
+  const labels = {
+    created: "JOBS: ĐÃ TẠO",
+    duplicate: "JOBS: TRÙNG SỐ",
+    invalid: "JOBS: KHÔNG HỢP LỆ",
+    failed: "JOBS: LỖI TẠM THỜI",
+    forbidden: "JOBS: KHÔNG CÓ QUYỀN"
+  };
+  const label = labels[result.status] || "JOBS: LỖI TẠM THỜI";
+  const statusClass = ["created", "duplicate", "invalid", "failed"].includes(result.status)
+    ? result.status
+    : "failed";
+  return `<div class="wm-jobs-status"><span class="wm-status-badge wm-status-jobs-${statusClass}" title="${escapeAttr(result.message || "")}">${label}</span></div>`;
+}
+
 function buildRowHtml(row, stt) {
   const key = escapeAttr(getDomKey(row));
   const displayStt = stt != null ? stt : getRowStt(key);
@@ -1162,7 +1201,7 @@ function buildRowHtml(row, stt) {
     <td class="col-website">${formatWebsiteCell(row)}</td>
     <td class="col-rating">${formatRatingCell(row)}</td>
     <td class="col-coords" title="${escapeAttr(coords)}">${escapeHtml(coords)}</td>
-    <td class="col-status">${statusBadge}</td>
+    <td class="col-status">${statusBadge}${jobsStatusBadge(row)}</td>
     <td class="col-actions">
       ${viewBtn}
       <button type="button" class="wm-icon-btn wm-icon-btn-danger" data-action="delete" data-key="${key}" title="Xóa">${TRASH_ICON}</button>
@@ -1472,6 +1511,7 @@ function renderEmptyTableRow() {
   if (els.checkAllRows) els.checkAllRows.checked = false;
   currentPage = 1;
   updateFilterCount();
+  updateSyncJobsButton();
 }
 
 function renderFullTable() {
@@ -1502,6 +1542,7 @@ function renderFullTable() {
   if (els.checkAllRows) els.checkAllRows.checked = false;
   updateFilterCount();
   updateStatUsed();
+  updateSyncJobsButton();
 }
 
 let lastRowScrollAt = 0;
@@ -1744,6 +1785,157 @@ function getRowsToSend() {
     return currentData.filter((r) => set.has(getDomKey(r)));
   }
   return currentData;
+}
+
+function normalizeJobsPhone(phone) {
+  let digits = String(phone || "").replace(/\D+/g, "");
+  if (digits.startsWith("84") && digits.length >= 11) digits = `0${digits.slice(2)}`;
+  return digits.length >= 9 && digits.length <= 11 ? digits : "";
+}
+
+function getSelectedJobsRows() {
+  const checked = new Set(getCheckedKeys());
+  if (!checked.size) return [];
+  return currentData.filter((row) => checked.has(getDomKey(row)));
+}
+
+function updateSyncJobsButton() {
+  if (!els.syncJobsBtn) return;
+  const selected = getSelectedJobsRows();
+  const validCount = selected.filter((row) => normalizeJobsPhone(row.phone)).length;
+  const linked = Boolean(currentUser && jobsIntegrationStatus?.linked);
+
+  els.syncJobsBtn.disabled = jobsSyncBusy || !linked || validCount < 1;
+  els.syncJobsBtn.textContent = jobsSyncBusy
+    ? "Đang đồng bộ..."
+    : validCount > 0
+      ? `Đồng bộ Jobs (${validCount})`
+      : "Đồng bộ Jobs";
+  els.syncJobsBtn.title = !currentUser
+    ? "Đăng nhập Findmap để đồng bộ"
+    : !jobsIntegrationStatus?.linked
+      ? "Chưa kết nối Jobs ClickOn"
+      : validCount < 1
+        ? "Chọn ít nhất một dòng có số điện thoại hợp lệ"
+        : `Đồng bộ ${validCount} dòng có số điện thoại sang Jobs ClickOn`;
+
+  if (els.syncJobsHint) {
+    els.syncJobsHint.innerHTML = linked
+      ? `Đang gán cho <strong>${escapeHtml(jobsIntegrationStatus.name || jobsIntegrationStatus.email || "tài khoản Jobs")}</strong>`
+      : 'Kết nối tài khoản tại <a href="/ket-noi-jobs">Kết nối Jobs</a>';
+  }
+}
+
+async function loadJobsIntegrationStatus() {
+  if (!currentUser) {
+    jobsIntegrationStatus = { linked: false };
+    updateSyncJobsButton();
+    return jobsIntegrationStatus;
+  }
+  try {
+    jobsIntegrationStatus = await apiRequest("/api/integrations/jobs/status");
+  } catch (error) {
+    jobsIntegrationStatus = { linked: false, error: error.message };
+    if (els.syncJobsHint) {
+      els.syncJobsHint.textContent = "Không tải được trạng thái Jobs. Kiểm tra lại trang kết nối.";
+    }
+  }
+  updateSyncJobsButton();
+  return jobsIntegrationStatus;
+}
+
+function rowToJobsSyncPayload(row) {
+  const coords = resolveRowCoords(row);
+  return {
+    client_key: getDomKey(row),
+    place_id: row.googlePlaceId || row.placeId || "",
+    name: row.name || "",
+    phone: row.phone || "",
+    address: row.address || "",
+    website: row.website || "",
+    rating: row.rating ?? "",
+    latitude: coords?.lat ?? null,
+    longitude: coords?.lng ?? null,
+    google_maps_url: getMapsViewUrl(row),
+    category: row.category || currentSearch?.keyword || "",
+    notes: row.notes || "",
+    searched_at: row.searchedAt || currentSearch?.completedAt || currentSearch?.createdAt || new Date().toISOString()
+  };
+}
+
+function showJobsSyncSummary(summary = {}, requestId = "", message = "", isError = false) {
+  if (!els.jobsSyncSummary) return;
+  els.jobsSyncSummary.classList.remove("hidden");
+  els.jobsSyncSummary.classList.toggle("error", isError);
+  if (els.jobsSyncRequestId) els.jobsSyncRequestId.textContent = requestId || "";
+  if (els.jobsSyncTotal) els.jobsSyncTotal.textContent = String(summary.total || 0);
+  if (els.jobsSyncCreated) els.jobsSyncCreated.textContent = String(summary.created || 0);
+  if (els.jobsSyncDuplicate) els.jobsSyncDuplicate.textContent = String(summary.duplicate || 0);
+  if (els.jobsSyncInvalid) els.jobsSyncInvalid.textContent = String(summary.invalid || 0);
+  if (els.jobsSyncFailed) els.jobsSyncFailed.textContent = String(summary.failed || 0);
+  if (els.jobsSyncMessage) els.jobsSyncMessage.textContent = message || "";
+}
+
+async function syncSelectedRowsToJobs() {
+  const selected = getSelectedJobsRows();
+  const validCount = selected.filter((row) => normalizeJobsPhone(row.phone)).length;
+  if (!jobsIntegrationStatus?.linked || validCount < 1 || jobsSyncBusy) return;
+
+  const requestNonce = globalThis.crypto?.randomUUID?.() || Math.random().toString(16).slice(2, 10);
+  const requestId = `findmap-${Date.now()}-${requestNonce}`;
+  jobsSyncBusy = true;
+  updateSyncJobsButton();
+  showJobsSyncSummary({ total: selected.length }, requestId, "Đang gửi dữ liệu...", false);
+  try {
+    const response = await apiRequest("/api/integrations/jobs/sync-customers", {
+      method: "POST",
+      body: JSON.stringify({
+        request_id: requestId,
+        items: selected.map(rowToJobsSyncPayload)
+      })
+    });
+    (response.items || []).forEach((item) => {
+      if (!item.client_key) return;
+      jobsSyncResults.set(item.client_key, {
+        status: item.status,
+        message: item.message || "",
+        clientId: item.client_id || null,
+        updatedAt: new Date().toISOString()
+      });
+    });
+    showJobsSyncSummary(
+      response.summary,
+      response.request_id,
+      response.replayed ? "Yêu cầu đã được xử lý trước đó; kết quả được trả lại an toàn." : "Đồng bộ hoàn tất.",
+      Number(response.summary?.failed || 0) > 0
+    );
+    saveResultsToStorage(true);
+    renderFullTable();
+    await loadJobsIntegrationStatus();
+  } catch (error) {
+    const status = error.status === 403 ? "forbidden" : "failed";
+    selected.forEach((row) => {
+      jobsSyncResults.set(getDomKey(row), {
+        status,
+        message: error.message,
+        updatedAt: new Date().toISOString()
+      });
+    });
+    showJobsSyncSummary(
+      { total: selected.length, failed: selected.length },
+      requestId,
+      error.message,
+      true
+    );
+    saveResultsToStorage(true);
+    renderFullTable();
+    if (error.status === 401 || error.code === "jobs_token_invalid") {
+      await loadJobsIntegrationStatus();
+    }
+  } finally {
+    jobsSyncBusy = false;
+    updateSyncJobsButton();
+  }
 }
 
 let winmapSite = { url: "", host: "", label: "", hasToken: false, configured: false };
@@ -2459,11 +2651,13 @@ function clearAllData() {
   filteredData = [];
   rowKeyMap.clear();
   sentKeys.clear();
+  jobsSyncResults.clear();
   currentSearch = null;
   currentPage = 1;
   awaitingNewSearchResults = false;
   resetRescanUiState();
   renderEmptyTableRow();
+  els.jobsSyncSummary?.classList.add("hidden");
   if (els.searchFilter) els.searchFilter.value = "";
   hideErrorBanner();
   hideLiveProgress();
@@ -2548,6 +2742,7 @@ els.resetBtn?.addEventListener("click", () => {
 });
 els.rescanBtn?.addEventListener("click", rescanMissingRows);
 els.sendSiteBtn?.addEventListener("click", sendAllToWinmapSite);
+els.syncJobsBtn?.addEventListener("click", syncSelectedRowsToJobs);
 
 els.resultsBody?.addEventListener("click", (e) => {
   const btn = e.target.closest("[data-action]");
@@ -2583,12 +2778,14 @@ els.checkAllRows?.addEventListener("change", (e) => {
     cb.checked = checked;
   });
   updateSendSiteButton();
+  updateSyncJobsButton();
   updateRescanBtn();
 });
 
 els.resultsBody?.addEventListener("change", (e) => {
   if (e.target.classList?.contains("row-check")) {
     updateSendSiteButton();
+    updateSyncJobsButton();
     updateRescanBtn();
   }
 });
@@ -2758,6 +2955,7 @@ window.addEventListener("timdiemban:bridge-ready", (e) => {
 loadCurrentUser().then(async () => {
   await loadPendingPackageOrders();
   await loadWinmapSite();
+  await loadJobsIntegrationStatus();
 
   // Khôi phục dữ liệu đã lưu từ phiên trước
   if (loadResultsFromStorage()) {

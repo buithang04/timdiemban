@@ -45,6 +45,10 @@
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
         Tìm điểm bán
       </a>
+      <a href="/ket-noi-jobs" class="wm-nav-item">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l2-2a5 5 0 0 0-7.07-7.07l-1.15 1.15"/><path d="M14 11a5 5 0 0 0-7.54-.54l-2 2a5 5 0 0 0 7.07 7.07l1.14-1.14"/></svg>
+        Kết nối Jobs
+      </a>
       <a href="/nap-diem" class="wm-nav-item">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
         Nạp điểm
@@ -62,6 +66,8 @@
     <div class="wm-sidebar-send">
       <button type="button" id="sendSiteBtn" class="wm-btn wm-btn-primary wm-sidebar-send-btn" disabled title="Chưa cấu hình site">Gửi về site</button>
       <p class="wm-sidebar-send-hint">Cấu hình URL + token tại <a href="/cau-hinh-site">Cấu hình site</a></p>
+      <button type="button" id="syncJobsBtn" class="wm-btn wm-btn-outline-blue wm-sidebar-send-btn" disabled title="Chưa kết nối Jobs ClickOn">Đồng bộ Jobs</button>
+      <p id="syncJobsHint" class="wm-sidebar-send-hint">Kết nối tài khoản tại <a href="/ket-noi-jobs">Kết nối Jobs</a></p>
     </div>
 
     <div class="wm-sidebar-foot">
@@ -263,6 +269,21 @@
               Xuất Excel
             </button>
           </div>
+        </div>
+
+        <div id="jobsSyncSummary" class="jobs-sync-summary hidden" role="status">
+          <div class="jobs-sync-summary-head">
+            <strong>Kết quả đồng bộ Jobs</strong>
+            <span id="jobsSyncRequestId"></span>
+          </div>
+          <div class="jobs-sync-summary-grid">
+            <span>Tổng gửi <strong id="jobsSyncTotal">0</strong></span>
+            <span>Đã tạo <strong id="jobsSyncCreated">0</strong></span>
+            <span>Trùng số <strong id="jobsSyncDuplicate">0</strong></span>
+            <span>Không hợp lệ <strong id="jobsSyncInvalid">0</strong></span>
+            <span>Thất bại <strong id="jobsSyncFailed">0</strong></span>
+          </div>
+          <p id="jobsSyncMessage" class="jobs-sync-message"></p>
         </div>
 
         <div class="wm-table-wrap">

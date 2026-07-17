@@ -29,6 +29,10 @@ const {
 
 const dbModule = require("./db");
 const authModule = require("./auth-store");
+const {
+  JobsIntegrationError,
+  createJobsIntegrationService
+} = require("./jobs-integration");
 
 const { getSetting, setSetting } = dbModule;
 const {
@@ -215,6 +219,11 @@ function createRateLimiter({ windowMs, max, keyPrefix }) {
 
 const apiRateLimit = createRateLimiter({ windowMs: 60 * 1000, max: 600, keyPrefix: "api" });
 const authWriteRateLimit = createRateLimiter({ windowMs: 60 * 1000, max: 30, keyPrefix: "authw" });
+const jobsIntegrationRateLimit = createRateLimiter({
+  windowMs: 60 * 1000,
+  max: 30,
+  keyPrefix: "jobs-integration"
+});
 
 function sanitizeValue(val, key) {
   // Không làm biến dạng mật khẩu (ký tự đặc biệt hợp lệ).
@@ -322,6 +331,19 @@ async function requireAdmin(req, res, next) {
   } catch (err) {
     next(err);
   }
+}
+
+const jobsIntegration = createJobsIntegrationService({ db: dbModule });
+
+function sendJobsIntegrationError(res, error) {
+  const status = error instanceof JobsIntegrationError ? error.status : 500;
+  if (!(error instanceof JobsIntegrationError)) {
+    console.error("[Jobs integration]", error?.message || error);
+  }
+  return res.status(status).json({
+    error: error?.message || "Không xử lý được yêu cầu tích hợp Jobs ClickOn.",
+    code: error instanceof JobsIntegrationError ? error.code : "jobs_integration_error"
+  });
 }
 
 async function isVietQrConfigured() {
@@ -590,6 +612,45 @@ app.post("/api/auth/accept-terms", authWriteRateLimit, requireAuth, async (req, 
     res.json({ ok: true, user });
   } catch (err) {
     res.status(400).json({ error: err.message });
+  }
+});
+
+app.get("/api/integrations/jobs/status", jobsIntegrationRateLimit, requireAuth, async (req, res) => {
+  try {
+    const verify = String(req.query.verify || "") === "1";
+    res.json(await jobsIntegration.status(req.user.id, { verify }));
+  } catch (error) {
+    sendJobsIntegrationError(res, error);
+  }
+});
+
+app.post("/api/integrations/jobs/connect", jobsIntegrationRateLimit, requireAuth, async (req, res) => {
+  try {
+    res.json(await jobsIntegration.connect(req.user, req.body?.pairing_code));
+  } catch (error) {
+    sendJobsIntegrationError(res, error);
+  }
+});
+
+app.delete("/api/integrations/jobs/disconnect", jobsIntegrationRateLimit, requireAuth, async (req, res) => {
+  try {
+    res.json(await jobsIntegration.disconnect(req.user.id));
+  } catch (error) {
+    sendJobsIntegrationError(res, error);
+  }
+});
+
+app.post("/api/integrations/jobs/sync-customers", jobsIntegrationRateLimit, requireAuth, async (req, res) => {
+  try {
+    res.json(
+      await jobsIntegration.syncCustomers(
+        req.user.id,
+        req.body?.items,
+        req.body?.request_id
+      )
+    );
+  } catch (error) {
+    sendJobsIntegrationError(res, error);
   }
 });
 
@@ -1304,6 +1365,7 @@ const webPages = {
   "/admin": "admin.html",
   "/nap-diem": "nap-diem.html",
   "/cau-hinh-site": "cau-hinh-site.html",
+  "/ket-noi-jobs": "ket-noi-jobs.html",
   "/quen-mat-khau": "quen-mat-khau.html",
   "/dat-lai-mat-khau": "dat-lai-mat-khau.html"
 };
@@ -1339,6 +1401,7 @@ const legacyHtmlRedirects = {
   "/login-admin.html": "/login",
   "/nap-diem.html": "/nap-diem",
   "/cau-hinh-site.html": "/cau-hinh-site",
+  "/ket-noi-jobs.html": "/ket-noi-jobs",
   "/quen-mat-khau.html": "/quen-mat-khau",
   "/dat-lai-mat-khau.html": "/dat-lai-mat-khau",
   "/index.html": "/",

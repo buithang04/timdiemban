@@ -2648,3 +2648,83 @@ body.wm-console .wm-table .col-addr {
 body.wm-console .wm-header {
   border-bottom-color: var(--wm-line);
 }
+
+.wm-sidebar-send #syncJobsBtn {
+  margin-top: 10px;
+  width: 100%;
+}
+
+.jobs-sync-summary {
+  border-top: 1px solid #bfdbfe;
+  border-bottom: 1px solid #bfdbfe;
+  background: #eff6ff;
+  padding: 12px 20px;
+  color: #1e3a8a;
+}
+
+.jobs-sync-summary.error {
+  border-color: #fecaca;
+  background: #fef2f2;
+  color: #991b1b;
+}
+
+.jobs-sync-summary-head,
+.jobs-sync-summary-grid {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 18px;
+}
+
+.jobs-sync-summary-head {
+  justify-content: space-between;
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+
+.jobs-sync-summary-head span {
+  color: #64748b;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+}
+
+.jobs-sync-summary-grid {
+  font-size: 12px;
+}
+
+.jobs-sync-summary-grid strong {
+  color: #0f172a;
+  margin-left: 3px;
+}
+
+.jobs-sync-message {
+  margin: 8px 0 0;
+  font-size: 12px;
+}
+
+.wm-jobs-status {
+  margin-top: 4px;
+}
+
+.wm-status-jobs-created {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.wm-status-jobs-duplicate {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.wm-status-jobs-invalid,
+.wm-status-jobs-failed {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+@media (max-width: 640px) {
+  .jobs-sync-summary-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
