@@ -153,6 +153,34 @@ test("tab Maps mở ở nền, ưu tiên chế độ quét nền và chỉ focus
   assert.match(rescanOpen, /if \(!boosted\) await activateTabAndWindow\(tab\.id\)/);
 });
 
+test("dừng quét gỡ debugger ngay và dọn dẹp kể cả khi sync cuối lỗi", () => {
+  const finalize = section("async function finalizeFromCheckpoint", "async function abortSearch");
+  const abort = section("async function abortSearch", "async function cancelActiveSearch");
+  const abandon = section("async function abandonActiveSearch", "async function ensureReadyForNewSearch");
+  const complete = section(
+    "async function handleScrapeComplete",
+    "chrome.runtime.onMessage.addListener"
+  );
+
+  assert.match(finalize, /disableMapsBoost\(\)/);
+  assert.match(abort, /disableMapsBoost\(\)/);
+  assert.match(abandon, /disableMapsBoost\(\)/);
+  assert.match(complete, /disableMapsBoost\(\)/);
+
+  // Dọn dẹp phải nằm trong finally — lỗi giữa chừng không được làm kẹt debugger/tab
+  assert.match(abort, /\} finally \{\s*isAborting = false;/);
+  assert.match(complete, /\} finally \{[\s\S]*closeMapsTabSafely\(\);[\s\S]*resetScrapeState\(\);/);
+});
+
+test("không gắn lại debugger sau khi đã dừng quét (tick đang bay bị chặn)", async () => {
+  const { context, state } = loadBoostHelpers();
+  context.scrapeState.running = false;
+  context.rescanState.running = false;
+
+  assert.equal(await context.ensureMapsBoost(7), false);
+  assert.equal(state.attachCalls.length, 0, "ensureMapsBoost không được attach khi đã dừng");
+});
+
 test("chế độ quét nền được duy trì suốt phiên và nhả khi kết thúc", () => {
   const keepalive = section("async function scrapeKeepAliveTick", "async function focusMapsTabForSearch");
   const navigate = section("async function navigateMapsTab", "async function handleMapsTabReloaded");

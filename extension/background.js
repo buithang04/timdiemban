@@ -227,6 +227,8 @@ async function enableMapsBoost(tabId) {
 
 /** Gọi sau điều hướng/định kỳ: gắn lại nếu rớt, phát lại lệnh nếu đã lâu. */
 async function ensureMapsBoost(tabId) {
+  // Chặn tick/điều hướng đang bay gắn lại debugger sau khi đã dừng quét.
+  if (!scrapeState.running && !rescanState.running) return false;
   if (!isMapsBoostSupported() || mapsBoost.unavailable || !Number.isInteger(tabId)) return false;
   if (!mapsBoost.attached || mapsBoost.tabId !== tabId) return enableMapsBoost(tabId);
   if (Date.now() - mapsBoost.lastAssertAt > 5000) await assertMapsBoostState();
@@ -1366,6 +1368,7 @@ async function finalizeFromCheckpoint(reason) {
   restoreScrapeStateFromCheckpoint(cp);
   scrapeState.running = false;
   scrapeState.runId = "";
+  disableMapsBoost().catch(() => {});
 
   if (scrapeState.mapsTabId) {
     try {
@@ -1377,22 +1380,26 @@ async function finalizeFromCheckpoint(reason) {
   }
 
   if (scrapeState.mergedPlaces.size > 0) {
+    const count = scrapeState.mergedPlaces.size;
     await handleScrapeComplete({
       searchParams: scrapeState.searchParams,
       partial: true,
       partialReason: reason || "Dừng tìm kiếm — lưu kết quả đã tìm"
     });
-    return { success: true, charged: true, count: scrapeState.mergedPlaces.size };
+    return { success: true, charged: true, count };
   }
 
-  if (scrapeState.searchParams?.webUrl) {
-    await sendToWebPage(scrapeState.searchParams.webUrl, "error", {
-      error: reason || "Tìm kiếm đã dừng",
-      partial: false
-    });
+  try {
+    if (scrapeState.searchParams?.webUrl) {
+      await sendToWebPage(scrapeState.searchParams.webUrl, "error", {
+        error: reason || "Tìm kiếm đã dừng",
+        partial: false
+      });
+    }
+  } finally {
+    await closeMapsTabSafely();
+    resetScrapeState();
   }
-  await closeMapsTabSafely();
-  resetScrapeState();
   return { success: true, charged: false, count: 0 };
 }
 
@@ -1406,36 +1413,45 @@ async function abortSearch(code, message, { chargePartial = true } = {}) {
 
   isAborting = true;
   scrapeState.running = false;
+  // Ngừng quét là hết cần chế độ quét nền — gỡ debugger ngay, không đợi sync cuối.
+  disableMapsBoost().catch(() => {});
 
-  if (scrapeState.mapsTabId) {
-    try {
-      await chrome.tabs.sendMessage(scrapeState.mapsTabId, { action: "SCRAPE_ABORT" });
-    } catch {}
-  }
+  try {
+    if (scrapeState.mapsTabId) {
+      try {
+        await chrome.tabs.sendMessage(scrapeState.mapsTabId, { action: "SCRAPE_ABORT" });
+      } catch {}
+    }
 
-  notifyPopup(message);
+    notifyPopup(message);
 
-  const hasResults = scrapeState.mergedPlaces.size > 0;
-  if (chargePartial && hasResults && scrapeState.searchParams && !pointsFinalized) {
-    await handleScrapeComplete({
-      searchParams: scrapeState.searchParams,
-      partial: true,
-      partialReason: message,
-      partialCode: code
-    });
-  } else if (scrapeState.searchParams?.webUrl) {
-    await sendToWebPage(scrapeState.searchParams.webUrl, "error", {
-      error: message,
-      code,
-      partial: !!hasResults
-    });
+    const hasResults = scrapeState.mergedPlaces.size > 0;
+    if (chargePartial && hasResults && scrapeState.searchParams && !pointsFinalized) {
+      await handleScrapeComplete({
+        searchParams: scrapeState.searchParams,
+        partial: true,
+        partialReason: message,
+        partialCode: code
+      });
+    } else if (scrapeState.searchParams?.webUrl) {
+      await sendToWebPage(scrapeState.searchParams.webUrl, "error", {
+        error: message,
+        code,
+        partial: !!hasResults
+      });
+      await closeMapsTabSafely();
+      resetScrapeState();
+    } else {
+      resetScrapeState();
+    }
+  } catch (err) {
+    // Sync cuối lỗi giữa chừng cũng không được để tab/debugger kẹt lại.
+    console.warn("abortSearch:", err?.message || err);
     await closeMapsTabSafely();
     resetScrapeState();
-  } else {
-    resetScrapeState();
+  } finally {
+    isAborting = false;
   }
-
-  isAborting = false;
 }
 
 async function cancelActiveSearch(reason) {
@@ -1449,6 +1465,7 @@ async function cancelActiveSearch(reason) {
 async function abandonActiveSearch() {
   if (scrapeState.running || scrapeState.searchParams) {
     scrapeState.running = false;
+    disableMapsBoost().catch(() => {});
     if (scrapeState.mapsTabId) {
       try {
         await chrome.tabs.sendMessage(scrapeState.mapsTabId, {
@@ -2489,6 +2506,8 @@ async function handleScrapeComplete(data) {
 
   scrapeState.phase = partial ? "partial" : "completed";
   scrapeState.running = false;
+  // Quét đã xong — gỡ debugger ngay; phần sync còn lại chỉ làm việc với tab Findmap.
+  disableMapsBoost().catch(() => {});
 
   const completePayload = {
     results: finalResults,
@@ -2508,48 +2527,50 @@ async function handleScrapeComplete(data) {
     partialCode: partialCode || null
   };
 
-  // Đồng bộ snapshot đầy đủ trước complete — tránh web nhận ít hơn extension
-  await pushSyncSnapshotToWeb(`Đang đồng bộ ${finalResults.length} điểm bán về Findmap…`, 99);
-  for (let syncTry = 0; syncTry < 6; syncTry++) {
-    const tab = scrapeState.webTabId
-      ? await chrome.tabs.get(scrapeState.webTabId).catch(() => null)
-      : await findWebTab(searchParams.webUrl);
-    if (tab?.id) {
-      scrapeState.webTabId = tab.id;
-      const verified = await verifyWebReceived(
-        tab.id,
-        finalResults.length,
-        searchParams.searchId
-      );
-      if (verified.ok) break;
+  try {
+    // Đồng bộ snapshot đầy đủ trước complete — tránh web nhận ít hơn extension
+    await pushSyncSnapshotToWeb(`Đang đồng bộ ${finalResults.length} điểm bán về Findmap…`, 99);
+    for (let syncTry = 0; syncTry < 6; syncTry++) {
+      const tab = scrapeState.webTabId
+        ? await chrome.tabs.get(scrapeState.webTabId).catch(() => null)
+        : await findWebTab(searchParams.webUrl);
+      if (tab?.id) {
+        scrapeState.webTabId = tab.id;
+        const verified = await verifyWebReceived(
+          tab.id,
+          finalResults.length,
+          searchParams.searchId
+        );
+        if (verified.ok) break;
+      }
+      await pushSyncSnapshotToWeb(`Đang kiểm tra và bổ sung kết quả về Findmap · Lần ${syncTry + 2}`, 99);
+      await sleep(400 * (syncTry + 1));
     }
-    await pushSyncSnapshotToWeb(`Đang kiểm tra và bổ sung kết quả về Findmap · Lần ${syncTry + 2}`, 99);
-    await sleep(400 * (syncTry + 1));
+
+    // Retry gửi complete nhiều lần — đảm bảo web page nhận kết quả ngay cả khi không active
+    let sent = false;
+    for (let i = 0; i < 8 && !sent; i++) {
+      sent = await sendToWebPage(searchParams.webUrl, "complete", completePayload);
+      if (!sent) await sleep(1500);
+    }
+    // Fallback: nếu vẫn chưa gửi được, lưu kết quả vào storage để web page tự lấy khi active
+    if (!sent) {
+      try {
+        await chrome.storage.local.set({ pendingComplete: completePayload });
+      } catch {}
+    }
+
+    chrome.runtime.sendMessage({
+      action: "SEARCH_COMPLETE",
+      count: finalResults.length,
+      searchId: searchParams.searchId,
+      user: null
+    }).catch(() => {});
+  } finally {
+    // Dù sync có lỗi giữa chừng, tab Maps và trạng thái quét luôn được dọn.
+    await closeMapsTabSafely();
+    resetScrapeState();
   }
-
-  // Retry gửi complete nhiều lần — đảm bảo web page nhận kết quả ngay cả khi không active
-  let sent = false;
-  for (let i = 0; i < 8 && !sent; i++) {
-    sent = await sendToWebPage(searchParams.webUrl, "complete", completePayload);
-    if (!sent) await sleep(1500);
-  }
-  // Fallback: nếu vẫn chưa gửi được, lưu kết quả vào storage để web page tự lấy khi active
-  if (!sent) {
-    try {
-      await chrome.storage.local.set({ pendingComplete: completePayload });
-    } catch {}
-  }
-
-  await closeMapsTabSafely();
-
-  chrome.runtime.sendMessage({
-    action: "SEARCH_COMPLETE",
-    count: finalResults.length,
-    searchId: searchParams.searchId,
-    user: null
-  }).catch(() => {});
-
-  resetScrapeState();
   return { success: true };
 }
 
