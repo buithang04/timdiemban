@@ -71,7 +71,7 @@
   function updateMapsAutoFocusLabel() {
     if (!els.mapsAutoFocusLabel) return;
     const mins = getMapsAutoFocusMinutes();
-    els.mapsAutoFocusLabel.textContent = `Tự đưa tab Maps lên trước mỗi ${mins} phút khi đang quét. Lúc bắt đầu Findmap luôn chuyển sang Maps; tùy chọn này có thể đổi cửa sổ.`;
+    els.mapsAutoFocusLabel.textContent = `Tùy chọn theo dõi: tự đưa tab Google Maps lên trước mỗi ${mins} phút khi đang quét. Mặc định Findmap quét ở tab nền — bạn có thể làm việc ở tab khác, chỉ cần không đóng tab Maps.`;
   }
 
   function syncMapsAutoFocusCheckbox(enabled) {
@@ -1044,8 +1044,8 @@
       try {
         await requestStartSearch(searchParams);
         const autoFocusHint = searchParams.mapsAutoFocus
-          ? `Đã chuyển sang Maps; Findmap sẽ đưa tab đó lên trước mỗi ${getMapsAutoFocusMinutes()} phút nếu cần.`
-          : "Đã chuyển sang tab Google Maps; giữ tab đó mở để quét ổn định.";
+          ? `Findmap sẽ đưa tab Google Maps lên trước mỗi ${getMapsAutoFocusMinutes()} phút để bạn theo dõi.`
+          : "Google Maps đang quét ở tab nền — bạn có thể tiếp tục làm việc, chỉ cần không đóng tab Maps.";
         showSearchStatus(`Đang tìm "${keyword}" — ${autoFocusHint}`, "info");
       } catch (err) {
         showSearchStatus(err.message, "error");

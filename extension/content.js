@@ -78,8 +78,13 @@
       bgWakeInterval = null;
     }
   }
+  let antiThrottleCtx = null;
+
   function startAntiThrottle() {
-    stopAntiThrottle();
+    if (antiThrottleCtx) {
+      resumeAntiThrottle();
+      return;
+    }
     try {
       const Ctx = window.AudioContext || window.webkitAudioContext;
       if (!Ctx) return;
@@ -90,6 +95,7 @@
       osc.connect(gain);
       gain.connect(ctx.destination);
       osc.start();
+      antiThrottleCtx = ctx;
       if (ctx.state === "suspended") ctx.resume().catch(() => {});
       antiThrottleStop = () => {
         try {
@@ -97,9 +103,23 @@
           ctx.close();
         } catch {}
         antiThrottleStop = null;
+        antiThrottleCtx = null;
       };
     } catch {}
   }
+
+  // AudioContext thường bị chặn autoplay tới khi trang có user gesture —
+  // background phát gesture qua debugger rồi bắn event này để mở khóa.
+  function resumeAntiThrottle() {
+    if (antiThrottleCtx?.state === "suspended") antiThrottleCtx.resume().catch(() => {});
+  }
+
+  function handleAudioUnlock() {
+    startAntiThrottle();
+    resumeAntiThrottle();
+  }
+
+  document.addEventListener("timdiemban-audio-unlock", handleAudioUnlock);
 
   function stopAntiThrottle() {
     if (antiThrottleStop) antiThrottleStop();
@@ -108,17 +128,31 @@
   function sleep(ms) {
     return new Promise((resolve) => {
       const deadline = Date.now() + ms;
+      let done = false;
       const step = () => {
+        if (done) return;
         const left = deadline - Date.now();
-        if (left <= 0) return resolve();
+        if (left <= 0) {
+          done = true;
+          return resolve();
+        }
+        let timer = null;
+        let advanced = false;
+        // Mỗi vòng chỉ đi tiếp đúng một lần dù timer, wake hay rAF đến trước.
+        const advance = () => {
+          if (advanced || done) return;
+          advanced = true;
+          clearTimeout(timer);
+          document.removeEventListener("timdiemban-wake", advance);
+          step();
+        };
         const chunk = document.hidden ? Math.min(left, 350) : left;
-        const timer = setTimeout(step, chunk);
+        timer = setTimeout(advance, chunk);
         if (document.hidden) {
-          const onWake = () => {
-            clearTimeout(timer);
-            step();
-          };
-          document.addEventListener("timdiemban-wake", onWake, { once: true });
+          document.addEventListener("timdiemban-wake", advance, { once: true });
+          // Chế độ quét nền ép compositor render → rAF vẫn chạy dù tab ẩn,
+          // cho nhịp chờ sát thời gian thật thay vì đợi timer bị throttle.
+          requestAnimationFrame(advance);
         }
       };
       step();
@@ -241,7 +275,7 @@
         <div class="shield-text" id="timdiemban-shield-text">Đang chuẩn bị thu thập thông tin điểm bán…</div>
         <div class="shield-bar-wrap"><div class="shield-bar" id="timdiemban-shield-bar"></div></div>
         <div class="shield-percent" id="timdiemban-shield-percent">0%</div>
-        <div class="shield-warn" id="timdiemban-shield-warn">Kết quả đang được đồng bộ về Findmap. Hãy giữ tab Google Maps mở; nếu tiến độ chậm, hãy đưa tab này lên trước.</div>
+        <div class="shield-warn" id="timdiemban-shield-warn">Kết quả đang được đồng bộ về Findmap. Bạn có thể chuyển sang tab khác để làm việc — Findmap tự duy trì việc quét.</div>
         <div class="shield-hint">Không đóng hoặc tải lại tab Google Maps cho đến khi Findmap báo hoàn tất.</div>
       </div>`;
     const block = (e) => { e.stopPropagation(); e.preventDefault(); };
@@ -254,7 +288,7 @@
 
   function formatShieldWarn(webLabel) {
     const target = webLabel || "Findmap";
-    return `Kết quả đang được đồng bộ về ${target}. Hãy giữ tab Google Maps mở; nếu tiến độ chậm, hãy đưa tab này lên trước.`;
+    return `Kết quả đang được đồng bộ về ${target}. Bạn có thể chuyển sang tab khác để làm việc — Findmap tự duy trì việc quét.`;
   }
 
   function resolveWebLabel(webUrl) {
@@ -4473,6 +4507,7 @@
     stopBackgroundWakeLoop();
     stopAntiThrottle();
     document.removeEventListener("visibilitychange", handleVisibilityChange);
+    document.removeEventListener("timdiemban-audio-unlock", handleAudioUnlock);
     try {
       chrome.runtime.onMessage.removeListener(handleRuntimeMessage);
     } catch {}

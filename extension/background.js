@@ -158,6 +158,128 @@ function pingMapsTabWake(tabId) {
   chrome.tabs.sendMessage(tabId, { action: "KEEPALIVE_TICK" }).catch(() => {});
 }
 
+// ——— Chế độ quét nền (Maps Background Boost) ———
+// Tab nằm nền bị Chrome ngừng render: requestAnimationFrame/IntersectionObserver
+// của Google Maps không chạy nên danh sách kết quả không tải thêm. Gắn
+// chrome.debugger vào tab Maps để:
+//   1. Emulation.setFocusEmulationEnabled — trang luôn coi như đang được focus.
+//   2. Page.startScreencast (khung hình tí hon) — buộc compositor render đều đặn
+//      dù tab ẩn, nhờ đó rAF/IntersectionObserver của Maps tiếp tục chạy.
+//   3. Runtime.evaluate userGesture — mở khóa autoplay cho AudioContext chống
+//      throttle trong content script.
+// Người dùng chỉ cần giữ tab Maps mở, không cần đứng ở tab đó. Nếu không gắn
+// được (DevTools đang mở, người dùng bấm Hủy trên thanh gỡ lỗi…) thì quay về
+// hành vi cũ: đưa tab Maps lên trước.
+const mapsBoost = {
+  tabId: null,
+  attached: false,
+  unavailable: false,
+  lastAssertAt: 0,
+  lastAttachFailAt: 0
+};
+
+function isMapsBoostSupported() {
+  return typeof chrome.debugger?.attach === "function";
+}
+
+async function sendBoostCommand(method, params) {
+  if (!mapsBoost.attached || mapsBoost.tabId == null) return;
+  await chrome.debugger.sendCommand({ tabId: mapsBoost.tabId }, method, params || {});
+}
+
+/** Phát (lại) các lệnh giữ tab nền hoạt động — an toàn khi gọi lặp. */
+async function assertMapsBoostState() {
+  await sendBoostCommand("Page.enable").catch(() => {});
+  await sendBoostCommand("Emulation.setFocusEmulationEnabled", { enabled: true }).catch(() => {});
+  await sendBoostCommand("Page.setWebLifecycleState", { state: "active" }).catch(() => {});
+  await sendBoostCommand("Page.startScreencast", {
+    format: "jpeg",
+    quality: 10,
+    maxWidth: 96,
+    maxHeight: 96,
+    everyNthFrame: 4
+  }).catch(() => {});
+  await sendBoostCommand("Runtime.evaluate", {
+    expression: "document.dispatchEvent(new CustomEvent('timdiemban-audio-unlock'))",
+    userGesture: true
+  }).catch(() => {});
+  mapsBoost.lastAssertAt = Date.now();
+}
+
+async function enableMapsBoost(tabId) {
+  if (!isMapsBoostSupported() || mapsBoost.unavailable || !Number.isInteger(tabId)) return false;
+  if (mapsBoost.attached && mapsBoost.tabId === tabId) return true;
+  if (Date.now() - mapsBoost.lastAttachFailAt < 10000) return false;
+  if (mapsBoost.attached) await disableMapsBoost();
+  try {
+    await chrome.debugger.attach({ tabId }, "1.3");
+  } catch (err) {
+    // DevTools hoặc công cụ khác đang chiếm tab — quét theo cách cũ.
+    mapsBoost.lastAttachFailAt = Date.now();
+    console.warn("enableMapsBoost:", err?.message || err);
+    return false;
+  }
+  mapsBoost.tabId = tabId;
+  mapsBoost.attached = true;
+  await assertMapsBoostState();
+  return true;
+}
+
+/** Gọi sau điều hướng/định kỳ: gắn lại nếu rớt, phát lại lệnh nếu đã lâu. */
+async function ensureMapsBoost(tabId) {
+  if (!isMapsBoostSupported() || mapsBoost.unavailable || !Number.isInteger(tabId)) return false;
+  if (!mapsBoost.attached || mapsBoost.tabId !== tabId) return enableMapsBoost(tabId);
+  if (Date.now() - mapsBoost.lastAssertAt > 5000) await assertMapsBoostState();
+  return true;
+}
+
+async function disableMapsBoost() {
+  const tabId = mapsBoost.tabId;
+  mapsBoost.attached = false;
+  mapsBoost.tabId = null;
+  if (tabId == null || !isMapsBoostSupported()) return;
+  try {
+    await chrome.debugger.sendCommand({ tabId }, "Page.stopScreencast");
+  } catch {}
+  try {
+    await chrome.debugger.detach({ tabId });
+  } catch {}
+}
+
+function maybeReleaseMapsBoost() {
+  if (scrapeState.running || rescanState.running) return;
+  mapsBoost.unavailable = false;
+  mapsBoost.lastAttachFailAt = 0;
+  disableMapsBoost().catch(() => {});
+}
+
+if (isMapsBoostSupported()) {
+  chrome.debugger.onEvent.addListener((source, method, params) => {
+    if (method !== "Page.screencastFrame" || source.tabId !== mapsBoost.tabId) return;
+    chrome.debugger
+      .sendCommand({ tabId: source.tabId }, "Page.screencastFrameAck", {
+        sessionId: params.sessionId
+      })
+      .catch(() => {});
+  });
+
+  chrome.debugger.onDetach.addListener((source, reason) => {
+    if (source.tabId !== mapsBoost.tabId) return;
+    mapsBoost.attached = false;
+    mapsBoost.tabId = null;
+    if (reason === "canceled_by_user") {
+      // Người dùng bấm Hủy trên thanh gỡ lỗi — không gắn lại trong lượt này.
+      mapsBoost.unavailable = true;
+      if (scrapeState.running) {
+        notifyProgress(
+          calcProgressPercent(scrapeState.gridIndex, scrapeState.totalCells, 0.2),
+          "Chế độ quét nền đã tắt. Hãy đưa tab Google Maps lên trước để quét ổn định."
+        );
+      }
+    }
+  });
+}
+
 function isValidWindowId(windowId) {
   return Number.isInteger(windowId) && windowId >= 0;
 }
@@ -180,8 +302,8 @@ async function activateTabAndWindow(tabId) {
   return tab;
 }
 
-async function createFocusedMapsTab(url, preferredWindowId) {
-  const createOptions = { url, active: true };
+async function createMapsTab(url, preferredWindowId, { active = false } = {}) {
+  const createOptions = { url, active };
   if (isValidWindowId(preferredWindowId)) createOptions.windowId = preferredWindowId;
 
   let tab;
@@ -190,20 +312,25 @@ async function createFocusedMapsTab(url, preferredWindowId) {
   } catch (err) {
     // Trang Findmap có thể vừa chuyển/đóng cửa sổ trong lúc kiểm tra tài khoản.
     if (!isValidWindowId(preferredWindowId)) throw err;
-    tab = await chrome.tabs.create({ url, active: true });
+    tab = await chrome.tabs.create({ url, active });
   }
 
-  return activateTabAndWindow(tab.id);
+  await chrome.tabs.update(tab.id, { autoDiscardable: false }).catch(() => {});
+  return tab;
 }
 
 /**
- * Mỗi phiên sở hữu một tab Maps riêng và luôn đưa tab đó lên trước khi bắt đầu.
- * mapsAutoFocus chỉ điều khiển việc kéo người dùng quay lại định kỳ sau đó.
+ * Mỗi phiên sở hữu một tab Maps riêng. Mặc định mở ở nền kèm chế độ quét nền
+ * để người dùng tiếp tục làm việc ở tab khác; nếu không gắn được thì đưa tab
+ * lên trước như trước đây. mapsAutoFocus chỉ điều khiển việc kéo người dùng
+ * quay lại định kỳ sau đó.
  */
 async function openMapsScrapeTab(url) {
   const preferredWindowId = await getTabWindowId(scrapeState.webTabId);
-  const tab = await createFocusedMapsTab(url, preferredWindowId);
+  const tab = await createMapsTab(url, preferredWindowId, { active: false });
   scrapeState.mapsWindowId = tab.windowId;
+  const boosted = await enableMapsBoost(tab.id);
+  if (!boosted) await activateTabAndWindow(tab.id);
   return tab;
 }
 
@@ -221,7 +348,8 @@ async function scrapeKeepAliveTick() {
 
     if (tab) {
       await chrome.tabs.update(scrapeState.mapsTabId, { autoDiscardable: false }).catch(() => {});
-      if (!tab.active) {
+      const boosted = await ensureMapsBoost(scrapeState.mapsTabId).catch(() => false);
+      if (!tab.active && !boosted) {
         if (!mapsTabInactiveSince) mapsTabInactiveSince = Date.now();
         const inactiveMs = Date.now() - mapsTabInactiveSince;
 
@@ -1465,6 +1593,7 @@ function resetScrapeState() {
   chrome.storage.local.remove(["activeSearch"]);
   clearPendingSearchSync().catch(() => {});
   clearScrapeCheckpoint().catch(() => {});
+  maybeReleaseMapsBoost();
 }
 
 function isMapsAutoReopenEnabled(params) {
@@ -1599,6 +1728,7 @@ function resetRescanState() {
   rescanState._reopenCount = 0;
   rescanState._handlingTabLoss = false;
   rescanState._awaitingReopen = false;
+  maybeReleaseMapsBoost();
 }
 
 async function abortRescan(message, code = "TAB_MAPS_CLOSED") {
@@ -1628,12 +1758,15 @@ async function abortRescan(message, code = "TAB_MAPS_CLOSED") {
 
 async function openRescanMapsTab() {
   const webTab = await findWebTab(rescanState.webUrl).catch(() => null);
-  const tab = await createFocusedMapsTab(
+  const tab = await createMapsTab(
     "https://www.google.com/maps/",
-    isValidWindowId(webTab?.windowId) ? webTab.windowId : null
+    isValidWindowId(webTab?.windowId) ? webTab.windowId : null,
+    { active: false }
   );
   rescanState.mapsTabId = tab.id;
   rescanState.mapsWindowId = tab.windowId;
+  const boosted = await enableMapsBoost(tab.id);
+  if (!boosted) await activateTabAndWindow(tab.id);
   await waitTabComplete(tab.id);
   await sleep(800);
   return ensureMapsContentReady(tab.id);
@@ -1780,6 +1913,8 @@ async function navigateMapsTab(updates, waitComplete = true) {
   } finally {
     scrapeState._expectMapsNavigation = false;
   }
+  // Điều hướng có thể đổi process của tab → phát lại lệnh giữ tab nền hoạt động
+  ensureMapsBoost(scrapeState.mapsTabId).catch(() => {});
 }
 
 async function handleMapsTabReloaded() {
@@ -1867,6 +2002,12 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
 const REQUIRED_CONTENT_VERSION = 59;
 
 async function ensureMapsContentReady(tabId) {
+  if (
+    (scrapeState.running && tabId === scrapeState.mapsTabId) ||
+    (rescanState.running && tabId === rescanState.mapsTabId)
+  ) {
+    ensureMapsBoost(tabId).catch(() => {});
+  }
   for (let attempt = 0; attempt < 8; attempt++) {
     try {
       const pong = await chrome.tabs.sendMessage(tabId, { action: "PING" });
@@ -2897,6 +3038,7 @@ async function enrichRescanPlace(place, searchParams) {
       if (!rescanState.mapsTabId) throw new Error("Tab Google Maps đã bị đóng.");
       await chrome.tabs.update(rescanState.mapsTabId, { url: href });
       await waitTabComplete(rescanState.mapsTabId);
+      ensureMapsBoost(rescanState.mapsTabId).catch(() => {});
       await sleep(700);
 
       const result = await sendMapsMessageToTab(rescanState.mapsTabId, "ENRICH_PLACE", {
