@@ -1549,6 +1549,26 @@ async function getSearchStatus() {
   const totalCells = scrapeState.totalCells || cp?.totalCells || 0;
   const gridIndex = scrapeState.gridIndex ?? cp?.gridIndex ?? 0;
   const lastBeat = cp?.lastHeartbeat || 0;
+
+  // Checkpoint có mapsTabId ≠ tab còn sống — kiểm tra trước khi báo bận
+  let liveMapsTabId = scrapeState.mapsTabId || null;
+  if (!liveMapsTabId && cp?.mapsTabId) {
+    try {
+      await chrome.tabs.get(cp.mapsTabId);
+      liveMapsTabId = cp.mapsTabId;
+    } catch {
+      liveMapsTabId = null;
+    }
+  } else if (liveMapsTabId) {
+    try {
+      await chrome.tabs.get(liveMapsTabId);
+    } catch {
+      liveMapsTabId = null;
+      scrapeState.mapsTabId = null;
+    }
+  }
+
+  const checkpointBusy = checkpointRunning && (!!liveMapsTabId || Date.now() - lastBeat < 120000);
   const stalled =
     !running &&
     checkpointRunning &&
@@ -1556,25 +1576,26 @@ async function getSearchStatus() {
     Date.now() - lastBeat > 60000;
 
   return {
-    running: running || checkpointRunning,
+    // Không OR checkpoint mồ côi (tab Maps đã đóng) — để chuỗi nhiều từ khóa chạy tiếp
+    running: running || checkpointBusy,
     stalled,
     phase: scrapeState.phase || cp?.phase || "grid",
     gridIndex,
     totalCells,
     mergedCount,
     searchId: scrapeState.searchParams?.searchId || cp?.searchParams?.searchId || null,
-    mapsTabId: scrapeState.mapsTabId || cp?.mapsTabId || null,
+    mapsTabId: liveMapsTabId,
     lastHeartbeat: lastBeat,
     lastProgressAt: lastScrapeProgressAt || cp?.lastProgressAt || lastBeat,
-    canCancel: running || checkpointRunning || mergedCount > 0,
-    canResume: !running && checkpointRunning && !!cp?.mapsTabId,
+    canCancel: running || checkpointBusy || mergedCount > 0,
+    canResume: !running && checkpointRunning && !!liveMapsTabId,
     mapsAutoFocus: scrapeState.searchParams?.mapsAutoFocus === true || cp?.searchParams?.mapsAutoFocus === true,
     mapsAutoReopen:
       scrapeState.searchParams?.mapsAutoReopen === true || cp?.searchParams?.mapsAutoReopen === true
   };
 }
 
-function resetScrapeState() {
+async function resetScrapeState() {
   stopScrapeKeepAlive();
   if (syncDebounceTimer) {
     clearTimeout(syncDebounceTimer);
@@ -1611,9 +1632,12 @@ function resetScrapeState() {
     clearTimeout(mapsReloadTimer);
     mapsReloadTimer = null;
   }
-  chrome.storage.local.remove(["activeSearch"]);
-  clearPendingSearchSync().catch(() => {});
-  clearScrapeCheckpoint().catch(() => {});
+  try {
+    await chrome.storage.local.remove(["activeSearch"]);
+  } catch {}
+  await clearPendingSearchSync().catch(() => {});
+  // Await xóa checkpoint — tránh web nghĩ vẫn đang chạy rồi không sang từ khóa tiếp
+  await clearScrapeCheckpoint().catch(() => {});
   maybeReleaseMapsBoost();
 }
 
@@ -2575,7 +2599,7 @@ async function handleScrapeComplete(data) {
   } finally {
     // Dù sync có lỗi giữa chừng, tab Maps và trạng thái quét luôn được dọn.
     await closeMapsTabSafely();
-    resetScrapeState();
+    await resetScrapeState();
   }
   return { success: true };
 }

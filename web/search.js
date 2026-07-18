@@ -364,21 +364,30 @@
     });
   }
 
-  /** Chờ extension thật sự rảnh (không running, không còn Maps) trước khi START từ khóa tiếp */
+  /** Chờ extension thật sự rảnh trước khi START từ khóa tiếp */
   async function waitForExtensionIdle(timeoutMs = 45000) {
     const started = Date.now();
     while (Date.now() - started < timeoutMs) {
       const status = await requestSearchStatusAsync(4000);
-      const busy = !!(status?.running || status?.stalled || status?.mapsTabId);
+      // Chỉ coi bận khi đang quét thật — không dùng mapsTabId từ checkpoint cũ (tab có thể đã đóng)
+      const busy = !!(status?.running || status?.stalled);
       if (!busy) {
-        // Đợi thêm một nhịp để closeMapsTab / resetScrapeState kịp xong
-        await new Promise((r) => setTimeout(r, 500));
+        await new Promise((r) => setTimeout(r, 400));
         const again = await requestSearchStatusAsync(3000);
-        if (!(again?.running || again?.stalled || again?.mapsTabId)) return true;
+        if (!(again?.running || again?.stalled)) return true;
       }
-      await new Promise((r) => setTimeout(r, 700));
+      await new Promise((r) => setTimeout(r, 600));
     }
     return false;
+  }
+
+  /** Chỉ dừng chuỗi khi user bấm Dừng — không dừng vì partialReason có chữ "dừng" */
+  function isUserCancelEnd(end) {
+    if (multiKeywordAbort) return true;
+    if (!end) return false;
+    if (end.payload?.partialCode === "USER_CANCEL") return true;
+    const reason = String(end.payload?.partialReason || end.payload?.error || "");
+    return /người dùng\s*(dừng|hủy)|user\s*cancel|abandon/i.test(reason);
   }
 
   async function startSearchExclusive(searchParams, { retries = 4 } = {}) {
@@ -1150,8 +1159,20 @@
       const batchId = Date.now();
       let stoppedEarly = false;
 
+      if (keywords.length > 1) {
+        showSearchStatus(
+          `Sẽ tìm lần lượt ${keywords.length} từ khóa: ${keywords.map((k) => `"${k}"`).join(" → ")}`,
+          "info"
+        );
+      }
+
       // Đảm bảo không còn lượt cũ / tab Maps trước khi bắt đầu chuỗi
-      showSearchStatus("Đang kiểm tra tiện ích sẵn sàng…", "info");
+      showSearchStatus(
+        keywords.length > 1
+          ? `Đang kiểm tra tiện ích — chuẩn bị từ khóa 1/${keywords.length}…`
+          : "Đang kiểm tra tiện ích sẵn sàng…",
+        "info"
+      );
       const ready0 = await waitForExtensionIdle(30000);
       if (!ready0) {
         throw new Error(
@@ -1228,30 +1249,41 @@
           clearSearchWatchdog();
           setSearchRunning(false);
 
-          if (multiKeywordAbort || end.type === "error" || end.type === "tab_closed" || end.type === "timeout") {
+          // User bấm Dừng → dừng cả chuỗi
+          if (isUserCancelEnd(end)) {
             stoppedEarly = true;
-            if (end.type === "error" || end.type === "tab_closed" || end.type === "timeout") {
-              showSearchStatus(
-                end.payload?.error || end.payload?.partialReason || `Dừng tại từ khóa "${keyword}"`,
-                "error"
-              );
-            }
-            // Hủy / lỗi: chờ idle để không để Maps treo
+            showSearchStatus(
+              end.payload?.partialReason || end.payload?.error || "Đã dừng — kết quả đã lưu.",
+              "info"
+            );
             await waitForExtensionIdle(20000).catch(() => false);
             break;
           }
 
-          if (end.type === "complete" && end.payload?.partial) {
-            const reason = String(end.payload.partialReason || "");
-            if (/người dùng|dừng|hủy|cancel|abandon/i.test(reason) || multiKeywordAbort) {
-              stoppedEarly = true;
-              showSearchStatus(reason || "Đã dừng — kết quả đã lưu.", "info");
-              await waitForExtensionIdle(20000).catch(() => false);
-              break;
-            }
+          // Lỗi cứng / đóng tab / timeout → dừng chuỗi
+          if (end.type === "error" || end.type === "tab_closed" || end.type === "timeout") {
+            stoppedEarly = true;
+            showSearchStatus(
+              end.payload?.error || end.payload?.partialReason || `Dừng tại từ khóa "${keyword}"`,
+              "error"
+            );
+            await waitForExtensionIdle(20000).catch(() => false);
+            break;
           }
 
-          // Sau mỗi từ khóa: sync + chờ idle trước vòng sau
+          // complete / finished / partial (không phải user cancel) → tiếp tục từ khóa sau
+          if (end.type === "complete" && end.payload?.partial) {
+            showSearchStatus(
+              `Xong "${keyword}" (kết thúc sớm) — chuẩn bị từ khóa tiếp theo…`,
+              "info"
+            );
+          } else if (keywords.length > 1 && i < keywords.length - 1) {
+            showSearchStatus(
+              `Xong "${keyword}" (${i + 1}/${keywords.length}) — sang từ khóa tiếp theo…`,
+              "info"
+            );
+          }
+
           try {
             await window.TimDiemBanSearch?.requestSearchSync?.(
               `Đồng bộ kết quả "${keyword}"`
@@ -1273,6 +1305,9 @@
             : "Hoàn tất — xem bảng kết quả bên dưới.",
           "success"
         );
+      } else if (keywords.length > 1) {
+        // Giữ thông báo đã set ở trên; bổ sung nếu vòng lặp thoát vì idle
+        /* no-op */
       }
     } catch (err) {
       if (isGeoDeniedError(err)) {
