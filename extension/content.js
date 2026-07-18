@@ -1,6 +1,6 @@
 (function () {
   // Bump version mỗi lần sửa content — background sẽ reinject nếu Maps còn bản cũ
-  const CONTENT_VERSION = 56;
+  const CONTENT_VERSION = 57;
   if (window.__timDiemBanLoaded && window.__timDiemBanVersion === CONTENT_VERSION) return;
   window.__timDiemBanLoaded = true;
   window.__timDiemBanVersion = CONTENT_VERSION;
@@ -410,22 +410,58 @@
     return (io?.textContent || "").trim();
   }
 
-  /** Panel Tổng quan chứa button address/phone/website của quán đang mở */
+  const PF = globalThis.PlaceFields;
+  if (!PF) {
+    console.warn("[Findmap] place-fields.js chưa load — parse địa chỉ/SĐT có thể sai");
+  }
+
+  const PHONE_CONTACT_SELECTOR = [
+    '[data-item-id^="phone"]',
+    'a[href^="tel:"]',
+    '[aria-label^="số điện thoại" i]',
+    '[aria-label^="điện thoại:" i]',
+    '[aria-label^="phone:" i]',
+    '[aria-label^="phone number:" i]',
+    '[aria-label^="sao chép số điện thoại" i]',
+    '[aria-label^="copy phone number" i]',
+    '[aria-label^="gọi số điện thoại" i]',
+    '[aria-label^="call phone" i]'
+  ].join(", ");
+
+  const OVERVIEW_CONTACT_SELECTOR = [
+    'button[data-item-id="address"]',
+    'button[data-item-id^="address"]',
+    PHONE_CONTACT_SELECTOR,
+    'a[data-item-id="authority"]',
+    'a[data-item-id^="authority"]',
+    'a[aria-label*="Trang web"]',
+    'a[aria-label*="Website"]'
+  ].join(", ");
+
+  function getPhoneContactMeta(el) {
+    return {
+      itemId: el?.getAttribute?.("data-item-id") || "",
+      href: el?.getAttribute?.("href") || "",
+      ariaLabel: el?.getAttribute?.("aria-label") || "",
+      title: el?.getAttribute?.("title") || "",
+      tooltip: el?.getAttribute?.("data-tooltip") || "",
+      text: el?.textContent || ""
+    };
+  }
+
+  /** Panel Tổng quan chứa address/phone/website của quán đang mở. */
   function findOverviewContactRoot() {
     const h1 = findDetailPaneH1();
     if (!h1) return null;
 
-    let root = null;
     let node = h1.parentElement;
     for (let i = 0; i < 28 && node; i++) {
       if (node.closest('[role="feed"]')) break;
-      const hasContact = node.querySelector(
-        'button[data-item-id="address"], button[data-item-id^="address"], button[data-item-id^="phone:"], a[data-item-id="authority"], a[data-item-id^="authority"], a[aria-label*="Trang web"], a[aria-label*="Website"]'
-      );
-      if (hasContact) root = node;
+      const hasContact = node.querySelector(OVERVIEW_CONTACT_SELECTOR);
+      if (hasContact) return node;
       node = node.parentElement;
     }
-    return root;
+    return null;
   }
 
   function isOverviewContactButton(btn) {
@@ -492,11 +528,6 @@
     if (id === "address" || id.startsWith("address")) return true;
     const label = (btn.getAttribute("aria-label") || "").trim();
     return /^(địa chỉ|address)\s*:/i.test(label);
-  }
-
-  const PF = globalThis.PlaceFields;
-  if (!PF) {
-    console.warn("[Findmap] place-fields.js chưa load — parse địa chỉ/SĐT có thể sai");
   }
 
   function isMapsUiLabel(text) {
@@ -648,6 +679,7 @@
   }
 
   function extractPhoneFromText(text) {
+    if (PF?.extractPhoneFromText) return PF.extractPhoneFromText(text);
     if (!text) return "";
     const matches = [...String(text).matchAll(/(?:\+?84|0)[\d\s.\-()]{8,18}/g)];
     let best = "";
@@ -688,15 +720,25 @@
 
   function isPhoneContactButton(btn) {
     if (!btn) return false;
+    if (PF?.isPhoneContactMeta) return PF.isPhoneContactMeta(getPhoneContactMeta(btn));
     const itemId = (btn.getAttribute("data-item-id") || "").toLowerCase();
     if (itemId.startsWith("phone")) return true;
+    const href = (btn.getAttribute("href") || "").toLowerCase();
+    if (href.startsWith("tel:")) return true;
     const label = (btn.getAttribute("aria-label") || "").trim();
-    return /^(số\s*)?(điện thoại|phone)\s*:/i.test(label) || /^(gọi|call)\s+/i.test(label);
+    return (
+      /^(số\s*)?(điện thoại|phone)\s*:/i.test(label) ||
+      /^(sao chép|copy)\s+(số\s+)?(điện thoại|phone)/i.test(label) ||
+      /^(gọi|call)\s+/i.test(label)
+    );
   }
 
-  /** Chỉ đọc SĐT từ button[data-item-id^="phone:"] — ưu tiên aria-label */
+  /** Đọc SĐT từ button/link liên hệ — ưu tiên tel:/phone:tel rồi aria-label. */
   function parsePhoneFromContactButton(btn) {
     if (!btn || !isPhoneContactButton(btn) || !isOverviewContactButton(btn)) return "";
+
+    const fromMeta = PF?.extractPhoneFromContactMeta?.(getPhoneContactMeta(btn)) || "";
+    if (normalizePhone(fromMeta).length >= 9) return fromMeta;
 
     // Ưu tiên cao nhất: aria-label="Số điện thoại: 0123456789" — bóc phần sau prefix
     const fromAriaLabel = extractPhoneFromAriaLabel(btn);
@@ -720,16 +762,42 @@
       const fromId = pickBestPhoneCandidate(decodeURIComponent(telInId[1]).trim());
       if (normalizePhone(fromId).length >= 9) return fromId;
     }
+    const href = btn.getAttribute("href") || "";
+    if (/^tel:/i.test(href)) {
+      const fromHref = pickBestPhoneCandidate(href.replace(/^tel:/i, "").split(/[;?]/, 1)[0]);
+      if (normalizePhone(fromHref).length >= 9) return fromHref;
+    }
     return "";
+  }
+
+  function getOverviewContactSignature(root) {
+    const pane = root || findOverviewContactRoot() || getDetailPane();
+    if (!pane) return "";
+    const parts = [];
+    for (const el of pane.querySelectorAll(OVERVIEW_CONTACT_SELECTOR)) {
+      if (isInSearchFeed(el) || isDetailNavTab(el)) continue;
+      const meta = getPhoneContactMeta(el);
+      parts.push(
+        [
+          meta.itemId,
+          meta.href,
+          meta.ariaLabel,
+          meta.text.replace(/\s+/g, " ").trim().slice(0, 120)
+        ].join("|")
+      );
+    }
+    return parts.join("||");
   }
 
   async function waitForOverviewContactButtons(listData, maxMs = 6000) {
     const start = Date.now();
     let bestAddr = "";
-    let bestPhone = "";
+    let bestPhone = pickBestPhone(listData?.phone || "");
     let bestWebsite = "";
     let revealRound = 0;
     let fieldsSeenAt = 0;
+    let lastContactSignature = "";
+    let contactStableAt = start;
     // Tăng thời gian chờ DOM render khi page nặng (dựa vào số node)
     const domHeavy = document.querySelectorAll("*").length > 8000;
     const effectiveMaxMs = domHeavy ? Math.max(maxMs, maxMs * 1.5) : maxMs;
@@ -751,6 +819,13 @@
       await revealAddressIntoView(contactRoot);
       await revealPhoneButton(contactRoot);
 
+      const now = Date.now();
+      const contactSignature = getOverviewContactSignature(contactRoot);
+      if (contactSignature !== lastContactSignature) {
+        lastContactSignature = contactSignature;
+        contactStableAt = now;
+      }
+
       const addr = readAddressFromContactButtons();
       const phone = readPhoneFromContactButtons();
       const website = readWebsite(contactRoot || getDetailPane());
@@ -759,8 +834,22 @@
       if (website) bestWebsite = website;
 
       const settleTime = domHeavy ? 800 : 500;
-      const settled = fieldsSeenAt && Date.now() - fieldsSeenAt > settleTime;
-      const phoneMissing = settled && !overviewContactButtonExists("phone");
+      const settled = fieldsSeenAt && now - fieldsSeenAt > settleTime;
+      const phoneElementExists = overviewContactButtonExists("phone");
+      const keepWaitingForPhone = PF?.shouldKeepWaitingForPhone
+        ? PF.shouldKeepWaitingForPhone({
+            needPhone: true,
+            phone: bestPhone,
+            phoneElementExists,
+            elapsedMs: now - start,
+            contactFieldsAgeMs: fieldsSeenAt ? now - fieldsSeenAt : 0,
+            contactStableMs: now - contactStableAt,
+            minAbsentWaitMs: domHeavy ? 2400 : 1800,
+            stableWaitMs: domHeavy ? 1200 : 900,
+            maxMs: effectiveMaxMs
+          })
+        : now - fieldsSeenAt < (domHeavy ? 2400 : 1800);
+      const phoneMissing = settled && !phoneElementExists && !keepWaitingForPhone;
       const addrMissing = settled && !overviewContactButtonExists("address");
 
       const needPhone = normalizePhone(bestPhone).length < 9 && !phoneMissing;
@@ -793,18 +882,20 @@
 
     const stillMatch = !listData || verifyDetailMatchesList(listData);
 
-    // Retry cuối cùng — đọc trực tiếp từ aria-label button (bypass DOM overhead)
+    // Retry cuối — đọc mọi biến thể aria/data-item-id/tel: trong pane đang khớp.
     if (stillMatch && (normalizePhone(bestPhone).length < 9 || !bestAddr)) {
       const pane = getDetailPane() || findOverviewContactRoot();
       if (pane) {
-        for (const btn of pane.querySelectorAll('button[aria-label]')) {
+        for (const btn of pane.querySelectorAll(
+          `button[aria-label], ${PHONE_CONTACT_SELECTOR}`
+        )) {
           const label = btn.getAttribute("aria-label") || "";
           if (!bestAddr && /^(Địa chỉ|Address)\s*:/i.test(label)) {
             const addr = label.replace(/^(Địa chỉ|Address)\s*:\s*/i, "").trim();
             if (addr.length > 5) bestAddr = pickBestAddress(bestAddr, addr);
           }
-          if (normalizePhone(bestPhone).length < 9 && /^(Số điện thoại|Điện thoại|Phone)\s*:/i.test(label)) {
-            const ph = label.replace(/^(Số điện thoại|Điện thoại|Phone)\s*:\s*/i, "").trim();
+          if (normalizePhone(bestPhone).length < 9 && isPhoneContactButton(btn)) {
+            const ph = parsePhoneFromContactButton(btn);
             if (normalizePhone(ph).length >= 9) bestPhone = pickBestPhone(bestPhone, ph);
           }
         }
@@ -847,14 +938,7 @@
   }
 
   async function revealPhoneButton(pane) {
-    const selectors = [
-      'button.CsEnBe[data-item-id^="phone:"]',
-      'button[data-item-id^="phone:"]',
-      'button[data-item-id="phone"]',
-      'button[aria-label^="Số điện thoại:"]',
-      'button[aria-label^="Điện thoại:"]',
-      'button[aria-label^="Phone:"]'
-    ];
+    const selectors = PHONE_CONTACT_SELECTOR.split(", ");
     const roots = [pane || findOverviewContactRoot() || getDetailPane()].filter(Boolean);
     const seen = new Set();
     for (const root of roots) {
@@ -881,8 +965,7 @@
   function collectPhoneCandidates() {
     const candidates = [];
     const seen = new Set();
-    const selectors =
-      'button.CsEnBe[data-item-id^="phone:"], button[data-item-id^="phone:"], button[data-item-id="phone"], button[aria-label^="Số điện thoại:"], button[aria-label^="Điện thoại:"], button[aria-label^="Phone:"]';
+    const selectors = PHONE_CONTACT_SELECTOR;
 
     const roots = [findOverviewContactRoot(), getDetailPane()].filter(Boolean);
     const triedRoots = new Set();
@@ -982,9 +1065,7 @@
     for (let i = 0; i < 14 && el; i++) {
       if (el.getAttribute("role") === "feed") return null;
       if (
-        el.querySelector(
-          'button[data-item-id^="address"], button[data-item-id^="phone"], a[data-item-id="authority"]'
-        )
+        el.querySelector(OVERVIEW_CONTACT_SELECTOR)
       ) {
         return el;
       }
@@ -999,7 +1080,7 @@
       let el = h1.parentElement;
       for (let i = 0; i < 8 && el; i++) {
         if (el.querySelector('[role="feed"]')) break;
-        if (el.querySelector('button[data-item-id^="address"], a[data-item-id="authority"]')) {
+        if (el.querySelector(OVERVIEW_CONTACT_SELECTOR)) {
           return el;
         }
         el = el.parentElement;
@@ -1169,13 +1250,7 @@
   function hasVisibleOverviewContactFields() {
     const pane = findOverviewContactRoot() || getDetailPane();
     if (!pane) return false;
-    const sels = [
-      'button.CsEnBe[data-item-id="address"]',
-      'button[data-item-id="address"]',
-      'button[data-item-id^="address"]',
-      'button[data-item-id^="phone:"]',
-      'a[data-item-id="authority"]'
-    ];
+    const sels = [OVERVIEW_CONTACT_SELECTOR];
     for (const sel of sels) {
       for (const el of pane.querySelectorAll(sel)) {
         if (!isOverviewContactButton(el)) continue;
@@ -1188,8 +1263,8 @@
 
   /**
    * Kiểm tra một loại nút liên hệ (địa chỉ / SĐT) CÓ tồn tại trong pane không.
-   * Google render toàn bộ nút liên hệ cùng lúc, nên khi vùng liên hệ đã hiện mà
-   * không có nút SĐT → quán không có SĐT (không cần chờ thêm).
+   * Chỉ dùng để phát hiện phần tử đã có; quyết định "không có SĐT" còn phải chờ
+   * vùng liên hệ ổn định vì Maps thường render phone sau address.
    */
   function overviewContactButtonExists(kind) {
     const pane = findOverviewContactRoot() || getDetailPane();
@@ -1204,10 +1279,11 @@
     }
     const sel =
       kind === "phone"
-        ? 'button[data-item-id^="phone:"], button[data-item-id="phone"]'
+        ? PHONE_CONTACT_SELECTOR
         : 'button[data-item-id="address"], button[data-item-id^="address"]';
     for (const el of pane.querySelectorAll(sel)) {
-      if (isOverviewContactButton(el)) return true;
+      if (!isOverviewContactButton(el)) continue;
+      if (kind !== "phone" || isPhoneContactButton(el)) return true;
     }
     return false;
   }
@@ -2178,7 +2254,7 @@
     for (const el of main.querySelectorAll("div")) {
       if (el === feed || el.getAttribute("role") === "feed") continue;
       if (feed && feed.contains(el)) continue;
-      if (el.querySelector('button[data-item-id^="address"], a[data-item-id="authority"]')) return el;
+      if (el.querySelector(OVERVIEW_CONTACT_SELECTOR)) return el;
     }
     return getDetailRoot();
   }
@@ -2188,22 +2264,16 @@
     const root = pane || getDetailPane();
     if (!root) return;
     await revealPhoneButton(root);
-    const sels = [
-      'button[data-item-id^="phone"]',
-      'button[aria-label*="Số điện thoại"]',
-      'button[aria-label*="Điện thoại"]',
-      'button[aria-label*="Phone"]',
-      'button[aria-label*="Sao chép số"]',
-      'button[aria-label*="Copy phone"]'
-    ];
+    const sels = PHONE_CONTACT_SELECTOR.split(", ");
     for (const sel of sels) {
       for (const btn of root.querySelectorAll(sel)) {
         if (btn.closest('[role="feed"]') || isDetailNavTab(btn)) continue;
+        if (!isPhoneContactButton(btn)) continue;
         try {
-          btn.click();
+          btn.scrollIntoView({ block: "nearest", inline: "nearest" });
+          btn.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
         } catch {}
-        if (isHoursSubPanelOpen()) await exitHoursSubPanelIfNeeded();
-        await sleep(90);
+        await sleep(60);
       }
     }
     await exitHoursSubPanelIfNeeded();
@@ -3001,6 +3071,9 @@
     }
     const pinCoords = extractCoordsFromUrl(href);
     const googlePlaceId = getGooglePlaceId(href);
+    const listPhone = PF?.extractPhoneFromListText
+      ? PF.extractPhoneFromListText(item.textContent || "")
+      : pickBestPhoneCandidate(item.textContent || "");
     return {
       placeId: googlePlaceId || placeId,
       googlePlaceId,
@@ -3009,7 +3082,7 @@
       reviews,
       category: meta.category,
       address: hasReliableAddress(address) ? cleanAddressText(address) : "",
-      phone: "",
+      phone: listPhone,
       lat: pinCoords?.lat ?? null,
       lng: pinCoords?.lng ?? null,
       listDistanceKm: meta.listDistanceKm,
@@ -3058,7 +3131,7 @@
     const pane = getDetailPane();
     let snap = readOverviewSnapshot(pane);
     let phone = needPhone
-      ? pickBestPhone(readPhoneFromContactButtons(pane), snap.phone)
+      ? pickBestPhone(listData?.phone, readPhoneFromContactButtons(pane), snap.phone)
       : "";
     let detailAddress = "";
     if (needAddress) {
@@ -4344,4 +4417,3 @@
     }
   });
 })();
-

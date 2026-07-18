@@ -470,6 +470,107 @@ test("background importScripts có place-fields", () => {
   ok(/files:\s*\[[^\]]*place-fields\.js/.test(bg));
 });
 
+console.log("\n═══ Q. DOM phone Google Maps + render trễ ═══");
+test("data-item-id phone:tel từ popup production", () => {
+  const phone = PF.extractPhoneFromContactMeta({
+    itemId: "phone:tel:0399866786",
+    ariaLabel: "Số điện thoại: +84 399 866 786",
+    text: "+84 399 866 786"
+  });
+  eq(PF.normalizePhone(phone), "0399866786");
+});
+test("link tel: là fallback hợp lệ", () => {
+  const phone = PF.extractPhoneFromContactMeta({
+    href: "tel:0979868372",
+    ariaLabel: "Gọi số điện thoại"
+  });
+  eq(PF.normalizePhone(phone), "0979868372");
+});
+test("aria tiếng Anh có số", () => {
+  const phone = PF.extractPhoneFromContactMeta({ ariaLabel: "Phone: +84 912 345 678" });
+  eq(PF.normalizePhone(phone), "0912345678");
+});
+test("nút copy chưa có số vẫn là phone contact", () => {
+  ok(PF.isPhoneContactMeta({ ariaLabel: "Sao chép số điện thoại" }));
+  eq(PF.extractPhoneFromContactMeta({ ariaLabel: "Sao chép số điện thoại" }), "");
+});
+test("Gửi tới điện thoại không phải trường SĐT", () => {
+  eq(PF.isPhoneContactMeta({ ariaLabel: "Gửi tới điện thoại" }), false);
+});
+test("contact URI lỗi không làm vỡ parser", () => {
+  eq(PF.extractPhoneFromContactMeta({ itemId: "phone:tel:%E0%A4%A" }), "");
+});
+test("lấy SĐT trực tiếp từ card danh sách", () => {
+  const phone = PF.extractPhoneFromListText(
+    "Trà Đá Thuỳ · Số 15 Nguyễn Tuân · +84 962 016 929 · Ăn tại chỗ"
+  );
+  eq(PF.normalizePhone(phone), "0962016929");
+});
+test("card chỉ có giờ mở cửa không sinh SĐT giả", () => {
+  eq(PF.extractPhoneFromListText("Mở cửa 07:00 · Đóng cửa 22:00"), "");
+});
+test("còn chờ khi address vừa render 500ms", () => {
+  ok(PF.shouldKeepWaitingForPhone({
+    needPhone: true,
+    phone: "",
+    elapsedMs: 700,
+    contactFieldsAgeMs: 500,
+    contactStableMs: 500,
+    maxMs: 8000
+  }));
+});
+test("dừng chờ khi contact ổn định đủ lâu và không có phone", () => {
+  eq(PF.shouldKeepWaitingForPhone({
+    needPhone: true,
+    phone: "",
+    elapsedMs: 2500,
+    contactFieldsAgeMs: 2200,
+    contactStableMs: 1200,
+    maxMs: 8000
+  }), false);
+});
+test("phần tử phone đã xuất hiện thì tiếp tục chờ text", () => {
+  ok(PF.shouldKeepWaitingForPhone({
+    needPhone: true,
+    phone: "",
+    phoneElementExists: true,
+    elapsedMs: 3000,
+    contactFieldsAgeMs: 2500,
+    contactStableMs: 1500,
+    maxMs: 8000
+  }));
+});
+test("timeout luôn chặn vòng chờ", () => {
+  eq(PF.shouldKeepWaitingForPhone({
+    needPhone: true,
+    phone: "",
+    phoneElementExists: true,
+    elapsedMs: 8000,
+    maxMs: 8000
+  }), false);
+});
+test("đã có phone thì không chờ", () => {
+  eq(PF.shouldKeepWaitingForPhone({
+    needPhone: true,
+    phone: "0912345678",
+    elapsedMs: 200,
+    maxMs: 8000
+  }), false);
+});
+test("content wiring có list fallback, tel selector và stable wait", () => {
+  const content = fs.readFileSync(path.join(__dirname, "..", "extension", "content.js"), "utf8");
+  ok(content.includes("PF.extractPhoneFromListText(item.textContent"));
+  ok(content.includes("a[href^=\"tel:\"]"));
+  ok(content.includes("PF.shouldKeepWaitingForPhone"));
+  ok(/CONTENT_VERSION\s*=\s*57/.test(content));
+});
+test("manifest tăng version để web phát hiện bản cũ", () => {
+  const manifest = JSON.parse(
+    fs.readFileSync(path.join(__dirname, "..", "extension", "manifest.json"), "utf8")
+  );
+  eq(manifest.version, "0.0.4");
+});
+
 console.log("\n────────────────────────────────");
 console.log(`Kết quả: ${passed} passed, ${failed} failed`);
 if (failures.length) {

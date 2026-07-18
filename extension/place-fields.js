@@ -121,6 +121,79 @@
     return best;
   }
 
+  function decodeContactValue(value) {
+    const raw = String(value || "").trim();
+    if (!raw) return "";
+    try {
+      return decodeURIComponent(raw);
+    } catch {
+      return raw;
+    }
+  }
+
+  /**
+   * Đọc SĐT từ metadata của một dòng liên hệ Google Maps.
+   * Maps có thể render cùng dữ liệu dưới button[data-item-id], link tel: hoặc aria-label.
+   */
+  function extractPhoneFromContactMeta(meta = {}) {
+    const itemId = decodeContactValue(meta.itemId || meta.dataItemId);
+    const href = decodeContactValue(meta.href);
+    const sources = [];
+
+    if (/^tel:/i.test(href)) {
+      sources.push(href.replace(/^tel:/i, "").split(/[;?]/, 1)[0]);
+    }
+
+    const itemPhone = itemId.match(/(?:^|:)phone:tel:([^;?]+)/i);
+    if (itemPhone) sources.push(itemPhone[1]);
+
+    sources.push(
+      meta.ariaLabel,
+      meta.title,
+      meta.tooltip,
+      meta.text
+    );
+
+    for (const source of sources) {
+      const phone = extractPhoneFromText(decodeContactValue(source));
+      if (normalizePhone(phone).length >= 9) return formatPhoneVN(phone);
+    }
+    return "";
+  }
+
+  function isPhoneContactMeta(meta = {}) {
+    if (extractPhoneFromContactMeta(meta)) return true;
+    const itemId = String(meta.itemId || meta.dataItemId || "").toLowerCase();
+    const href = String(meta.href || "").toLowerCase();
+    const label = foldTextForMatch(
+      [meta.ariaLabel, meta.title, meta.tooltip].filter(Boolean).join(" ")
+    );
+    if (itemId.startsWith("phone") || href.startsWith("tel:")) return true;
+    return /^(so\s*)?(dien thoai|phone)(\s*(number))?\s*:/.test(label) ||
+      /^(sao chep|copy)\s+(so\s+)?(dien thoai|phone)/.test(label) ||
+      /^(goi|call)\s+(so\s+)?(dien thoai|phone|\+?\d|0\d)/.test(label);
+  }
+
+  function extractPhoneFromListText(text) {
+    const phone = extractPhoneFromText(text);
+    return normalizePhone(phone).length >= 9 ? formatPhoneVN(phone) : "";
+  }
+
+  /** Không kết luận "không có SĐT" khi vùng liên hệ vẫn đang render. */
+  function shouldKeepWaitingForPhone(state = {}) {
+    if (state.needPhone === false || normalizePhone(state.phone).length >= 9) return false;
+    const elapsedMs = Math.max(0, Number(state.elapsedMs) || 0);
+    const maxMs = Math.max(0, Number(state.maxMs) || 0);
+    if (maxMs > 0 && elapsedMs >= maxMs) return false;
+    if (state.phoneElementExists) return true;
+
+    const contactFieldsAgeMs = Math.max(0, Number(state.contactFieldsAgeMs) || 0);
+    const contactStableMs = Math.max(0, Number(state.contactStableMs) || 0);
+    const minAbsentWaitMs = Math.max(0, Number(state.minAbsentWaitMs) || 1800);
+    const stableWaitMs = Math.max(0, Number(state.stableWaitMs) || 900);
+    return contactFieldsAgeMs < minAbsentWaitMs || contactStableMs < stableWaitMs;
+  }
+
   function isMapsUiLabel(text) {
     const t = String(text || "").trim();
     if (!t || t.length > 90) return false;
@@ -352,6 +425,10 @@
     stripPhoneFromAddress,
     stripMapsUiChromeFromAddress,
     extractPhoneFromText,
+    extractPhoneFromContactMeta,
+    isPhoneContactMeta,
+    extractPhoneFromListText,
+    shouldKeepWaitingForPhone,
     isMapsUiLabel,
     isMapsUiChromeText,
     isGarbageAddressText,
