@@ -1,4 +1,4 @@
-importScripts("app-config.js", "web-config.js", "site-bridge.js", "place-fields.js", "grid.js");
+importScripts("app-config.js", "web-config.js", "site-bridge.js", "run-lease.js", "place-fields.js", "grid.js");
 
 /** URL search Maps — cạnh ô cố định (m), chỉ đổi tâm @lat,lng */
 function buildMapsUrl(keyword, lat, lng, viewportM) {
@@ -11,6 +11,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const scrapeState = {
   running: false,
+  runId: "",
   mapsTabId: null,
   mapsWindowId: null,
   webTabId: null,
@@ -29,6 +30,25 @@ const scrapeState = {
   _mapsCellWorkActive: false,
   _mapsUserReloadCount: 0
 };
+
+const RunLease = globalThis.TimDiemBanRunLease;
+
+function getActiveCellLease() {
+  if (!scrapeState.running || !scrapeState.runId || scrapeState.cellGeneration < 1) return null;
+  return {
+    runId: scrapeState.runId,
+    cellGeneration: scrapeState.cellGeneration
+  };
+}
+
+function acceptsActiveCellMessage(message, sender) {
+  return RunLease.acceptsMessage(
+    getActiveCellLease(),
+    message,
+    sender?.tab?.id,
+    scrapeState.mapsTabId
+  );
+}
 
 let currentSearch = null;
 let isAborting = false;
@@ -1018,6 +1038,8 @@ async function persistScrapeCheckpoint() {
     await chrome.storage.local.set({
       [SCRAPE_CHECKPOINT_KEY]: {
         running: scrapeState.running,
+        runId: scrapeState.runId,
+        cellGeneration: scrapeState.cellGeneration,
         lastHeartbeat: Date.now(),
         lastProgressAt: lastScrapeProgressAt || Date.now(),
         gridIndex: scrapeState.gridIndex,
@@ -1043,6 +1065,8 @@ async function persistScrapeCheckpoint() {
 function restoreScrapeStateFromCheckpoint(cp) {
   if (!cp?.searchParams) return false;
   scrapeState.searchParams = cp.searchParams;
+  scrapeState.runId = String(cp.runId || cp.searchParams.searchId || "");
+  scrapeState.cellGeneration = Number(cp.cellGeneration || 0);
   scrapeState.webTabId = cp.webTabId ?? null;
   scrapeState.mapsTabId = cp.mapsTabId ?? null;
   scrapeState.mapsWindowId = cp.mapsWindowId ?? null;
@@ -1098,6 +1122,12 @@ async function maybeRecoverStalledScrape() {
       if (!scrapeState._retriedCells.has(idx) && !scrapeState.completedCells.has(idx)) {
         scrapeState._retriedCells.add(idx);
         notifyPopup(`Vùng ${idx + 1} treo — thử quét lại lần 2...`);
+        const staleLease = getActiveCellLease();
+        if (staleLease) {
+          await chrome.tabs
+            .sendMessage(tabId, { action: "SCRAPE_ABORT", data: staleLease })
+            .catch(() => {});
+        }
         await runGridCell(idx);
         return;
       }
@@ -1166,10 +1196,14 @@ async function finalizeFromCheckpoint(reason) {
 
   restoreScrapeStateFromCheckpoint(cp);
   scrapeState.running = false;
+  scrapeState.runId = "";
 
   if (scrapeState.mapsTabId) {
     try {
-      await chrome.tabs.sendMessage(scrapeState.mapsTabId, { action: "SCRAPE_ABORT" });
+      await chrome.tabs.sendMessage(scrapeState.mapsTabId, {
+        action: "SCRAPE_ABORT",
+        data: getActiveCellLease()
+      });
     } catch {}
   }
 
@@ -1248,7 +1282,10 @@ async function abandonActiveSearch() {
     scrapeState.running = false;
     if (scrapeState.mapsTabId) {
       try {
-        await chrome.tabs.sendMessage(scrapeState.mapsTabId, { action: "SCRAPE_ABORT" });
+        await chrome.tabs.sendMessage(scrapeState.mapsTabId, {
+          action: "SCRAPE_ABORT",
+          data: getActiveCellLease()
+        });
       } catch {}
     }
     await closeMapsTabSafely();
@@ -1354,6 +1391,7 @@ function resetScrapeState() {
     syncDebounceTimer = null;
   }
   scrapeState.running = false;
+  scrapeState.runId = "";
   scrapeState.mapsTabId = null;
   scrapeState.mapsWindowId = null;
   scrapeState.webTabId = null;
@@ -1364,6 +1402,10 @@ function resetScrapeState() {
   scrapeState.mergedPlaces = new Map();
   scrapeState.completedCells = new Set();
   scrapeState.phase = "grid";
+  scrapeState.cellGeneration = 0;
+  scrapeState._retriedCells = new Set();
+  scrapeState._mapsReopenCount = 0;
+  scrapeState._mapsUserReloadCount = 0;
   scrapeState._mapsCellWorkActive = false;
   scrapeState._programmaticMapsNavUntil = 0;
   scrapeState._expectMapsNavigation = false;
@@ -1781,7 +1823,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   scheduleMapsReloadRecovery();
 });
 
-const REQUIRED_CONTENT_VERSION = 56;
+const REQUIRED_CONTENT_VERSION = 58;
 
 async function ensureMapsContentReady(tabId) {
   for (let attempt = 0; attempt < 8; attempt++) {
@@ -1813,7 +1855,7 @@ async function ensureMapsContentReady(tabId) {
       });
       await chrome.scripting.executeScript({
         target: { tabId },
-        files: ["place-fields.js", "grid.js", "content.js"]
+        files: ["run-lease.js", "place-fields.js", "grid.js", "content.js"]
       });
     } catch {}
     await sleep(500 + attempt * 150);
@@ -1859,6 +1901,7 @@ async function runGridCell(cellIndex) {
   if (!scrapeState.running) return;
 
   const cellGen = ++scrapeState.cellGeneration;
+  const lease = { runId: scrapeState.runId, cellGeneration: cellGen };
 
   if (cellIndex >= scrapeState.totalCells) {
     return;
@@ -1926,6 +1969,7 @@ async function runGridCell(cellIndex) {
       "SCRAPE_CELL_LIST",
       {
         searchParams: params,
+        ...lease,
         cellIndex,
         totalCells: scrapeState.totalCells,
         cellLat: cell.lat,
@@ -1944,12 +1988,20 @@ async function runGridCell(cellIndex) {
       calcProgressPercent(cellIndex, scrapeState.totalCells),
       `Lỗi ô ${cellIndex + 1}: ${err.message}`
     );
-    result = { success: false, places: [], skippedCount: 0, clickAttempts: 0 };
+    result = { success: false, places: [], skippedCount: 0, clickAttempts: 0, ...lease };
+    await chrome.tabs
+      .sendMessage(scrapeState.mapsTabId, { action: "SCRAPE_ABORT", data: lease })
+      .catch(() => {});
   } finally {
     endMapsCellWork();
   }
 
   if (!scrapeState.running || cellGen !== scrapeState.cellGeneration) return;
+
+  if (!RunLease.same(lease, result)) {
+    notifyPopup(`Bỏ kết quả cũ của vùng ${cellIndex + 1}.`);
+    return;
+  }
 
   const stampedPlaces = (result?.places || []).map((p) => ({
     ...p,
@@ -2534,12 +2586,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.action === "SCRAPE_PROGRESS") {
-    if (!scrapeState.running) return;
+    if (!scrapeState.running || !acceptsActiveCellMessage(message, sender)) return;
     notifyProgress(message.percent, message.text);
   }
 
   if (message.action === "SCRAPE_LOG") {
-    if (!scrapeState.running) return;
+    if (!scrapeState.running || !acceptsActiveCellMessage(message, sender)) return;
     const line = message.line;
     chrome.runtime.sendMessage({ action: "SEARCH_LOG", line }).catch(() => {});
     if (currentSearch?.webUrl) {
@@ -2548,7 +2600,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.action === "SCRAPE_ITEM") {
-    if (!scrapeState.running) return;
+    if (!scrapeState.running || !acceptsActiveCellMessage(message, sender)) return;
     const { result, searchParams } = message.data;
     const params = scrapeState.searchParams || searchParams;
     if (!params) return;
@@ -2655,10 +2707,13 @@ async function handleStartSearch(params) {
   params.radius = clampSearchRadiusKm(params.radius);
   const grid = generateSearchGrid(params.lat, params.lng, params.radius);
 
+  params.searchId = String(params.searchId || `search_${Date.now()}_${crypto.randomUUID()}`);
   currentSearch = { ...params, gridCells: grid.totalCells };
   pointsFinalized = false;
   lastScrapeProgressAt = Date.now();
   scrapeState.running = true;
+  scrapeState.runId = params.searchId;
+  scrapeState.cellGeneration = 0;
   scrapeState.searchParams = params;
   scrapeState.webTabId = webTab.id;
   scrapeState.mapsTabId = null;
@@ -2670,6 +2725,9 @@ async function handleStartSearch(params) {
   scrapeState.mergedPlaces = new Map();
   scrapeState.completedCells = new Set();
   scrapeState.phase = "grid";
+  scrapeState._retriedCells = new Set();
+  scrapeState._mapsReopenCount = 0;
+  scrapeState._mapsUserReloadCount = 0;
   lastSyncedMergedCount = 0;
   lastForceSyncAt = 0;
   startScrapeKeepAlive();

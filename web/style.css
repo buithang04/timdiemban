@@ -2407,6 +2407,16 @@ body.wm-console .wm-table-section { display: contents; }
   border-color: var(--wm-primary-deep);
 }
 
+.wm-toolbar-btn-jobs {
+  border-color: #93c5fd;
+  color: #1d4ed8;
+}
+
+.wm-toolbar-btn-jobs:hover:not(:disabled) {
+  border-color: #60a5fa;
+  background: #eff6ff;
+}
+
 .wm-btn-sm {
   height: 30px;
   padding: 0 10px;
@@ -2647,11 +2657,6 @@ body.wm-console .wm-table .col-addr {
 
 body.wm-console .wm-header {
   border-bottom-color: var(--wm-line);
-}
-
-.wm-sidebar-send #syncJobsBtn {
-  margin-top: 10px;
-  width: 100%;
 }
 
 .jobs-sync-summary {

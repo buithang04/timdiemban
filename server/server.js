@@ -270,6 +270,8 @@ function guardSensitiveInput(...fields) {
 function csrfOriginGuard(req, res, next) {
   if (!req.path.startsWith("/api/")) return next();
   if (["GET", "HEAD", "OPTIONS"].includes(req.method)) return next();
+  // Server Jobs chỉ kích hoạt đối soát; Findmap vẫn tự xác minh token với Jobs trước khi thu hồi.
+  if (req.path === "/api/integrations/jobs/reconcile") return next();
   const origin = req.headers.origin || "";
   const referer = req.headers.referer || "";
   if (!isAllowedWebOrigin(origin) || !isAllowedWebOrigin(referer)) {
@@ -619,6 +621,19 @@ app.get("/api/integrations/jobs/status", jobsIntegrationRateLimit, requireAuth, 
   try {
     const verify = String(req.query.verify || "") === "1";
     res.json(await jobsIntegration.status(req.user.id, { verify }));
+  } catch (error) {
+    sendJobsIntegrationError(res, error);
+  }
+});
+
+app.post("/api/integrations/jobs/reconcile", jobsIntegrationRateLimit, async (req, res) => {
+  try {
+    res.json(
+      await jobsIntegration.reconcileRevocation(
+        req.body?.findmap_user_id,
+        req.body?.jobs_user_id
+      )
+    );
   } catch (error) {
     sendJobsIntegrationError(res, error);
   }

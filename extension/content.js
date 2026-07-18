@@ -1,9 +1,16 @@
 (function () {
   // Bump version mỗi lần sửa content — background sẽ reinject nếu Maps còn bản cũ
-  const CONTENT_VERSION = 57;
+  const CONTENT_VERSION = 58;
   if (window.__timDiemBanLoaded && window.__timDiemBanVersion === CONTENT_VERSION) return;
+  if (typeof window.__timDiemBanCleanup === "function") {
+    try {
+      window.__timDiemBanCleanup();
+    } catch {}
+  }
   window.__timDiemBanLoaded = true;
   window.__timDiemBanVersion = CONTENT_VERSION;
+
+  const RunLease = globalThis.TimDiemBanRunLease;
 
   let extAlive = true;
   function safeSend(message, cb) {
@@ -62,7 +69,7 @@
       if (!scrapeInProgress || !document.hidden) return;
       startAntiThrottle();
       document.dispatchEvent(new CustomEvent("timdiemban-wake", { bubbles: true }));
-    }, 300);
+    }, 1000);
   }
 
   function stopBackgroundWakeLoop() {
@@ -98,12 +105,6 @@
     if (antiThrottleStop) antiThrottleStop();
   }
 
-  // Khi ô tìm tiếp theo được load bằng chrome.tabs.update({active:false}), tab luôn
-  // ở trạng thái ẩn NGAY TỪ ĐẦU — sự kiện "visibilitychange" (dùng để tự bật chống
-  // throttle) sẽ KHÔNG bao giờ bắn ra vì trạng thái ẩn không hề thay đổi. Vì vậy phải
-  // kiểm tra document.hidden ngay khi script vừa load, không chỉ chờ visibilitychange.
-  if (document.hidden) startAntiThrottle();
-
   function sleep(ms) {
     return new Promise((resolve) => {
       const deadline = Date.now() + ms;
@@ -134,6 +135,8 @@
     coordWait: 2200
   };
   let isAborted = false;
+  let activeCellLease = null;
+  let activeCellTask = null;
   let shieldEl = null;
   let blockKeysHandler = null;
   let shieldPeek = false;
@@ -149,7 +152,7 @@
     if (level === "warn") console.warn("TimDiemBan:", text);
     else console.log("TimDiemBan:", text);
     appendShieldLog();
-    safeSend({ action: "SCRAPE_LOG", line: text });
+    safeSend({ action: "SCRAPE_LOG", line: text, ...(activeCellLease || {}) });
   }
 
   function appendShieldLog() {
@@ -177,7 +180,7 @@
     return false;
   }
 
-  document.addEventListener("visibilitychange", () => {
+  function handleVisibilityChange() {
     if (document.hidden && scrapeInProgress) {
       startAntiThrottle();
       startBackgroundWakeLoop();
@@ -188,7 +191,9 @@
       }
     }
     document.dispatchEvent(new CustomEvent("timdiemban-wake", { bubbles: true }));
-  });
+  }
+
+  document.addEventListener("visibilitychange", handleVisibilityChange);
 
   function createShield() {
     // Maps SPA có thể gỡ node khỏi DOM — tạo lại nếu đã bị detach
@@ -344,13 +349,14 @@
 
   function sendProgress(percent, text) {
     updateShield(text, percent);
-    safeSend({ action: "SCRAPE_PROGRESS", percent, text });
+    safeSend({ action: "SCRAPE_PROGRESS", percent, text, ...(activeCellLease || {}) });
   }
 
   function sendItem(result, searchParams, index, total) {
     if (result) result._webSent = true;
     safeSend({
       action: "SCRAPE_ITEM",
+      ...(activeCellLease || {}),
       data: { result, searchParams, index, total, phase: result._phase || "list" }
     });
   }
@@ -3102,7 +3108,7 @@
       }
       await sleep(T.detailPoll);
     }
-    return !!findDetailPaneH1();
+    return Boolean(findDetailPaneH1() && verifyDetailMatchesList(listData));
   }
 
   async function extractPlaceDetails(listData, searchParams, options = {}) {
@@ -3114,6 +3120,10 @@
       needPhone = true,
       needWebsite = true
     } = options;
+    if (listData?.name && !(await waitForDetailPanel(listData))) {
+      throw new Error(`Panel chưa khớp địa điểm: ${listData.name}`);
+    }
+
     const hasCoords = listData?.lat != null && listData?.lng != null && !isNaN(listData.lat);
     const hasRating = !!(listData?.rating && /\d/.test(String(listData.rating)));
     const hasReviews = !!(listData?.reviews && String(listData.reviews).replace(/\D/g, "").length > 0);
@@ -3381,12 +3391,17 @@
     }
 
     const feed = getFeedPanel();
-    if (feed && getResultItems(feed).length > 0) {
+    const centerMatches = urlCenterMatchesCell(window.location.href, cellLat, cellLng);
+    if (feed && getResultItems(feed).length > 0 && centerMatches) {
       feed.scrollTop = 0;
       tbLog(`Vùng ${cellIndex + 1}: dùng feed hiện có (timeout)`, "warn");
       return feed;
     }
-    throw new Error("Không tìm thấy danh sách kết quả trên Google Maps");
+    throw new Error(
+      centerMatches
+        ? "Không tìm thấy danh sách kết quả trên Google Maps"
+        : `Google Maps chưa chuyển đúng vùng ${cellIndex + 1}`
+    );
   }
 
   let _lastKnownTotalCells = 1;
@@ -3459,14 +3474,14 @@
     await sleep(T.click);
 
     for (let i = 0; i < 28; i++) {
-      if (verifyDetailMatchesList(listData) || findDetailPaneH1()) {
+      if (verifyDetailMatchesList(listData)) {
         await sleep(280);
         return item;
       }
       if (i === 5 || i === 12) link.click();
       await sleep(220);
     }
-    return findDetailPaneH1() ? item : null;
+    return verifyDetailMatchesList(listData) ? item : null;
   }
 
   async function scrapePlaceDetailByHref(
@@ -4335,6 +4350,7 @@
 
     return {
       success: true,
+      ...(RunLease.normalize(data) || {}),
       places: outcome.places,
       skippedCount: outcome.skippedCount,
       clickAttempts: outcome.clickAttempts,
@@ -4344,13 +4360,42 @@
     };
   }
 
+  function runScrapeCellMessage(data) {
+    const lease = RunLease.normalize(data);
+    if (!lease) {
+      return Promise.resolve({ success: false, places: [], error: "Thiếu định danh phiên quét." });
+    }
+    if (activeCellTask && RunLease.same(activeCellLease, lease)) return activeCellTask;
+
+    const previousTask = activeCellTask;
+    const task = (async () => {
+      if (previousTask) {
+        isAborted = true;
+        await previousTask.catch(() => {});
+      }
+      activeCellLease = lease;
+      isAborted = false;
+      const outcome = await scrapeCellList(data);
+      return { ...(outcome || { success: false, places: [] }), ...lease };
+    })();
+
+    activeCellTask = task;
+    task.finally(() => {
+      if (activeCellTask !== task) return;
+      activeCellTask = null;
+      activeCellLease = null;
+      isAborted = false;
+    }).catch(() => {});
+    return task;
+  }
+
   window.__timDiemBanWake = function () {
     startAntiThrottle();
     if (scrapeInProgress && document.hidden) startBackgroundWakeLoop();
     document.dispatchEvent(new CustomEvent("timdiemban-wake", { bubbles: true }));
   };
 
-  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  function handleRuntimeMessage(message, sender, sendResponse) {
     if (message.action === "PING") {
       sendResponse({ ok: true, v: window.__timDiemBanVersion || 0 });
       return;
@@ -4361,7 +4406,8 @@
       return;
     }
     if (message.action === "SCRAPE_ABORT") {
-      abortScrape();
+      const requestedLease = RunLease.normalize(message.data);
+      if (!requestedLease || RunLease.same(activeCellLease, requestedLease)) abortScrape();
       sendResponse({ success: true });
       return;
     }
@@ -4377,12 +4423,17 @@
       return;
     }
     if (message.action === "SCRAPE_CELL_LIST") {
-      scrapeCellList(message.data)
+      runScrapeCellMessage(message.data)
         .then((outcome) => sendResponse(outcome || { success: false }))
         .catch((err) => {
           hideShield();
           console.warn("SCRAPE_CELL_LIST:", err.message);
-          sendResponse({ success: false, places: [], error: err.message });
+          sendResponse({
+            success: false,
+            places: [],
+            error: err.message,
+            ...(RunLease.normalize(message.data) || {})
+          });
         });
       return true;
     }
@@ -4415,5 +4466,24 @@
       hideShield();
       sendResponse({ success: true });
     }
-  });
+  }
+
+  chrome.runtime.onMessage.addListener(handleRuntimeMessage);
+  window.__timDiemBanCleanup = function () {
+    extAlive = false;
+    isAborted = true;
+    stopBackgroundWakeLoop();
+    stopAntiThrottle();
+    document.removeEventListener("visibilitychange", handleVisibilityChange);
+    try {
+      chrome.runtime.onMessage.removeListener(handleRuntimeMessage);
+    } catch {}
+    hideShield();
+    if (window.__timDiemBanVersion === CONTENT_VERSION) {
+      delete window.__timDiemBanLoaded;
+      delete window.__timDiemBanVersion;
+      delete window.__timDiemBanCleanup;
+      delete window.__timDiemBanWake;
+    }
+  };
 })();

@@ -454,20 +454,22 @@ test("PlaceFields global + grid helpers tồn tại", () => {
   eq(sanitizeAddressField("+84 225 3668 881 Trang web Đường đi"), "");
 });
 
-test("manifest có place-fields trước grid/content", () => {
+test("manifest có run-lease/place-fields trước grid/content", () => {
   const m = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "extension", "manifest.json"), "utf8"));
   const maps = m.content_scripts.find((s) => (s.js || []).includes("content.js"));
   ok(maps, "maps content_scripts");
+  const iLease = maps.js.indexOf("run-lease.js");
   const iPf = maps.js.indexOf("place-fields.js");
   const iGrid = maps.js.indexOf("grid.js");
   const iContent = maps.js.indexOf("content.js");
-  ok(iPf >= 0 && iPf < iGrid && iGrid < iContent, maps.js.join(","));
+  ok(iLease >= 0 && iLease < iPf && iPf < iGrid && iGrid < iContent, maps.js.join(","));
 });
 
-test("background importScripts có place-fields", () => {
+test("background importScripts và reinject có run-lease/place-fields", () => {
   const bg = fs.readFileSync(path.join(__dirname, "..", "extension", "background.js"), "utf8");
+  ok(/importScripts\([^)]*run-lease\.js/.test(bg));
   ok(/importScripts\([^)]*place-fields\.js/.test(bg));
-  ok(/files:\s*\[[^\]]*place-fields\.js/.test(bg));
+  ok(/files:\s*\[[^\]]*run-lease\.js[^\]]*place-fields\.js/.test(bg));
 });
 
 console.log("\n═══ Q. DOM phone Google Maps + render trễ ═══");
@@ -562,13 +564,15 @@ test("content wiring có list fallback, tel selector và stable wait", () => {
   ok(content.includes("PF.extractPhoneFromListText(item.textContent"));
   ok(content.includes("a[href^=\"tel:\"]"));
   ok(content.includes("PF.shouldKeepWaitingForPhone"));
-  ok(/CONTENT_VERSION\s*=\s*57/.test(content));
+  ok(/CONTENT_VERSION\s*=\s*58/.test(content));
+  ok(content.includes("runScrapeCellMessage"));
+  ok(content.includes("verifyDetailMatchesList(listData)"));
 });
 test("manifest tăng version để web phát hiện bản cũ", () => {
   const manifest = JSON.parse(
     fs.readFileSync(path.join(__dirname, "..", "extension", "manifest.json"), "utf8")
   );
-  eq(manifest.version, "0.0.4");
+  eq(manifest.version, "0.0.5");
 });
 
 console.log("\n────────────────────────────────");

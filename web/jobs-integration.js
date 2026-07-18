@@ -93,6 +93,7 @@
   function renderStatus(status) {
     currentStatus = status || { linked: false };
     const linked = Boolean(currentStatus.linked);
+    window.FindmapJobsNav?.setLinked(linked);
     $("jobsStatusDot")?.classList.toggle("connected", linked);
     $("jobsStatusTitle").textContent = linked ? "Đã kết nối" : "Chưa kết nối";
     $("jobsStatusSubtitle").textContent = linked
@@ -254,7 +255,7 @@
     $("verifyJobsBtn")?.addEventListener("click", verify);
     $("disconnectJobsBtn")?.addEventListener("click", disconnect);
     $("sidebarLogoutBtn")?.addEventListener("click", logout);
-    await loadStatus();
+    await loadStatus(true);
     await loadConnectionRequest();
   }
 

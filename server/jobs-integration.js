@@ -317,6 +317,39 @@ function createJobsIntegrationService({
     return { disconnected: true, message: "Đã ngắt kết nối Jobs ClickOn." };
   }
 
+  async function reconcileRevocation(findmapUserId, jobsUserId) {
+    const externalUserId = limitedText(findmapUserId, 191);
+    if (!externalUserId) {
+      throw new JobsIntegrationError("Thiếu tài khoản Findmap cần đối soát.", 422, "invalid_findmap_user");
+    }
+    const externalJobsUserId = Number(jobsUserId);
+    if (!Number.isSafeInteger(externalJobsUserId) || externalJobsUserId < 1) {
+      throw new JobsIntegrationError("Thiếu tài khoản Jobs cần đối soát.", 422, "invalid_jobs_user");
+    }
+
+    const link = await db.getJobsIntegrationLink(externalUserId, { includeToken: true });
+    if (!link || link.status !== "active") {
+      return { linked: false, disconnected: true, provider: PROVIDER };
+    }
+    if (externalJobsUserId !== Number(link.jobsUserId)) {
+      throw new JobsIntegrationError("Tài khoản Jobs không khớp liên kết Findmap.", 409, "jobs_link_mismatch");
+    }
+    if (!link.integrationToken) {
+      throw new JobsIntegrationError(
+        "Không giải mã được integration token. Kiểm tra SETTINGS_ENCRYPTION_KEY.",
+        500,
+        "jobs_token_unavailable"
+      );
+    }
+
+    const verified = await status(externalUserId, { verify: true });
+    return {
+      linked: Boolean(verified.linked),
+      disconnected: !verified.linked,
+      provider: PROVIDER
+    };
+  }
+
   async function syncCustomers(findmapUserId, rows, requestedId = "") {
     if (!Array.isArray(rows) || rows.length < 1) {
       throw new JobsIntegrationError("Chọn ít nhất một điểm bán để đồng bộ.", 422, "empty_batch");
@@ -403,7 +436,16 @@ function createJobsIntegrationService({
     };
   }
 
-  return { status, previewRequest, connect, declineRequest, disconnect, syncCustomers, baseUrl };
+  return {
+    status,
+    previewRequest,
+    connect,
+    declineRequest,
+    disconnect,
+    reconcileRevocation,
+    syncCustomers,
+    baseUrl
+  };
 }
 
 module.exports = {

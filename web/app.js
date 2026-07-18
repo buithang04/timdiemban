@@ -1799,18 +1799,26 @@ function getSelectedJobsRows() {
   return currentData.filter((row) => checked.has(getDomKey(row)));
 }
 
+function setToolbarButtonLabel(button, label) {
+  if (!button) return;
+  const element = button.querySelector("[data-button-label]");
+  if (element) element.textContent = label;
+  else button.textContent = label;
+}
+
 function updateSyncJobsButton() {
   if (!els.syncJobsBtn) return;
   const selected = getSelectedJobsRows();
   const validCount = selected.filter((row) => normalizeJobsPhone(row.phone)).length;
   const linked = Boolean(currentUser && jobsIntegrationStatus?.linked);
 
+  els.syncJobsBtn.classList.toggle("hidden", !linked);
   els.syncJobsBtn.disabled = jobsSyncBusy || !linked || validCount < 1;
-  els.syncJobsBtn.textContent = jobsSyncBusy
+  setToolbarButtonLabel(els.syncJobsBtn, jobsSyncBusy
     ? "Đang đồng bộ..."
     : validCount > 0
       ? `Đồng bộ Jobs (${validCount})`
-      : "Đồng bộ Jobs";
+      : "Đồng bộ Jobs");
   els.syncJobsBtn.title = !currentUser
     ? "Đăng nhập Findmap để đồng bộ"
     : !jobsIntegrationStatus?.linked
@@ -1829,17 +1837,19 @@ function updateSyncJobsButton() {
 async function loadJobsIntegrationStatus() {
   if (!currentUser) {
     jobsIntegrationStatus = { linked: false };
+    window.FindmapJobsNav?.setLinked(false);
     updateSyncJobsButton();
     return jobsIntegrationStatus;
   }
   try {
-    jobsIntegrationStatus = await apiRequest("/api/integrations/jobs/status");
+    jobsIntegrationStatus = await apiRequest("/api/integrations/jobs/status?verify=1");
   } catch (error) {
     jobsIntegrationStatus = { linked: false, error: error.message };
     if (els.syncJobsHint) {
       els.syncJobsHint.textContent = "Không tải được trạng thái Jobs. Kiểm tra lại trang kết nối.";
     }
   }
+  window.FindmapJobsNav?.refresh(jobsIntegrationStatus);
   updateSyncJobsButton();
   return jobsIntegrationStatus;
 }
@@ -1944,12 +1954,16 @@ function formatSiteHostForUi(host, maxLen = 22) {
   const raw = String(host || "").trim();
   if (!raw) return "";
   let display = raw;
-  try {
-    const withProto = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
-    const u = new URL(withProto);
-    display = u.host + (u.pathname && u.pathname !== "/" ? u.pathname : "");
-  } catch {
-    /* giữ raw */
+  const looksLikeUrl = /^https?:\/\//i.test(raw);
+  const looksLikeHost = /^[a-z0-9.-]+\.[a-z]{2,}(?::\d+)?(?:\/.*)?$/i.test(raw);
+  if (looksLikeUrl || looksLikeHost) {
+    try {
+      const withProto = looksLikeUrl ? raw : `https://${raw}`;
+      const u = new URL(withProto);
+      display = u.host + (u.pathname && u.pathname !== "/" ? u.pathname : "");
+    } catch {
+      /* giữ raw */
+    }
   }
   if (display.length <= maxLen) return display;
   return `${display.slice(0, Math.max(10, maxLen - 1))}…`;
@@ -1961,11 +1975,11 @@ function updateSendSiteButton() {
   const shortHost = formatSiteHostForUi(winmapSite.label || host, 20);
   const checkedCount = getCheckedKeys().length;
   const sendCount = checkedCount || currentData.length;
-  els.sendSiteBtn.textContent = shortHost
+  setToolbarButtonLabel(els.sendSiteBtn, shortHost
     ? checkedCount
       ? `Gửi ${checkedCount} đã chọn về ${shortHost}`
       : `Gửi tất cả về ${shortHost}`
-    : "Gửi về site";
+    : "Gửi về site");
   els.sendSiteBtn.disabled = !sendCount || !winmapSite.configured;
   els.sendSiteBtn.title = !winmapSite.configured
     ? "Chưa cấu hình site — vào Cấu hình site để lưu URL + token"
@@ -2995,6 +3009,10 @@ loadCurrentUser().then(async () => {
   updateView();
   setTimeout(() => window.TimDiemBanMap?.invalidateSize?.(), 500);
 });
+
+setInterval(() => {
+  if (currentUser && !jobsSyncBusy) loadJobsIntegrationStatus().catch(() => {});
+}, 60000);
 
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible" && getAuthToken()) {

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Findmap Extension",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "permissions": [
     "activeTab",
     "tabs",
@@ -35,6 +35,7 @@
         "https://www.google.com/maps/*"
       ],
       "js": [
+        "run-lease.js",
         "place-fields.js",
         "grid.js",
         "content.js"

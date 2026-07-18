@@ -65,7 +65,7 @@ const testEnv = {
   JOBS_CLICKON_TIMEOUT_MS: "1000"
 };
 
-function activeLink() {
+function activeLink(overrides = {}) {
   return {
     status: "active",
     findmapUserId: "findmap-1",
@@ -77,7 +77,8 @@ function activeLink() {
     jobsBaseUrl: "https://jobs.clickon.vn",
     integrationToken: "a".repeat(64),
     linkedAt: "2026-07-18T01:00:00.000Z",
-    lastSyncAt: null
+    lastSyncAt: null,
+    ...overrides
   };
 }
 
@@ -264,6 +265,41 @@ test("disconnect thu hồi token Jobs, xóa token cục bộ và giữ phiên Fi
   assert.equal(db.rawLink.status, "revoked");
   assert.equal(db.rawLink.integrationToken, "");
   assert.equal(sessionToken, "findmap-session-token");
+});
+
+test("đối soát thu hồi từ Jobs chỉ xóa link sau khi token bị Jobs từ chối", async () => {
+  const db = createDb(activeLink());
+  const service = createJobsIntegrationService({
+    db,
+    env: testEnv,
+    fetchImpl: async (url, options) => {
+      assert.equal(url, "https://jobs.clickon.vn/api/v1/integrations/findmap/token/status");
+      assert.equal(options.headers.Authorization, `Bearer ${"a".repeat(64)}`);
+      return jsonResponse(401, { message: "token revoked" });
+    }
+  });
+
+  const result = await service.reconcileRevocation("findmap-1", 12);
+  assert.equal(result.disconnected, true);
+  assert.equal(db.rawLink.status, "revoked");
+  assert.equal(db.rawLink.integrationToken, "");
+});
+
+test("đối soát không cho tài khoản Jobs khác tác động vào link", async () => {
+  const db = createDb(activeLink());
+  const service = createJobsIntegrationService({ db, env: testEnv, fetchImpl: async () => jsonResponse(500, {}) });
+
+  await assert.rejects(service.reconcileRevocation("findmap-1", 99), /không khớp/);
+  assert.equal(db.rawLink.status, "active");
+});
+
+test("đối soát bắt buộc đúng định danh Jobs và không xóa link khi thiếu token", async () => {
+  const db = createDb(activeLink({ integrationToken: "" }));
+  const service = createJobsIntegrationService({ db, env: testEnv, fetchImpl: async () => jsonResponse(500, {}) });
+
+  await assert.rejects(service.reconcileRevocation("findmap-1", null), /Thiếu tài khoản Jobs/);
+  await assert.rejects(service.reconcileRevocation("findmap-1", 12), /Không giải mã được/);
+  assert.equal(db.rawLink.status, "active");
 });
 
 test("sync chỉ gửi dòng hợp lệ và hợp nhất created duplicate invalid theo dòng gốc", async () => {
