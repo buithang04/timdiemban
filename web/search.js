@@ -908,7 +908,7 @@
         window.removeEventListener("message", onMsg);
         reject(
           new Error(
-            `Extension không phản hồi — mở ${window.location.origin}, reload extension findmap rồi thử lại`
+            "Không kết nối được Extension Findmap. Hãy kiểm tra tiện ích đã được cài và bật."
           )
         );
       }, 30000);
@@ -943,16 +943,8 @@
       return;
     }
 
-    const extUp = window.TimDiemBanExtVersion?.isUpToDate?.();
-    if (extUp === false) {
-      showSearchStatus(
-        "Extension chưa cập nhật mới nhất — reload tại chrome://extensions trước khi tìm.",
-        "error"
-      );
-      return;
-    }
-    if (extUp === null && !window.TimDiemBanExtVersion?.getStatus?.()?.bridgeOk) {
-      showSearchStatus("Chưa kết nối extension — cài/reload findmap.", "error");
+    if (window.TimDiemBanExtension?.isInstalled?.() !== true) {
+      showSearchStatus("Chưa phát hiện Extension Findmap. Hãy cài hoặc bật tiện ích trước khi tìm.", "error");
       return;
     }
 

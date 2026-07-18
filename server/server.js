@@ -77,17 +77,6 @@ initDatabase().catch((err) => {
   process.exit(1);
 });
 
-const extManifestPath = path.join(__dirname, "..", "extension", "manifest.json");
-function getExtensionManifestVersion() {
-  try {
-    const raw = fs.readFileSync(extManifestPath, "utf8");
-    const manifest = JSON.parse(raw);
-    return { version: manifest.version || "0.0.0", name: manifest.name || "Tim Diem Ban" };
-  } catch {
-    return { version: "0.0.0", name: "Tim Diem Ban" };
-  }
-}
-
 const app = express();
 const PORT = Number(process.env.PORT || process.env.APP_PORT || 3000);
 app.set("json escape", true);
@@ -550,10 +539,6 @@ app.get("/api/config/origins", (req, res) => {
     newsOrigin,
     appOrigin
   });
-});
-
-app.get("/api/ext-version", (req, res) => {
-  res.json(getExtensionManifestVersion());
 });
 
 app.post("/api/auth/login", authWriteRateLimit, guardSensitiveInput("email", "password"), async (req, res) => {

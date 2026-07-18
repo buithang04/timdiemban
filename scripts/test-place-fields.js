@@ -568,11 +568,12 @@ test("content wiring có list fallback, tel selector và stable wait", () => {
   ok(content.includes("runScrapeCellMessage"));
   ok(content.includes("verifyDetailMatchesList(listData)"));
 });
-test("manifest tăng version để web phát hiện bản cũ", () => {
+test("manifest MV3 có phiên bản hợp lệ", () => {
   const manifest = JSON.parse(
     fs.readFileSync(path.join(__dirname, "..", "extension", "manifest.json"), "utf8")
   );
-  eq(manifest.version, "0.0.5");
+  eq(manifest.manifest_version, 3);
+  ok(/^\d+\.\d+\.\d+$/.test(manifest.version));
 });
 
 console.log("\n────────────────────────────────");

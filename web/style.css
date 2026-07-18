@@ -595,23 +595,6 @@ body.page-winmap {
   border-bottom-color: #fecaca;
 }
 
-.ext-version-dismiss {
-  flex-shrink: 0;
-  padding: 4px 12px;
-  font-size: 12px;
-  font-weight: 600;
-  border: 1px solid currentColor;
-  border-radius: 4px;
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-  opacity: 0.85;
-}
-
-.ext-version-dismiss:hover {
-  opacity: 1;
-}
-
 .conn-top {
   font-size: 12px;
 }

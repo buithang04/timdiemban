@@ -2945,24 +2945,13 @@ window.addEventListener("timdiemban:search-status", (e) => {
 
 window.addEventListener("timdiemban:bridge-ready", (e) => {
   const p = e.detail || {};
-  window.TimDiemBanExtVersion?.onBridgeReady(p);
+  window.TimDiemBanExtension?.onBridgeReady(p);
   if (p.ok) {
-    const up = window.TimDiemBanExtVersion?.isUpToDate?.();
-    const ver = p.version ? ` v${p.version}` : "";
-    if (up === true) {
-      setConnStatus(`Extension${ver} — đã cập nhật mới nhất`, "connected");
-    } else if (up === false) {
-      setConnStatus(`Extension${ver} — cần reload (xem thông báo phía trên)`, "error");
-    } else {
-      setConnStatus(`Extension đã kết nối${ver}`, "connected");
-    }
+    setConnStatus("Đã cài và kết nối extension", "connected");
     queryRescanStatus();
-  } else if (p.dead) {
-    window.TimDiemBanExtVersion?.onBridgeMissing();
-    setConnStatus("Extension vừa reload — trang sẽ tự làm mới…", "error");
   } else {
-    window.TimDiemBanExtVersion?.onBridgeMissing();
-    setConnStatus("Chưa thấy extension — Reload Findmap tại chrome://extensions rồi F5", "error");
+    window.TimDiemBanExtension?.onBridgeMissing();
+    setConnStatus("Chưa phát hiện extension", "error");
   }
 });
 
