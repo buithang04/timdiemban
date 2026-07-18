@@ -154,9 +154,9 @@ async function pingBridgeOnTab(tabId) {
 
 async function ensureBridgeOnTab(tab) {
   const origin = normalizeOrigin(tab?.url);
-  if (!origin) return { ok: false, error: "Không thể kết nối trên trang hiện tại." };
+  if (!origin) return { ok: false, error: "Không có tab http(s)" };
   if (isMapsOrChromeUrl(tab.url)) {
-    return { ok: false, error: "Trang hiện tại không phải Findmap." };
+    return { ok: false, error: "Tab Maps/hệ thống — bỏ qua" };
   }
   await rememberWebOrigin(origin);
   if (await pingBridgeOnTab(tab.id)) {
@@ -165,13 +165,13 @@ async function ensureBridgeOnTab(tab) {
   return {
     ok: false,
     origin,
-    error: "Chưa kết nối được với Findmap. Hãy tải lại trang Findmap rồi thử lại."
+    error: "Bridge chưa gắn — F5 trang sau khi reload extension"
   };
 }
 
 async function grantBroadAndResync() {
   const ok = await requestBroadHostAccess();
-  if (!ok) return { ok: false, error: "Tiện ích chưa được cấp quyền truy cập trang này." };
+  if (!ok) return { ok: false, error: "Chưa có quyền mọi domain" };
   await cleanupStaleRegisteredScripts();
   return { ok: true, broad: true };
 }
@@ -182,7 +182,7 @@ async function syncRegisteredBridgeScripts() {
 
 async function inspectActiveTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab?.id) return { ok: false, error: "Không tìm thấy tab đang mở." };
+  if (!tab?.id) return { ok: false, error: "Không thấy tab" };
   const origin = normalizeOrigin(tab.url);
   const maps = isMapsOrChromeUrl(tab.url);
   let isFindmap = false;

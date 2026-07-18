@@ -2,39 +2,104 @@
 <html lang="vi">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Findmap – Tìm điểm bán</title>
-  <link rel="stylesheet" href="popup.css" />
+  <title>Findmap Extension</title>
+  <style>
+    body {
+      width: 280px;
+      margin: 0;
+      padding: 18px;
+      font-family: "Segoe UI", system-ui, sans-serif;
+      text-align: center;
+      color: #1e293b;
+    }
+    h1 { font-size: 16px; margin: 0 0 8px; }
+    p { font-size: 12px; color: #64748b; line-height: 1.45; margin: 0 0 14px; }
+    a.open-link {
+      display: block;
+      width: 100%;
+      box-sizing: border-box;
+      padding: 12px;
+      background: #2563eb;
+      color: #fff;
+      text-decoration: none;
+      border-radius: 8px;
+      font-weight: 600;
+      font-size: 14px;
+    }
+    a.open-link:hover { background: #1d4ed8; }
+    .url-hint {
+      margin-top: 10px;
+      font-size: 11px;
+      color: #94a3b8;
+      word-break: break-all;
+    }
+    #statusLine {
+      font-size: 12px;
+      color: #0f766e;
+      margin-bottom: 12px;
+      min-height: 1.2em;
+    }
+  </style>
 </head>
 <body>
-  <main class="popup-card">
-    <header class="popup-header">
-      <img class="app-icon" src="icons/icon48.png" width="44" height="44" alt="" />
-      <div>
-        <p class="eyebrow">TIỆN ÍCH CHROME</p>
-        <h1>Findmap – Tìm điểm bán</h1>
-      </div>
-    </header>
-
-    <p class="description">
-      Kết nối Findmap với Google Maps để thu thập tên, địa chỉ, số điện thoại và website của điểm bán.
-    </p>
-
-    <div class="usage-note">
-      Khi bắt đầu quét, Findmap sẽ mở một tab Google Maps riêng. Hãy giữ tab đó mở và không thao tác cho đến khi hoàn tất.
-    </div>
-
-    <div id="statusLine" class="status-line" role="status" aria-live="polite">
-      Đang kiểm tra kết nối với Findmap…
-    </div>
-
-    <a id="openWebLink" class="open-link" href="https://findmap.vn" target="_blank" rel="noopener">
-      Mở Findmap
-    </a>
-    <div class="url-hint" id="openWebHint">findmap.vn</div>
-  </main>
+  <h1>Findmap Extension</h1>
+  <p>Extension tự kết nối mọi domain trang Findmap ở nền. Không cần kích hoạt tay.</p>
+  <div id="statusLine">Đang kiểm tra…</div>
+  <a id="openWebLink" class="open-link" href="https://findmap.vn" target="_blank" rel="noopener">Mở trang kết quả</a>
+  <div class="url-hint" id="openWebHint">findmap.vn</div>
 
   <script src="app-config.js"></script>
-  <script src="popup.js"></script>
+  <script>
+    (function () {
+      var FALLBACK = "https://findmap.vn";
+      var origin = (window.TIMDIEMBAN_CONFIG && window.TIMDIEMBAN_CONFIG.APP_ORIGIN) || FALLBACK;
+      origin = String(origin || FALLBACK).replace(/\/$/, "");
+      if (!/^https?:\/\//i.test(origin)) origin = FALLBACK;
+
+      var link = document.getElementById("openWebLink");
+      var hint = document.getElementById("openWebHint");
+      var statusEl = document.getElementById("statusLine");
+
+      function setPreferred(url) {
+        var preferred = String(url || origin).replace(/\/$/, "");
+        if (link) link.href = preferred;
+        if (hint) hint.textContent = preferred.replace(/^https?:\/\//, "");
+      }
+
+      chrome.runtime.sendMessage({ action: "GET_WEB_ORIGINS" }, function (resp) {
+        if (!chrome.runtime.lastError && resp) {
+          setPreferred(resp.preferred || resp.config || origin);
+        }
+      });
+
+      // Mở popup: gắn lại bridge tab hiện tại (ngầm) + báo trạng thái
+      chrome.runtime.sendMessage({ action: "CONNECT_WEB_SITE" }, function (resp) {
+        if (chrome.runtime.lastError) {
+          if (statusEl) statusEl.textContent = "Chạy ngầm — mở trang Findmap để tự kết nối.";
+          return;
+        }
+        if (resp && resp.ok) {
+          if (statusEl) statusEl.textContent = "Đã kết nối: " + (resp.origin || "OK");
+          if (resp.origin) setPreferred(resp.origin);
+        } else {
+          if (statusEl) statusEl.textContent = "Sẵn sàng — mở tab trang tìm điểm bán.";
+        }
+      });
+
+      if (link) {
+        link.addEventListener("click", function (e) {
+          e.preventDefault();
+          var url = link.href || origin;
+          try {
+            if (chrome && chrome.tabs && chrome.tabs.create) {
+              chrome.tabs.create({ url: url });
+              return;
+            }
+          } catch (_) {}
+          window.open(url, "_blank");
+        });
+      }
+    })();
+  </script>
 </body>
 </html>

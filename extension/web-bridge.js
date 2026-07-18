@@ -52,13 +52,13 @@
     } catch {}
   }
 
-  function kill() {
+  function kill(reason) {
     if (dead) return;
     dead = true;
     toPage("bridge_ready", {
       ok: false,
       dead: true,
-      error: "Kết nối với tiện ích đã bị gián đoạn. Hãy tải lại trang Findmap."
+      error: reason || "Extension đã reload — F5 trang."
     });
   }
 
@@ -142,11 +142,7 @@
       bg({ action, data: payload }).then((resp) => {
         try {
           if (resp == null) {
-            toPage(pageType, {
-              success: false,
-              running: false,
-              error: "Mất kết nối với tiện ích. Hãy tải lại trang Findmap."
-            });
+            toPage(pageType, { success: false, running: false, error: "Extension disconnected — F5 trang" });
             return;
           }
           toPage(pageType, resp || fallback);
