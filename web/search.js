@@ -1044,8 +1044,8 @@
       try {
         await requestStartSearch(searchParams);
         const autoFocusHint = searchParams.mapsAutoFocus
-          ? `Extension sẽ tự chuyển sang tab Maps mỗi ${getMapsAutoFocusMinutes()} phút nếu bạn rời tab.`
-          : "Hãy chuyển sang tab Google Maps và giữ tab đó mở.";
+          ? `Đã chuyển sang Maps; hệ thống sẽ tự quay lại sau mỗi ${getMapsAutoFocusMinutes()} phút nếu bạn rời tab.`
+          : "Đã chuyển sang tab Google Maps; giữ tab đó mở để quét ổn định.";
         showSearchStatus(`Đang tìm "${keyword}" — ${autoFocusHint}`, "info");
       } catch (err) {
         showSearchStatus(err.message, "error");
