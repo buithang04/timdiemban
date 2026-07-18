@@ -624,9 +624,25 @@ app.get("/api/integrations/jobs/status", jobsIntegrationRateLimit, requireAuth, 
   }
 });
 
+app.post("/api/integrations/jobs/request-preview", jobsIntegrationRateLimit, requireAuth, async (req, res) => {
+  try {
+    res.json(await jobsIntegration.previewRequest(req.body?.request_token));
+  } catch (error) {
+    sendJobsIntegrationError(res, error);
+  }
+});
+
 app.post("/api/integrations/jobs/connect", jobsIntegrationRateLimit, requireAuth, async (req, res) => {
   try {
-    res.json(await jobsIntegration.connect(req.user, req.body?.pairing_code));
+    res.json(await jobsIntegration.connect(req.user, req.body?.request_token || req.body?.pairing_code));
+  } catch (error) {
+    sendJobsIntegrationError(res, error);
+  }
+});
+
+app.post("/api/integrations/jobs/request-decline", jobsIntegrationRateLimit, requireAuth, async (req, res) => {
+  try {
+    res.json(await jobsIntegration.declineRequest(req.body?.request_token));
   } catch (error) {
     sendJobsIntegrationError(res, error);
   }

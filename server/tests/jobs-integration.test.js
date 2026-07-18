@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 
 const {
   createJobsIntegrationService,
+  normalizeConnectionRequest,
   normalizeVietnamesePhone,
   stableExternalId
 } = require("../jobs-integration");
@@ -98,6 +99,34 @@ test("status trả chưa liên kết và không gọi Jobs", async () => {
   assert.equal(calls, 0);
 });
 
+test("preview yêu cầu kết nối chỉ gọi Jobs từ backend Findmap", async () => {
+  const requestToken = "ABCD-EF12-3456-7890-ABCD-EF12-3456-7890";
+  const service = createJobsIntegrationService({
+    db: createDb(),
+    env: testEnv,
+    fetchImpl: async (url, options) => {
+      assert.equal(url, "https://jobs.clickon.vn/api/v1/integrations/findmap/request/preview");
+      assert.equal(options.method, "POST");
+      assert.equal(options.headers.Authorization, undefined);
+      assert.deepEqual(JSON.parse(options.body), { request_token: requestToken });
+      return jsonResponse(200, {
+        request: {
+          jobs_user_id: 12,
+          name: "Nhân viên Jobs",
+          email: "staff@example.test",
+          department_id: 4,
+          expires_at: "2026-07-18T02:00:00.000Z"
+        }
+      });
+    }
+  });
+
+  const result = await service.previewRequest(requestToken);
+  assert.equal(result.request.jobs_user_id, 12);
+  assert.equal(normalizeConnectionRequest(requestToken), requestToken);
+  assert.throws(() => normalizeConnectionRequest("not-a-request"), /không hợp lệ/);
+});
+
 test("connect đổi pairing code server-to-server nhưng không thay phiên Findmap", async () => {
   const db = createDb();
   const sessionToken = "findmap-session-token";
@@ -129,6 +158,23 @@ test("connect đổi pairing code server-to-server nhưng không thay phiên Fin
   assert.equal(requestBody.findmap_user_id, "findmap-1");
   assert.equal(db.rawLink.integrationToken, "b".repeat(64));
   assert.equal(sessionToken, "findmap-session-token");
+});
+
+test("từ chối yêu cầu được chuyển server-to-server sang Jobs", async () => {
+  const requestToken = "ABCD-EF12-3456-7890-ABCD-EF12-3456-7890";
+  const service = createJobsIntegrationService({
+    db: createDb(),
+    env: testEnv,
+    fetchImpl: async (url, options) => {
+      assert.equal(url, "https://jobs.clickon.vn/api/v1/integrations/findmap/request/decline");
+      assert.equal(options.method, "POST");
+      assert.deepEqual(JSON.parse(options.body), { request_token: requestToken });
+      return jsonResponse(200, { message: "Đã từ chối yêu cầu kết nối." });
+    }
+  });
+
+  const result = await service.declineRequest(requestToken);
+  assert.match(result.message, /từ chối/);
 });
 
 test("connect không gọi Jobs khi khóa mã hóa chưa sẵn sàng", async () => {

@@ -1,6 +1,8 @@
 (function () {
   const AUTH_KEY = "timdiemban_token";
+  const PENDING_REQUEST_KEY = "findmap_jobs_pending_request";
   let currentStatus = null;
+  let currentRequest = null;
 
   const $ = (id) => document.getElementById(id);
 
@@ -8,10 +10,34 @@
     return localStorage.getItem(AUTH_KEY) || "";
   }
 
+  function pendingRequestToken() {
+    try {
+      const token = String(sessionStorage.getItem(PENDING_REQUEST_KEY) || "").trim().toUpperCase();
+      const compact = token.replace(/-/g, "");
+      if (!/^[A-F0-9-]+$/.test(token) || ![16, 32].includes(compact.length)) {
+        sessionStorage.removeItem(PENDING_REQUEST_KEY);
+        return "";
+      }
+      return token;
+    } catch {
+      return "";
+    }
+  }
+
+  function clearPendingRequest() {
+    try {
+      sessionStorage.removeItem(PENDING_REQUEST_KEY);
+    } catch {}
+  }
+
+  function loginUrl() {
+    return pendingRequestToken() ? "/login?redirect=%2Fket-noi-jobs" : "/login";
+  }
+
   async function apiRequest(path, options = {}) {
     const token = authToken();
     if (!token) {
-      window.location.replace("/login");
+      window.location.replace(loginUrl());
       throw new Error("Chưa đăng nhập Findmap.");
     }
     const response = await fetch(path, {
@@ -24,10 +50,14 @@
     });
     const data = await response.json().catch(() => ({}));
     if (response.status === 401) {
-      window.location.replace("/login");
+      window.location.replace(loginUrl());
       throw new Error(data.error || "Phiên Findmap đã hết hạn.");
     }
-    if (!response.ok) throw new Error(data.error || `Lỗi ${response.status}`);
+    if (!response.ok) {
+      const error = new Error(data.error || `Lỗi ${response.status}`);
+      error.status = response.status;
+      throw error;
+    }
     return data;
   }
 
@@ -52,6 +82,14 @@
     button.textContent = busy ? busyLabel : button.dataset.label;
   }
 
+  function renderRequestPanels() {
+    const hasRequest = Boolean(pendingRequestToken());
+    const linked = Boolean(currentStatus?.linked);
+    $("jobsApprovalPanel")?.classList.toggle("hidden", !hasRequest);
+    $("jobsNoRequestPanel")?.classList.toggle("hidden", hasRequest || linked);
+    $("jobsDisconnectPanel")?.classList.toggle("hidden", !linked);
+  }
+
   function renderStatus(status) {
     currentStatus = status || { linked: false };
     const linked = Boolean(currentStatus.linked);
@@ -59,9 +97,9 @@
     $("jobsStatusTitle").textContent = linked ? "Đã kết nối" : "Chưa kết nối";
     $("jobsStatusSubtitle").textContent = linked
       ? "Sẵn sàng nhận khách hàng từ Findmap."
-      : "Tạo mã tại Jobs ClickOn để ghép tài khoản.";
-    $("jobsConnectPanel")?.classList.toggle("hidden", linked);
-    $("jobsDisconnectPanel")?.classList.toggle("hidden", !linked);
+      : pendingRequestToken()
+        ? "Có một yêu cầu kết nối đang chờ xác nhận."
+        : "Chưa có tài khoản Jobs ClickOn được liên kết.";
     $("verifyJobsBtn")?.classList.toggle("hidden", !linked);
     $("jobsAccountDetails")?.classList.toggle("hidden", !linked);
 
@@ -74,6 +112,7 @@
       $("jobsLinkedAt").textContent = formatDate(currentStatus.linked_at);
       $("jobsLastSyncAt").textContent = formatDate(currentStatus.last_sync_at);
     }
+    renderRequestPanels();
   }
 
   async function loadStatus(verify = false) {
@@ -82,32 +121,96 @@
       renderStatus(status);
       if (status.error) showMessage(status.error, "error");
       else if (verify) showMessage("Kết nối Jobs ClickOn đang hoạt động.", "success");
+      return status;
     } catch (error) {
       if (!verify) renderStatus({ linked: false });
+      showMessage(error.message, "error");
+      return null;
+    }
+  }
+
+  async function loadConnectionRequest() {
+    const requestToken = pendingRequestToken();
+    renderRequestPanels();
+    if (!requestToken) return;
+
+    $("jobsRequestLoading").textContent = "Đang kiểm tra yêu cầu.";
+    $("jobsRequestLoading").classList.remove("hidden");
+    $("jobsRequestDetails").classList.add("hidden");
+    $("jobsRequestActions").classList.add("hidden");
+
+    try {
+      const response = await apiRequest("/api/integrations/jobs/request-preview", {
+        method: "POST",
+        body: JSON.stringify({ request_token: requestToken })
+      });
+      currentRequest = response.request;
+      $("jobsRequestName").textContent = currentRequest.name || `Jobs #${currentRequest.jobs_user_id}`;
+      $("jobsRequestEmail").textContent = currentRequest.email || "Chưa cung cấp";
+      $("jobsRequestDepartment").textContent = currentRequest.department_name
+        || (currentRequest.department_id ? `Phòng ban #${currentRequest.department_id}` : "Chưa gán");
+      $("jobsRequestExpiresAt").textContent = formatDate(currentRequest.expires_at);
+      $("jobsRequestLoading").classList.add("hidden");
+      $("jobsRequestDetails").classList.remove("hidden");
+      $("jobsRequestActions").classList.remove("hidden");
+      $("acceptJobsBtn").disabled = Boolean(currentStatus?.linked);
+      if (currentStatus?.linked) {
+        showMessage("Tài khoản Findmap đã có liên kết. Hãy ngắt liên kết cũ trước.", "error");
+      }
+    } catch (error) {
+      currentRequest = null;
+      $("jobsRequestLoading").textContent = error.message;
+      if ([409, 410, 422].includes(error.status)) clearPendingRequest();
+      renderRequestPanels();
       showMessage(error.message, "error");
     }
   }
 
-  async function connect(event) {
-    event.preventDefault();
-    const input = $("jobsPairingCode");
-    const button = $("connectJobsBtn");
-    const code = String(input?.value || "").trim().toUpperCase();
-    if (!code) return;
+  async function acceptConnection() {
+    const requestToken = pendingRequestToken();
+    if (!requestToken || !currentRequest || currentStatus?.linked) return;
+    const button = $("acceptJobsBtn");
     setBusy(button, true, "Đang kết nối...");
+    $("declineJobsBtn").disabled = true;
     showMessage("");
     try {
       const status = await apiRequest("/api/integrations/jobs/connect", {
         method: "POST",
-        body: JSON.stringify({ pairing_code: code })
+        body: JSON.stringify({ request_token: requestToken })
       });
-      if (input) input.value = "";
+      clearPendingRequest();
+      currentRequest = null;
       renderStatus(status);
       showMessage(status.message || "Đã kết nối Jobs ClickOn.", "success");
     } catch (error) {
       showMessage(error.message, "error");
     } finally {
       setBusy(button, false);
+      $("declineJobsBtn").disabled = false;
+    }
+  }
+
+  async function declineConnection() {
+    const requestToken = pendingRequestToken();
+    if (!requestToken) return;
+    const button = $("declineJobsBtn");
+    setBusy(button, true, "Đang từ chối...");
+    $("acceptJobsBtn").disabled = true;
+    showMessage("");
+    try {
+      const response = await apiRequest("/api/integrations/jobs/request-decline", {
+        method: "POST",
+        body: JSON.stringify({ request_token: requestToken })
+      });
+      clearPendingRequest();
+      currentRequest = null;
+      renderRequestPanels();
+      showMessage(response.message || "Đã từ chối yêu cầu kết nối.", "success");
+    } catch (error) {
+      showMessage(error.message, "error");
+    } finally {
+      setBusy(button, false);
+      $("acceptJobsBtn").disabled = Boolean(currentStatus?.linked);
     }
   }
 
@@ -128,6 +231,7 @@
       const response = await apiRequest("/api/integrations/jobs/disconnect", { method: "DELETE" });
       renderStatus({ linked: false });
       showMessage(response.message || "Đã ngắt kết nối Jobs ClickOn.", "success");
+      await loadConnectionRequest();
     } catch (error) {
       showMessage(error.message, "error");
     } finally {
@@ -141,19 +245,17 @@
     } catch {}
     localStorage.removeItem(AUTH_KEY);
     window.FindmapSessionCookie?.clearSessionCookie?.();
-    window.location.replace("/login");
+    window.location.replace(loginUrl());
   }
 
-  function init() {
-    $("jobsConnectForm")?.addEventListener("submit", connect);
+  async function init() {
+    $("acceptJobsBtn")?.addEventListener("click", acceptConnection);
+    $("declineJobsBtn")?.addEventListener("click", declineConnection);
     $("verifyJobsBtn")?.addEventListener("click", verify);
     $("disconnectJobsBtn")?.addEventListener("click", disconnect);
     $("sidebarLogoutBtn")?.addEventListener("click", logout);
-    $("jobsPairingCode")?.addEventListener("input", (event) => {
-      const raw = event.target.value.toUpperCase().replace(/[^A-F0-9]/g, "").slice(0, 16);
-      event.target.value = raw.match(/.{1,4}/g)?.join("-") || "";
-    });
-    loadStatus();
+    await loadStatus();
+    await loadConnectionRequest();
   }
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);

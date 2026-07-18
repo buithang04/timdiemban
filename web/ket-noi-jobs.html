@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="referrer" content="no-referrer" />
   <title>Kết nối Jobs ClickOn - Findmap</title>
   <link rel="icon" href="/assets/icons/favicon.svg" type="image/svg+xml" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -14,9 +15,17 @@
   <script src="/session-cookie.js"></script>
   <script>
     try {
-      if (!localStorage.getItem("timdiemban_token")) window.location.replace("/login");
+      const pendingKey = "findmap_jobs_pending_request";
+      const requestToken = new URLSearchParams(window.location.hash.slice(1)).get("request");
+      if (requestToken) sessionStorage.setItem(pendingKey, requestToken);
+      if (window.location.hash) {
+        window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
+      }
+      if (!localStorage.getItem("timdiemban_token")) {
+        window.location.replace("/login?redirect=%2Fket-noi-jobs");
+      }
     } catch {
-      window.location.replace("/login");
+      window.location.replace("/login?redirect=%2Fket-noi-jobs");
     }
   </script>
 </head>
@@ -88,15 +97,29 @@
         </dl>
       </section>
 
-      <section id="jobsConnectPanel" class="wm-config-card hidden">
-        <h2>Nhập mã kết nối</h2>
-        <form id="jobsConnectForm" class="jobs-connect-form">
-          <div class="wm-config-field">
-            <label for="jobsPairingCode">Mã từ Jobs ClickOn</label>
-            <input id="jobsPairingCode" type="text" inputmode="text" maxlength="19" placeholder="ABCD-EF12-3456-7890" autocomplete="off" spellcheck="false" required />
+      <section id="jobsApprovalPanel" class="wm-config-card hidden">
+        <div class="jobs-request-head">
+          <div>
+            <h2>Yêu cầu kết nối</h2>
+            <p class="wm-config-hint">Xác nhận tài khoản Jobs ClickOn sẽ nhận khách hàng từ Findmap.</p>
           </div>
-          <button type="submit" id="connectJobsBtn" class="wm-btn wm-btn-primary">Kết nối</button>
-        </form>
+        </div>
+        <p id="jobsRequestLoading" class="wm-config-hint">Đang kiểm tra yêu cầu.</p>
+        <dl id="jobsRequestDetails" class="jobs-account-details hidden">
+          <div><dt>Nhân sự Jobs</dt><dd id="jobsRequestName">-</dd></div>
+          <div><dt>Email</dt><dd id="jobsRequestEmail">-</dd></div>
+          <div><dt>Phòng ban</dt><dd id="jobsRequestDepartment">-</dd></div>
+          <div><dt>Yêu cầu hết hạn</dt><dd id="jobsRequestExpiresAt">-</dd></div>
+        </dl>
+        <div id="jobsRequestActions" class="jobs-request-actions hidden">
+          <button type="button" id="declineJobsBtn" class="wm-btn jobs-secondary-btn">Từ chối</button>
+          <button type="button" id="acceptJobsBtn" class="wm-btn wm-btn-primary">Chấp nhận kết nối</button>
+        </div>
+      </section>
+
+      <section id="jobsNoRequestPanel" class="wm-config-card hidden">
+        <h2>Chưa có yêu cầu kết nối</h2>
+        <p class="wm-config-hint">Mở màn hình Kết nối Findmap trên Jobs ClickOn và bấm Kết nối Findmap.</p>
       </section>
 
       <section id="jobsDisconnectPanel" class="wm-config-card jobs-disconnect-panel hidden">

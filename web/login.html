@@ -85,6 +85,11 @@
       return "/";
     }
 
+    function postAuthDestination(role) {
+      const requested = new URLSearchParams(window.location.search).get("redirect");
+      return requested === "/ket-noi-jobs" ? requested : homeForRole(role);
+    }
+
     const TERMS_HIDE_KEY = "findmap_terms_hide_until";
     const TERMS_HIDE_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -162,14 +167,14 @@
         const role = data.user?.role;
         if (role === "admin") {
           setSessionToken(token);
-          window.location.replace(homeForRole(role));
+          window.location.replace(postAuthDestination(role));
           return;
         }
         setSessionToken(token);
         if (afterLoginShouldShowTerms(data.user)) {
           openTermsModal(token, data.user || null, "login");
         } else {
-          window.location.replace(homeForRole(role));
+          window.location.replace(postAuthDestination(role));
         }
       } catch {}
     }
@@ -293,14 +298,14 @@
 
         const role = data.user?.role;
         if (role === "admin") {
-          window.location.href = homeForRole(role);
+          window.location.href = postAuthDestination(role);
           return;
         }
 
         if (afterLoginShouldShowTerms(data.user)) {
           openTermsModal(data.token, data.user || null, "login");
         } else {
-          window.location.href = homeForRole(role);
+          window.location.href = postAuthDestination(role);
         }
       } catch (err) {
         errorEl.textContent = err.message || "Đăng nhập thất bại";
@@ -410,7 +415,7 @@
         pendingTermsAction = "";
         pendingRegisterPayload = null;
         termsModal.classList.add("hidden");
-        window.location.replace(homeForRole(agreedUser?.role));
+        window.location.replace(postAuthDestination(agreedUser?.role));
       } catch (err) {
         termsError.textContent = err.message || "Không thể lưu điều khoản";
         termsError.classList.remove("hidden");

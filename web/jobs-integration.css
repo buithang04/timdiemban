@@ -25,13 +25,16 @@
 
 .jobs-status-head,
 .jobs-status-title-row,
-.jobs-disconnect-panel {
+.jobs-disconnect-panel,
+.jobs-request-actions,
+.jobs-request-head {
   display: flex;
   align-items: center;
 }
 
 .jobs-status-head,
-.jobs-disconnect-panel {
+.jobs-disconnect-panel,
+.jobs-request-head {
   justify-content: space-between;
   gap: 20px;
 }
@@ -83,22 +86,16 @@
   overflow-wrap: anywhere;
 }
 
-.jobs-connect-form {
-  display: grid;
-  grid-template-columns: minmax(260px, 1fr) auto;
-  align-items: end;
-  gap: 12px;
-  margin-top: 18px;
+.jobs-request-actions {
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 20px;
 }
 
-.jobs-connect-form .wm-config-field {
-  margin: 0;
-}
-
-#jobsPairingCode {
-  text-transform: uppercase;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  letter-spacing: 0;
+.jobs-secondary-btn {
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  color: #334155;
 }
 
 .jobs-danger-btn {
@@ -113,17 +110,22 @@
 
 @media (max-width: 720px) {
   .jobs-status-head,
-  .jobs-disconnect-panel {
+  .jobs-disconnect-panel,
+  .jobs-request-head {
     align-items: flex-start;
     flex-direction: column;
   }
 
-  .jobs-account-details,
-  .jobs-connect-form {
+  .jobs-account-details {
     grid-template-columns: 1fr;
   }
 
   .jobs-account-details div:last-child {
     grid-column: auto;
+  }
+
+  .jobs-request-actions {
+    align-items: stretch;
+    flex-direction: column-reverse;
   }
 }

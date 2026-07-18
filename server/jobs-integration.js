@@ -58,6 +58,18 @@ function limitedText(value, maxLength) {
     .slice(0, maxLength);
 }
 
+function normalizeConnectionRequest(raw) {
+  const token = limitedText(raw, 64).toUpperCase();
+  if (!/^[A-F0-9]{4}(?:-?[A-F0-9]{4}){3}(?:-?[A-F0-9]{4}){0,4}$/.test(token)) {
+    throw new JobsIntegrationError("Yêu cầu kết nối không hợp lệ.", 422, "invalid_connection_request");
+  }
+  const compact = token.replace(/-/g, "");
+  if (![16, 32].includes(compact.length)) {
+    throw new JobsIntegrationError("Yêu cầu kết nối không hợp lệ.", 422, "invalid_connection_request");
+  }
+  return token;
+}
+
 function stableExternalId(row) {
   const placeId = limitedText(row.place_id || row.googlePlaceId || row.placeId, 120);
   if (placeId) return placeId;
@@ -219,14 +231,23 @@ function createJobsIntegrationService({
     }
   }
 
-  async function connect(user, pairingCode) {
+  async function previewRequest(requestToken) {
+    const token = normalizeConnectionRequest(requestToken);
+    const response = await request("/api/v1/integrations/findmap/request/preview", {
+      method: "POST",
+      body: { request_token: token }
+    });
+    if (!response?.request?.jobs_user_id || !response?.request?.expires_at) {
+      throw new JobsIntegrationError("Jobs ClickOn trả yêu cầu kết nối không đầy đủ.", 502, "invalid_jobs_response");
+    }
+    return response;
+  }
+
+  async function connect(user, requestToken) {
     if (typeof db.assertJobsIntegrationEncryptionReady === "function") {
       db.assertJobsIntegrationEncryptionReady();
     }
-    const code = limitedText(pairingCode, 64).toUpperCase();
-    if (!/^[A-F0-9]{4}(?:-?[A-F0-9]{4}){3}$/.test(code)) {
-      throw new JobsIntegrationError("Mã kết nối không hợp lệ.", 422, "invalid_pairing_code");
-    }
+    const code = normalizeConnectionRequest(requestToken);
 
     const response = await request("/api/v1/integrations/findmap/exchange", {
       method: "POST",
@@ -261,6 +282,14 @@ function createJobsIntegrationService({
       throw error;
     }
     return publicStatus(link, { message: "Đã kết nối Jobs ClickOn." });
+  }
+
+  async function declineRequest(requestToken) {
+    const token = normalizeConnectionRequest(requestToken);
+    return request("/api/v1/integrations/findmap/request/decline", {
+      method: "POST",
+      body: { request_token: token }
+    });
   }
 
   async function disconnect(findmapUserId) {
@@ -374,7 +403,7 @@ function createJobsIntegrationService({
     };
   }
 
-  return { status, connect, disconnect, syncCustomers, baseUrl };
+  return { status, previewRequest, connect, declineRequest, disconnect, syncCustomers, baseUrl };
 }
 
 module.exports = {
@@ -383,6 +412,7 @@ module.exports = {
   JobsIntegrationError,
   resolveJobsBaseUrl,
   resolveTimeoutMs,
+  normalizeConnectionRequest,
   normalizeVietnamesePhone,
   stableExternalId,
   buildJobsItem,
