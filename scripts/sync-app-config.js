@@ -194,7 +194,6 @@ function syncManifest() {
   ];
   manifest.host_permissions = [...new Set(manifest.host_permissions)];
   delete manifest.optional_host_permissions;
-  if ("description" in manifest) delete manifest.description;
 
   const bridge = manifest.content_scripts.find((s) => (s.js || []).includes("web-bridge.js"));
   if (bridge) {

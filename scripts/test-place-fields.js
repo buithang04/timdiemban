@@ -561,10 +561,24 @@ test("đã có phone thì không chờ", () => {
 });
 test("content wiring có list fallback, tel selector và stable wait", () => {
   const content = fs.readFileSync(path.join(__dirname, "..", "extension", "content.js"), "utf8");
+  const background = fs.readFileSync(
+    path.join(__dirname, "..", "extension", "background.js"),
+    "utf8"
+  );
+  const contentVersion = content.match(/const\s+CONTENT_VERSION\s*=\s*(\d+)/);
+  const requiredVersion = background.match(
+    /const\s+REQUIRED_CONTENT_VERSION\s*=\s*(\d+)/
+  );
   ok(content.includes("PF.extractPhoneFromListText(item.textContent"));
   ok(content.includes("a[href^=\"tel:\"]"));
   ok(content.includes("PF.shouldKeepWaitingForPhone"));
-  ok(/CONTENT_VERSION\s*=\s*58/.test(content));
+  ok(contentVersion, "content.js phải khai báo CONTENT_VERSION");
+  ok(requiredVersion, "background.js phải khai báo REQUIRED_CONTENT_VERSION");
+  eq(
+    Number(contentVersion[1]),
+    Number(requiredVersion[1]),
+    "CONTENT_VERSION và REQUIRED_CONTENT_VERSION phải khớp nhau"
+  );
   ok(content.includes("runScrapeCellMessage"));
   ok(content.includes("verifyDetailMatchesList(listData)"));
 });

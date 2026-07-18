@@ -44,16 +44,16 @@
 
   function render() {
     if (!state.checked) {
-      showBanner("info", "Đang kiểm tra Extension Findmap…");
+      showBanner("info", "Đang kiểm tra tiện ích Findmap…");
       return;
     }
 
     if (!state.bridgeOk) {
-      showBanner("error", "Chưa phát hiện Extension Findmap.", { showInstall: true });
+      showBanner("error", "Chưa phát hiện tiện ích Findmap.", { showInstall: true });
       return;
     }
 
-    showBanner("ok", "Đã cài và kết nối Extension Findmap.");
+    showBanner("ok", "Đã phát hiện và kết nối tiện ích Findmap.");
     setTimeout(() => {
       if (state.bridgeOk) hideBanner();
     }, 8000);

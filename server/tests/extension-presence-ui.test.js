@@ -25,8 +25,8 @@ test("tìm kiếm chỉ chặn khi chưa phát hiện extension", () => {
   const app = read("web", "app.js");
 
   assert.match(search, /TimDiemBanExtension\?\.isInstalled/);
-  assert.match(app, /Đã cài và kết nối extension/);
-  assert.match(app, /Chưa phát hiện extension/);
+  assert.match(app, /Đã phát hiện và kết nối tiện ích Findmap/);
+  assert.match(app, /Chưa phát hiện tiện ích Findmap/);
   assert.doesNotMatch(search, /isUpToDate|chưa cập nhật|chrome:\/\/extensions/i);
   assert.doesNotMatch(app, /isUpToDate|cần reload|chrome:\/\/extensions|p\.version/i);
 });

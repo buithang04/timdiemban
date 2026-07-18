@@ -77,7 +77,7 @@
     <div id="extVersionBanner" class="ext-version-banner ext-version-info hidden" role="status">
       <div class="ext-version-inner">
         <span id="extVersionBannerText"></span>
-        <a id="extInstallLink" class="ext-version-install hidden" href="#" target="_blank" rel="noopener noreferrer">Cài Extension Findmap</a>
+        <a id="extInstallLink" class="ext-version-install hidden" href="#" target="_blank" rel="noopener noreferrer">Cài tiện ích Findmap</a>
       </div>
     </div>
 
@@ -96,7 +96,7 @@
         </div>
       </div>
       <div class="wm-header-right">
-        <span id="connStatus" class="conn-status conn-top">Chờ extension…</span>
+        <span id="connStatus" class="conn-status conn-top">Đang kiểm tra tiện ích…</span>
         <button type="button" id="loginBtn" class="wm-btn wm-btn-outline wm-header-login hidden">Đăng nhập</button>
         <div id="headerUserBlock" class="wm-header-user hidden" style="position:relative">
           <div class="wm-header-user-info">
@@ -166,11 +166,11 @@
                 </label>
                 <label class="wm-check-row" for="searchMapsAutoFocus">
                   <input type="checkbox" id="searchMapsAutoFocus" />
-                  <span id="searchMapsAutoFocusLabel">Tự chuyển sang tab Google Maps định kỳ — tránh tab nền bị treo (có thể gây nhảy cửa sổ)</span>
+                  <span id="searchMapsAutoFocusLabel">Tự đưa tab Maps lên trước định kỳ khi đang quét. Lúc bắt đầu Findmap luôn chuyển sang Maps; tùy chọn này có thể đổi cửa sổ.</span>
                 </label>
                 <label class="wm-check-row" for="searchMapsAutoReopen">
                   <input type="checkbox" id="searchMapsAutoReopen" />
-                  <span id="searchMapsAutoReopenLabel">Tự mở lại tab Google Maps nếu bị đóng — tiếp tục quét (tìm kiếm &amp; quét lại)</span>
+                  <span id="searchMapsAutoReopenLabel">Nếu tab Maps bị đóng, tự mở lại và chuyển sang tab đó để tiếp tục. Quá giới hạn sẽ dừng và giữ kết quả đã có.</span>
                 </label>
               </div>
             </div>
@@ -218,7 +218,7 @@
             <div class="spinner spinner-sm"></div>
             <span>Đang quét Google Maps…</span>
           </div>
-          <div id="map" class="osm-map wm-map" role="application" aria-label="Bản đồ vùng tìm"></div>
+          <div id="map" class="osm-map wm-map" role="application" aria-label="Bản đồ khu vực tìm kiếm"></div>
           <div class="wm-map-controls">
             <button type="button" id="mapZoomIn" class="wm-map-ctrl" title="Phóng to">+</button>
             <button type="button" id="mapZoomOut" class="wm-map-ctrl" title="Thu nhỏ">−</button>
@@ -377,10 +377,10 @@
   <div id="mapsFocusModal" class="maps-focus-modal hidden" role="dialog" aria-labelledby="mapsFocusModalTitle" aria-modal="true">
     <div class="maps-focus-modal-box">
       <button type="button" id="mapsFocusModalClose" class="maps-focus-close-btn" title="Đóng" aria-label="Đóng">✕</button>
-      <h2 id="mapsFocusModalTitle">Chuyển sang tab Google Maps</h2>
+      <h2 id="mapsFocusModalTitle">Tab Maps cần được đưa lên trước</h2>
       <p class="maps-focus-modal-lead">
-        Tìm kiếm đang chạy. Hãy <strong>chuyển sang tab Google Maps</strong> và giữ tab đó mở — quét nhanh và kết quả về bảng liên tục.
-        Có thể bật <strong>Tự chuyển tab Maps</strong> trong Cấu hình quét nếu hay rời tab.
+        Tiến trình đang chậm hoặc kết quả về Findmap bị trễ. Hãy <strong>chuyển sang tab Google Maps</strong> và giữ tab đó mở để tiếp tục ổn định.
+        Bạn có thể bật <strong>Tự đưa tab Maps lên trước</strong> trong Cấu hình quét.
       </p>
       <button type="button" id="mapsFocusModalOk" class="btn btn-primary maps-focus-modal-btn">Đã hiểu</button>
     </div>

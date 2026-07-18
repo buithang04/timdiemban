@@ -71,7 +71,7 @@
   function updateMapsAutoFocusLabel() {
     if (!els.mapsAutoFocusLabel) return;
     const mins = getMapsAutoFocusMinutes();
-    els.mapsAutoFocusLabel.textContent = `Tự chuyển sang tab Google Maps mỗi ${mins} phút — tránh tab nền bị treo (có thể gây nhảy cửa sổ)`;
+    els.mapsAutoFocusLabel.textContent = `Tự đưa tab Maps lên trước mỗi ${mins} phút khi đang quét. Lúc bắt đầu Findmap luôn chuyển sang Maps; tùy chọn này có thể đổi cửa sổ.`;
   }
 
   function syncMapsAutoFocusCheckbox(enabled) {
@@ -108,7 +108,7 @@
     if (!els.mapsAutoReopenLabel) return;
     const max = Number(window.TIMDIEMBAN_CONFIG?.MAPS_AUTO_REOPEN_MAX);
     const maxN = Number.isFinite(max) && max >= 1 ? Math.floor(max) : 5;
-    els.mapsAutoReopenLabel.textContent = `Tự mở lại tab Google Maps nếu bị đóng — tiếp tục quét (tối đa ${maxN} lần, áp dụng tìm kiếm & quét lại)`;
+    els.mapsAutoReopenLabel.textContent = `Nếu tab Maps bị đóng, tự mở lại và chuyển sang tab đó để tiếp tục; tối đa ${maxN} lần. Quá giới hạn sẽ dừng và giữ kết quả đã có.`;
   }
 
   function syncMapsAutoReopenCheckbox(enabled) {
@@ -251,7 +251,7 @@
         if (status.totalCells) {
           updateSearchProgress(
             Math.round(((status.gridIndex || 0) / status.totalCells) * 95),
-            `Đang chạy vùng ${(status.gridIndex || 0) + 1}/${status.totalCells} — ${status.mergedCount || 0} quán`
+            `Khu vực ${(status.gridIndex || 0) + 1}/${status.totalCells} · Đã thu thập ${status.mergedCount || 0} điểm bán`
           );
         }
         return;
@@ -259,7 +259,7 @@
 
       if (status?.running) {
         showSearchStatus(
-          "Tiến trình im lặng — extension đang thử kết nối lại tab Maps. Bấm 'Dừng quét điểm bán' nếu muốn kết thúc sớm.",
+          "Tiến độ chưa thay đổi. Tiện ích đang kết nối lại với Google Maps; bạn có thể dừng lượt tìm kiếm nếu không muốn chờ.",
           "info"
         );
         touchSearchProgress();
@@ -556,7 +556,7 @@
     if (!searchRunning || !els.searchStatus) return;
     if (document.visibilityState === "hidden") {
       showSearchStatus(
-        "Đang quét nền — kết quả tự gửi & lưu. Quay lại tab này bất cứ lúc nào.",
+        "Tìm kiếm vẫn tiếp tục và kết quả đang được đồng bộ. Giữ tab Maps mở; nếu tiến độ chậm, hãy đưa Maps lên trước.",
         "info"
       );
     }
@@ -803,7 +803,7 @@
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         window.removeEventListener("message", onMsg);
-        reject(new Error("Extension không phản hồi — kiểm tra đã cài và bật findmap"));
+        reject(new Error("Chưa nhận được dữ liệu từ tiện ích. Hãy kiểm tra tiện ích đang bật và tải lại trang Findmap."));
       }, 8000);
 
       function onMsg(event) {
@@ -825,7 +825,7 @@
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         window.removeEventListener("message", onMsg);
-        reject(new Error("Extension không phản hồi khi dừng tìm kiếm"));
+        reject(new Error("Chưa nhận được xác nhận dừng. Hãy kiểm tra kết nối với tab Google Maps rồi thử lại."));
       }, 45000);
 
       function onMsg(event) {
@@ -894,7 +894,7 @@
       } else if (status.totalCells) {
         updateSearchProgress(
           Math.round(((status.gridIndex || 0) / status.totalCells) * 95),
-          `Đang chạy vùng ${(status.gridIndex || 0) + 1}/${status.totalCells} — ${status.mergedCount || 0} quán`
+          `Khu vực ${(status.gridIndex || 0) + 1}/${status.totalCells} · Đã thu thập ${status.mergedCount || 0} điểm bán`
         );
       }
     } else if (!status.running && searchRunning) {
@@ -908,7 +908,7 @@
         window.removeEventListener("message", onMsg);
         reject(
           new Error(
-            "Không kết nối được Extension Findmap. Hãy kiểm tra tiện ích đã được cài và bật."
+            "Không kết nối được với tiện ích Findmap. Hãy kiểm tra tiện ích đã được cài và bật."
           )
         );
       }, 30000);
@@ -944,7 +944,7 @@
     }
 
     if (window.TimDiemBanExtension?.isInstalled?.() !== true) {
-      showSearchStatus("Chưa phát hiện Extension Findmap. Hãy cài hoặc bật tiện ích trước khi tìm.", "error");
+      showSearchStatus("Chưa phát hiện tiện ích Findmap. Hãy cài hoặc bật tiện ích trước khi tìm.", "error");
       return;
     }
 
@@ -967,7 +967,7 @@
 
     if (!navigator.geolocation) {
       if (!center) {
-        showSearchStatus("Trình duyệt không hỗ trợ GPS — nhập lat/lng hoặc dùng Chọn tâm.", "error");
+        showSearchStatus("Trình duyệt không hỗ trợ định vị. Hãy nhập vĩ độ, kinh độ hoặc dùng Chọn tâm.", "error");
         return;
       }
     } else if (!center) {
@@ -1044,7 +1044,7 @@
       try {
         await requestStartSearch(searchParams);
         const autoFocusHint = searchParams.mapsAutoFocus
-          ? `Đã chuyển sang Maps; hệ thống sẽ tự quay lại sau mỗi ${getMapsAutoFocusMinutes()} phút nếu bạn rời tab.`
+          ? `Đã chuyển sang Maps; Findmap sẽ đưa tab đó lên trước mỗi ${getMapsAutoFocusMinutes()} phút nếu cần.`
           : "Đã chuyển sang tab Google Maps; giữ tab đó mở để quét ổn định.";
         showSearchStatus(`Đang tìm "${keyword}" — ${autoFocusHint}`, "info");
       } catch (err) {
@@ -1056,7 +1056,7 @@
         notifyGpsDenied(err);
       } else {
         showSearchStatus(
-          err.message || "Cần tọa độ trung tâm — nhập lat/lng hoặc dùng Chọn tâm.",
+          err.message || "Chưa có tọa độ trung tâm. Hãy nhập vĩ độ, kinh độ hoặc dùng Chọn tâm.",
           "error"
         );
       }

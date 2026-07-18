@@ -92,7 +92,7 @@ function armRescanAckTimeout(sessionId) {
   rescanAckTimer = setTimeout(() => {
     if (rescanRunning && rescanSessionId === sessionId) {
       resetRescanUiState();
-      setConnStatus("Extension không phản hồi — reload extension rồi thử lại", "error");
+      setConnStatus("Tiện ích chưa xác nhận quét lại. Hãy kiểm tra kết nối và tab Google Maps rồi thử lại.", "error");
     }
   }, 12000);
 }
@@ -212,7 +212,7 @@ async function parseApiResponse(res) {
   const ct = res.headers.get("content-type") || "";
   if (!ct.includes("application/json")) {
     throw new Error(
-      "Máy chủ không phản hồi JSON — hãy mở trang qua URL cấu hình (app-config.js) và chạy npm start trong thư mục server"
+      "Không nhận được phản hồi hợp lệ từ máy chủ Findmap. Hãy kiểm tra kết nối và thử lại."
     );
   }
   const data = await res.json().catch(() => ({}));
@@ -1438,7 +1438,7 @@ function updateSearchResultBox() {
 
   const visible = q ? currentData.filter((r) => matchesFilter(r, q)).length : total;
   const kw = keyword ? `"${keyword}"` : "từ khóa hiện tại";
-  const r = radius ? `${radius}km` : "vùng đã chọn";
+  const r = radius ? `${radius} km` : "khu vực đã chọn";
 
   if (currentSearch?.status === "running") {
     els.searchResultText.textContent = `Đang quét ${kw} trong phạm vi ${r}…`;
@@ -2230,7 +2230,7 @@ function maybeRequestSyncIfBehind(mergedCount) {
     if (g <= 0) return;
     window.TimDiemBanDrainQueue?.();
     window.TimDiemBanSearch?.requestSearchSync?.(
-      `Bù ${g} quán (ext ${extensionMergedCount}, bảng ${currentData.length})`
+      `Đang bổ sung ${g} điểm bán còn thiếu về Findmap`
     );
   };
 
@@ -2258,16 +2258,16 @@ function updateUnifiedCountUI(mergedCount) {
   if (els.infoTotal) els.infoTotal.textContent = String(tableCount);
   if (els.resultsBadge && currentSearch?.status === "running" && ext > 0) {
     els.resultsBadge.textContent = behind
-      ? `${tableCount} / ${ext} QUÁN — đang bù…`
-      : `${tableCount} QUÁN (Maps = Web ✓)`;
+      ? `${tableCount} / ${ext} ĐIỂM BÁN · ĐANG ĐỒNG BỘ…`
+      : `${tableCount} ĐIỂM BÁN · ĐÃ ĐỒNG BỘ`;
     els.resultsBadge.classList.toggle("wm-results-badge-warn", behind);
   }
 
   if (currentSearch?.status === "running" && ext > 0) {
     if (behind) {
-      setConnStatus(`Đang bù: bảng ${tableCount} / extension ${ext} quán`, "error");
+      setConnStatus(`Đang đồng bộ kết quả: Findmap đã nhận ${tableCount}/${ext} điểm bán`, "error");
     } else {
-      setConnStatus(`Đồng bộ OK — ${tableCount} quán (Maps = Web)`, "connected");
+      setConnStatus(`Đã đồng bộ ${tableCount} điểm bán về Findmap`, "connected");
     }
   }
 }
@@ -2482,7 +2482,7 @@ function handleExtensionMessage(event) {
 }
 
 async function handleExtensionPayload(type, payload) {
-  setConnStatus("Đã kết nối extension — cập nhật real-time", "connected");
+  setConnStatus("Đã kết nối tiện ích · Kết quả đang được cập nhật", "connected");
 
   if (type === "session") {
     const { token } = payload || {};
@@ -2490,8 +2490,8 @@ async function handleExtensionPayload(type, payload) {
     await refreshUserPoints();
     setConnStatus(
       currentUser
-        ? `Đã đồng bộ — ${formatPoints(currentUser.points)} credit (từ server)`
-        : "Đã kết nối extension",
+        ? `Đã cập nhật tài khoản · Còn ${formatPoints(currentUser.points)} credit`
+        : "Đã kết nối tiện ích Findmap",
       "connected"
     );
     return;
@@ -2947,11 +2947,11 @@ window.addEventListener("timdiemban:bridge-ready", (e) => {
   const p = e.detail || {};
   window.TimDiemBanExtension?.onBridgeReady(p);
   if (p.ok) {
-    setConnStatus("Đã cài và kết nối extension", "connected");
+    setConnStatus("Đã phát hiện và kết nối tiện ích Findmap", "connected");
     queryRescanStatus();
   } else {
     window.TimDiemBanExtension?.onBridgeMissing();
-    setConnStatus("Chưa phát hiện extension", "error");
+    setConnStatus("Chưa phát hiện tiện ích Findmap", "error");
   }
 });
 
@@ -2988,7 +2988,7 @@ loadCurrentUser().then(async () => {
   } else {
     setConnStatus(
       currentUser
-        ? `Đã đăng nhập — ${formatPoints(currentUser.points)} credit · Extension chạy ngầm`
+        ? `Đã đăng nhập — ${formatPoints(currentUser.points)} credit · Sẵn sàng tìm kiếm`
         : "Đăng nhập góc phải, rồi dùng form Tìm kiếm mới",
       currentUser ? "connected" : ""
     );

@@ -1,6 +1,6 @@
 (function () {
   // Bump version mỗi lần sửa content — background sẽ reinject nếu Maps còn bản cũ
-  const CONTENT_VERSION = 58;
+  const CONTENT_VERSION = 59;
   if (window.__timDiemBanLoaded && window.__timDiemBanVersion === CONTENT_VERSION) return;
   if (typeof window.__timDiemBanCleanup === "function") {
     try {
@@ -165,11 +165,11 @@
     if (shieldPeek) {
       shieldEl.style.opacity = "0.08";
       shieldEl.style.pointerEvents = "none";
-      tbLog("Ẩn overlay — Ctrl+Shift+D bật lại | F12 mở Console");
+      tbLog("Đã ẩn bảng tiến độ. Nhấn Ctrl+Shift+D để hiện lại.");
     } else {
       shieldEl.style.opacity = "";
       shieldEl.style.pointerEvents = "all";
-      tbLog("Bật lại overlay chặn thao tác");
+      tbLog("Đã hiện lại bảng tiến độ.");
     }
   }
 
@@ -198,11 +198,9 @@
   function createShield() {
     // Maps SPA có thể gỡ node khỏi DOM — tạo lại nếu đã bị detach
     if (shieldEl && document.contains(shieldEl)) {
-      // Đảm bảo title hiện đúng version (biết đã load bản mới)
       const title = shieldEl.querySelector(".shield-title");
-      if (title && !title.textContent.includes(`v${CONTENT_VERSION}`)) {
-        title.innerHTML = `Đang tìm kiếm tự động <span style="font-size:12px;color:#2563eb;font-weight:600">v${CONTENT_VERSION}</span>`;
-      }
+      if (title) title.textContent = "Findmap đang quét Google Maps";
+      shieldEl.dataset.contentVersion = String(CONTENT_VERSION);
       return shieldEl;
     }
     if (shieldEl && !document.contains(shieldEl)) {
@@ -213,6 +211,7 @@
     }
     shieldEl = document.createElement("div");
     shieldEl.id = "timdiemban-shield";
+    shieldEl.dataset.contentVersion = String(CONTENT_VERSION);
     shieldEl.innerHTML = `
       <style>
         #timdiemban-shield {
@@ -238,12 +237,12 @@
         #timdiemban-shield .shield-hint { margin-top: 10px; font-size: 10px; color: #94a3b8; line-height: 1.4; }
       </style>
       <div class="shield-box">
-        <div class="shield-title">Đang tìm kiếm tự động <span style="font-size:12px;color:#2563eb;font-weight:600">v${CONTENT_VERSION}</span></div>
-        <div class="shield-text" id="timdiemban-shield-text">Vui lòng không thao tác trên trang này...</div>
+        <div class="shield-title">Findmap đang quét Google Maps</div>
+        <div class="shield-text" id="timdiemban-shield-text">Đang chuẩn bị thu thập thông tin điểm bán…</div>
         <div class="shield-bar-wrap"><div class="shield-bar" id="timdiemban-shield-bar"></div></div>
         <div class="shield-percent" id="timdiemban-shield-percent">0%</div>
-        <div class="shield-warn" id="timdiemban-shield-warn">Kết quả tự đồng bộ về tab kết quả. Giữ tab Maps mở để quét nhanh — rời tab được nhưng quay lại sẽ tự bù dữ liệu.</div>
-        <div class="shield-hint">Ctrl+Shift+D = ẩn/hiện overlay · F12 = Console</div>
+        <div class="shield-warn" id="timdiemban-shield-warn">Kết quả đang được đồng bộ về Findmap. Hãy giữ tab Google Maps mở; nếu tiến độ chậm, hãy đưa tab này lên trước.</div>
+        <div class="shield-hint">Không đóng hoặc tải lại tab Google Maps cho đến khi Findmap báo hoàn tất.</div>
       </div>`;
     const block = (e) => { e.stopPropagation(); e.preventDefault(); };
     ["click", "mousedown", "mouseup", "dblclick", "contextmenu", "wheel", "touchstart"].forEach(
@@ -254,8 +253,8 @@
   }
 
   function formatShieldWarn(webLabel) {
-    const target = webLabel ? `tab ${webLabel}` : "tab kết quả";
-    return `Kết quả tự đồng bộ về ${target}. Giữ tab Maps mở để quét nhanh — rời tab được nhưng quay lại sẽ tự bù dữ liệu.`;
+    const target = webLabel || "Findmap";
+    return `Kết quả đang được đồng bộ về ${target}. Hãy giữ tab Google Maps mở; nếu tiến độ chậm, hãy đưa tab này lên trước.`;
   }
 
   function resolveWebLabel(webUrl) {
@@ -1374,7 +1373,7 @@
   async function exitHoursSubPanelIfNeeded() {
     if (!isHoursSubPanelOpen()) return false;
 
-    tbLog("Đang thoát panel Giờ → về Tổng quan", "warn");
+    tbLog("Đang trở về thông tin tổng quan.", "warn");
 
     for (let attempt = 0; attempt < 8; attempt++) {
       if (!isHoursSubPanelOpen() && hasVisibleOverviewContactFields()) return true;
@@ -1410,7 +1409,7 @@
     }
 
     const ok = !isHoursSubPanelOpen() && hasVisibleOverviewContactFields();
-    if (!ok) tbLog("Không thoát được panel Giờ", "warn");
+    if (!ok) tbLog("Chưa mở được thông tin tổng quan.", "warn");
     return ok;
   }
 
@@ -2372,7 +2371,7 @@
         }
       }
       if (cleaned > 0) {
-        tbLog(`Dọn ${cleaned} DOM pane cũ`);
+        tbLog("Đã làm mới vùng thông tin chi tiết.");
       }
     } catch {}
   }
@@ -2401,14 +2400,14 @@
           await waitForCellFeedReady(searchUrl, cellLat, cellLng, cellIndex, 14000);
         }
         if (isOnResultList()) {
-          tbLog("Đã khôi phục list bằng URL ô tìm kiếm");
+          tbLog("Đã khôi phục danh sách kết quả.");
           return true;
         }
       } catch {}
     }
 
     if (!isOnResultList()) {
-      tbLog("Không về được list — bỏ qua, tiếp quán sau", "warn");
+      tbLog("Chưa trở về được danh sách. Findmap sẽ chuyển sang điểm bán tiếp theo.", "warn");
     }
     return isOnResultList();
   }
@@ -3121,7 +3120,7 @@
       needWebsite = true
     } = options;
     if (listData?.name && !(await waitForDetailPanel(listData))) {
-      throw new Error(`Panel chưa khớp địa điểm: ${listData.name}`);
+      throw new Error(`Thông tin chi tiết chưa khớp với điểm bán ${listData.name}.`);
     }
 
     const hasCoords = listData?.lat != null && listData?.lng != null && !isNaN(listData.lat);
@@ -3335,7 +3334,7 @@
       const pulse = Math.min(0.12, 0.02 + waited * 0.004);
       sendProgress(
         calcProgressPercent(cellIndex, cellsHint, pulse),
-        `Bước ${cellIndex + 1}/${cellsHint} — đang chờ danh sách Maps... (${waited}s)`
+        `Khu vực ${cellIndex + 1}/${cellsHint} · Đang chờ Google Maps tải danh sách · ${waited} giây`
       );
     };
 
@@ -3381,7 +3380,7 @@
             feed.scrollTop = 0;
             await sleep(T.scrollInit);
             await waitForFeedContentReady(feed, 12000);
-            tbLog(`Vùng ${cellIndex + 1}: feed sẵn sàng — ${count} mục` + (hrefChanged ? " (list mới)" : ""));
+            tbLog(`Khu vực ${cellIndex + 1}: danh sách đã tải · ${count} kết quả${hrefChanged ? " mới" : ""}`);
             return feed;
           }
         }
@@ -3394,7 +3393,7 @@
     const centerMatches = urlCenterMatchesCell(window.location.href, cellLat, cellLng);
     if (feed && getResultItems(feed).length > 0 && centerMatches) {
       feed.scrollTop = 0;
-      tbLog(`Vùng ${cellIndex + 1}: dùng feed hiện có (timeout)`, "warn");
+      tbLog(`Khu vực ${cellIndex + 1}: đang dùng danh sách hiện có sau khi chờ.`, "warn");
       return feed;
     }
     throw new Error(
@@ -3413,12 +3412,12 @@
     } else {
       updateShield(progressText || `Bổ sung: ${listData?.name || ""}`, percent ?? 55);
     }
-    tbLog(`${fast ? "Nhanh" : "Bổ sung"}: ${listData?.name || "?"}`);
+    tbLog(`Đang bổ sung thông tin: ${listData?.name || "Không rõ tên"}`);
 
     if (!fast) {
       const panelReady = await waitForDetailPanel(listData);
       if (!panelReady) {
-        tbLog(`Chưa load panel: ${listData?.name || "?"}`, "warn");
+        tbLog(`Chưa tải được thông tin chi tiết: ${listData?.name || "Không rõ tên"}`, "warn");
         await sleep(700);
       }
     } else {
@@ -3449,7 +3448,7 @@
     const gotPhone = normalizePhone(merged.phone).length >= 9;
     const gotAddr = !!pickAddress(merged.address);
     tbLog(
-      `${merged.name}: ${gotPhone ? "✓SĐT" : "—SĐT"} | ${merged.website ? "✓web" : "—web"} | ${merged.rating || "—"} sao | ${gotAddr ? "✓địa chỉ" : "—địa chỉ"}`
+      `${merged.name}: ${gotPhone ? "có SĐT" : "chưa có SĐT"} · ${merged.website ? "có website" : "chưa có website"} · ${merged.rating || "chưa có"} sao · ${gotAddr ? "có địa chỉ" : "chưa có địa chỉ"}`
     );
     return merged;
   }
@@ -3660,10 +3659,9 @@
       totalInCell > 0
         ? `ô này ${uniqueIndex}/${totalInCell}`
         : `ô này #${uniqueIndex}`;
-    // Hiện tổng unique đã gửi + version để biết đã load bản mới
     sendProgress(
       pct,
-      `v${window.__timDiemBanVersion || "?"} · Bước ${cellIndex + 1}/${totalCells} — ${cellLabel || "Tâm"} | ${posLabel}: ${data.name}${data.phone ? " ✓SĐT" : ""}`
+      `Khu vực ${cellIndex + 1}/${totalCells} · ${cellLabel || "Tâm"} · ${posLabel}: ${data.name}${data.phone ? " · Có SĐT" : ""}`
     );
     if (!quiet) sendItem(data, searchParams, uniqueIndex, uniqueIndex);
 
@@ -3718,7 +3716,7 @@
     let item = findListItemForPlace(place, feed);
     if (!item) item = await scrollToFindListItem(place, feed, 18000);
     if (!item) {
-      tbLog(`Không thấy trong list: ${place.name}`, "warn");
+      tbLog(`Không tìm thấy trong danh sách: ${place.name}`, "warn");
       return { success: false, needUrlFallback: true };
     }
 
@@ -3748,7 +3746,7 @@
       );
       return { success: true, place: merged };
     } catch (err) {
-      tbLog(`Lỗi enrich: ${place.name} — ${err.message}`, "warn");
+      tbLog(`Chưa thể bổ sung thông tin: ${place.name} · ${err.message}`, "warn");
       await backToResultListBounded(2000);
       return { success: false, needUrlFallback: true };
     }
@@ -3768,7 +3766,7 @@
 
     isAborted = false;
     showShield(
-      `Giai đoạn 2/2 — Bổ sung ${startIndex + 1}–${startIndex + places.length}/${totalEnrich}`,
+      `Đang bổ sung thông tin ${startIndex + 1}–${startIndex + places.length}/${totalEnrich}`,
       55
     );
 
@@ -3776,7 +3774,7 @@
     try {
       feed = await waitForCellFeedReady(searchUrl, cellLat, cellLng, cellIndex, 22000);
     } catch (err) {
-      tbLog(`Không load list vùng: ${err.message}`, "warn");
+      tbLog(`Chưa tải được danh sách khu vực: ${err.message}`, "warn");
       return { success: false, places: [], needFallback: places };
     }
 
@@ -3793,14 +3791,14 @@
       const needPhone = profile?.needPhone !== false;
       const globalIdx = startIndex + i + 1;
       const pct = 55 + Math.round((globalIdx / totalEnrich) * 40);
-      const progressText = `Giai đoạn 2/2 — ${globalIdx}/${totalEnrich}: ${place.name}`;
+      const progressText = `Đang bổ sung thông tin ${globalIdx}/${totalEnrich} · ${place.name}`;
       updateShield(progressText, pct);
       tbLog(`${fast ? "⚡" : "→"} ${place.name}`);
 
       let item = findListItemForPlace(place, feed);
       if (!item) item = await scrollToFindListItem(place, feed);
       if (!item) {
-        tbLog(`Không thấy trong list — dùng URL: ${place.name}`, "warn");
+        tbLog(`Không thấy trong danh sách. Đang mở trực tiếp: ${place.name}`, "warn");
         needFallback.push(place);
         continue;
       }
@@ -3842,13 +3840,13 @@
           needFallback.push(place);
         }
       } catch (err) {
-        tbLog(`Lỗi enrich ${place.name}: ${err.message}`, "warn");
+        tbLog(`Chưa thể bổ sung thông tin cho ${place.name}: ${err.message}`, "warn");
         needFallback.push(place);
         await backToResultList(2500);
       }
     }
 
-    tbLog(`Xong batch: ${enriched.length} quán, ${needFallback.length} cần URL`);
+    tbLog(`Đã hoàn tất nhóm dữ liệu: ${enriched.length} điểm bán · ${needFallback.length} điểm cần thử cách khác`);
     return { success: true, places: enriched, needFallback };
   }
 
@@ -3882,7 +3880,7 @@
     for (let round = 0; round < safetyMax; round++) {
       if (isAborted) break;
       if (Date.now() - scrollStart > maxMs) {
-        tbLog(`Dừng cuộn — hết ${maxMs / 1000}s`);
+        tbLog(`Đã dừng tải thêm sau ${Math.round(maxMs / 1000)} giây.`);
         break;
       }
 
@@ -3950,7 +3948,7 @@
         
         if (hasEndMarker(feed)) {
           // Thấy end marker — nhưng phải đảm bảo feed THẬT SỰ không còn load
-          tbLog(`Thấy "hết danh sách" — ${afterNudge.total} quán, xác nhận...`);
+          tbLog(`Đã tới cuối danh sách · ${afterNudge.total} điểm bán. Đang xác nhận…`);
           
           // Chờ thêm rồi kiểm tra lại
           await sleep(endConfirmMs);
@@ -3962,10 +3960,10 @@
           
           // Kiểm tra end marker lần cuối SAU KHI chờ load
           if (hasEndMarker(feed) && !isFeedLoading(feed)) {
-            tbLog(`Xác nhận hết danh sách — tổng ${finalCheck.total} quán`);
+            tbLog(`Đã xác nhận cuối danh sách · Tổng ${finalCheck.total} điểm bán`);
             break;
           } else {
-            tbLog(`End marker biến mất sau khi chờ — tiếp tục cuộn`);
+            tbLog("Danh sách có thêm kết quả. Findmap sẽ tiếp tục tải.");
             staleBottomRounds = 0;
             await sleep(scrollPause);
             continue;
@@ -3974,12 +3972,12 @@
         
         if (!requireEndMarker) break;
         if (staleBottomRounds >= staleLimit && found.total > 0) {
-          tbLog(`Dừng cuộn — list ổn định ở đáy (${found.total} quán, ${staleBottomRounds} vòng)`);
+          tbLog(`Đã tải xong danh sách · ${found.total} điểm bán`);
           await onItems(feed, round);
           break;
         }
         if (staleBottomRounds >= staleHardLimit) {
-          tbLog(`Dừng cuộn — quá nhiều vòng ở đáy (${staleBottomRounds} vòng, chưa thấy hết list)`);
+          tbLog("Danh sách không thay đổi sau nhiều lần kiểm tra. Findmap sẽ xử lý các kết quả đã có.");
           await onItems(feed, round);
           break;
         }
@@ -4117,7 +4115,7 @@
 
     sendProgress(
       calcProgressPercent(cellIndex, totalCells, 0.05),
-      `Bước ${cellIndex + 1}/${totalCells} — ${cellLabel} | Cuộn list...`
+      `Khu vực ${cellIndex + 1}/${totalCells} · ${cellLabel} · Đang tải danh sách điểm bán…`
     );
 
     const buildPlaceFromList = (listData) => {
@@ -4171,7 +4169,7 @@
       const ratio = Math.min(0.42, 0.05 + round * 0.008);
       sendProgress(
         calcProgressPercent(cellIndex, totalCells, ratio),
-        `Bước ${cellIndex + 1}/${totalCells} — ${cellLabel} | Cuộn... ${total} quán`
+        `Khu vực ${cellIndex + 1}/${totalCells} · Đang tải danh sách · ${total} điểm bán`
       );
     };
 
@@ -4196,7 +4194,7 @@
     if (pending.size > 0) {
       sendProgress(
         calcProgressPercent(cellIndex, totalCells, 0.48),
-        `Bước ${cellIndex + 1}/${totalCells} — ${cellLabel} | Lấy chi tiết ${pending.size} quán...`
+        `Khu vực ${cellIndex + 1}/${totalCells} · Đang thu thập thông tin của ${pending.size} điểm bán…`
       );
       if (feed) {
         feed.scrollTop = 0;
@@ -4214,7 +4212,7 @@
 
       sendProgress(
         calcProgressPercent(cellIndex, totalCells, 0.48 + Math.min(detailIdx / Math.max(pending.size, 1), 0.48)),
-        `Bước ${cellIndex + 1}/${totalCells} — ${cellLabel} | #${detailIdx}/${pending.size}: ${place.name}`
+        `Khu vực ${cellIndex + 1}/${totalCells} · Đang xử lý ${detailIdx}/${pending.size} · ${place.name}`
       );
 
       try {
@@ -4294,11 +4292,11 @@
     if (results.length > 0) {
       sendProgress(
         calcProgressPercent(cellIndex, totalCells, 0.96),
-        `Bước ${cellIndex + 1}/${totalCells} — ${cellLabel} | ${results.length} quán`
+        `Hoàn tất khu vực ${cellIndex + 1}/${totalCells} · ${results.length} điểm bán`
       );
     }
 
-    tbLog(`${cellLabel}: xong ${results.length} quán (${clickAttempts} click)`);
+    tbLog(`${cellLabel}: hoàn tất ${results.length} điểm bán`);
     return { places: results, skippedCount, clickAttempts, earlyExit: false };
   }
 
@@ -4326,13 +4324,13 @@
     } = data;
     isAborted = false;
     if (totalCells > 0) _lastKnownTotalCells = totalCells;
-    const label = cellLabel || cellId || `Vùng ${cellIndex + 1}`;
-    showShield(`Ô ${cellIndex + 1}/${totalCells}: ${label} — cuộn + lấy DOM`, 2, {
+    const label = cellLabel || cellId || `Khu vực ${cellIndex + 1}`;
+    showShield(`Khu vực ${cellIndex + 1}/${totalCells}: ${label} · Đang tải danh sách điểm bán…`, 2, {
       webUrl: searchParams?.webUrl
     });
     sendProgress(
       calcProgressPercent(cellIndex, totalCells, 0.03),
-      `Bước ${cellIndex + 1}/${totalCells} — ${label} | Đang chờ danh sách Maps...`
+      `Khu vực ${cellIndex + 1}/${totalCells} · ${label} · Đang chờ Google Maps tải danh sách…`
     );
 
     const feed = await waitForCellFeedReady(searchUrl, cellLat, cellLng, cellIndex, 28000, totalCells);

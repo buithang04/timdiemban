@@ -88,7 +88,7 @@ const DEFAULT_GUIDE_HTML = `
           <h3>1. Đăng nhập &amp; nhận điểm sử dụng</h3>
           <p>Đăng nhập tài khoản Findmap. Điểm (credit) được cấp theo gói — mỗi điểm bán có số điện thoại sẽ trừ theo cấu hình hệ thống.</p>
           <h3>2. Cài tiện ích Chrome</h3>
-          <p>Cài extension Findmap, mở lại tiện ích rồi vào trang làm việc để đồng bộ phiên đăng nhập.</p>
+          <p>Cài tiện ích Findmap một lần, sau đó mở hoặc tải lại findmap.vn. Tiện ích tự kết nối và nhận phiên đăng nhập.</p>
           <h3>3. Chọn khu vực tìm kiếm</h3>
           <p>Chọn tâm tìm, bán kính và từ khóa (ví dụ: quán cà phê, cửa hàng mẹ và bé).</p>
           <h3>4. Giữ Google Maps mở khi đang chạy</h3>
