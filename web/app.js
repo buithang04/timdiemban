@@ -10,34 +10,212 @@ let jobsIntegrationStatus = { linked: false };
 let jobsSyncBusy = false;
 const TABLE_PAGE_SIZE = 50;
 let currentPage = 1;
+/** Danh sách từ khóa của lượt tìm (theo thứ tự nhập) */
+let plannedKeywords = [];
+/** Tab đang chọn: "all" | tên từ khóa */
+let activeKeywordTab = "all";
 
 const AUTH_TOKEN_KEY = "timdiemban_token";
 const STORAGE_RESULTS_KEY = "timdiemban_results_v1";
+const STORAGE_LEGACY_CLAIM_KEY = "timdiemban_results_legacy_claimed";
 const EXT_QUEUE_KEY = "timdiemban_ext_queue";
 
-// ——— Lưu / khôi phục kết quả vào localStorage ———
+// ——— Lưu / khôi phục kết quả (local cache + MySQL theo user) ———
 let _storageSaveTimer = null;
+let _dbSaveTimer = null;
+let _dbSaveInFlight = null;
+let _dbSaveQueued = false;
+let _resultsSaveEpoch = 0;
+
+function getResultsStorageKey() {
+  const email = String(currentUser?.email || "").trim().toLowerCase();
+  return email ? `${STORAGE_RESULTS_KEY}_${email}` : STORAGE_RESULTS_KEY;
+}
+
+function workspaceSavedAt(payload) {
+  const n = Number(payload?.savedAt);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function peekLocalResultsWorkspace() {
+  try {
+    const emailKey = getResultsStorageKey();
+    const candidates = [];
+    const emailRaw = localStorage.getItem(emailKey);
+    if (emailRaw) {
+      try {
+        const parsed = JSON.parse(emailRaw);
+        if (Array.isArray(parsed?.data) && parsed.data.length) {
+          candidates.push({ key: emailKey, parsed, kind: "email" });
+        }
+      } catch {}
+    }
+
+    // Key cũ (shared) — chỉ nhận khi chưa bị user khác claim
+    if (emailKey !== STORAGE_RESULTS_KEY) {
+      const legacyRaw = localStorage.getItem(STORAGE_RESULTS_KEY);
+      if (legacyRaw) {
+        const email = String(currentUser?.email || "").trim().toLowerCase();
+        const claimed = String(localStorage.getItem(STORAGE_LEGACY_CLAIM_KEY) || "")
+          .trim()
+          .toLowerCase();
+        if (!claimed || claimed === email) {
+          try {
+            const parsed = JSON.parse(legacyRaw);
+            if (Array.isArray(parsed?.data) && parsed.data.length) {
+              candidates.push({ key: STORAGE_RESULTS_KEY, parsed, kind: "legacy" });
+            }
+          } catch {}
+        }
+      }
+    } else {
+      // Chưa đăng nhập: chỉ đọc key chung
+      const raw = localStorage.getItem(STORAGE_RESULTS_KEY);
+      if (raw) {
+        try {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed?.data) && parsed.data.length) {
+            candidates.push({ key: STORAGE_RESULTS_KEY, parsed, kind: "legacy" });
+          }
+        } catch {}
+      }
+    }
+
+    if (!candidates.length) return null;
+    candidates.sort((a, b) => workspaceSavedAt(b.parsed) - workspaceSavedAt(a.parsed));
+    return candidates[0];
+  } catch {
+    return null;
+  }
+}
+
+function buildResultsWorkspacePayload() {
+  return {
+    data: currentData,
+    search: currentSearch
+      ? { ...currentSearch, keywords: plannedKeywords.length ? plannedKeywords : currentSearch.keywords }
+      : null,
+    plannedKeywords,
+    activeKeywordTab,
+    sentKeys: Array.from(sentKeys),
+    jobsSyncResults: Array.from(jobsSyncResults.entries()),
+    savedAt: Date.now()
+  };
+}
+
+function applyResultsWorkspace(payload) {
+  const data = Array.isArray(payload?.data) ? payload.data : [];
+  if (!data.length) return false;
+  currentData = data;
+  currentSearch = payload.search || null;
+  sentKeys = new Set(Array.isArray(payload.sentKeys) ? payload.sentKeys : []);
+  jobsSyncResults = new Map(Array.isArray(payload.jobsSyncResults) ? payload.jobsSyncResults : []);
+  const fromPayload = normalizeKeywordList(payload.plannedKeywords);
+  const fromSearch = normalizeKeywordList(payload.search?.keywords);
+  const fromRows = [];
+  for (const row of currentData) {
+    for (const kw of getRowKeywords(row)) {
+      if (!fromRows.some((x) => x.toLowerCase() === kw.toLowerCase())) fromRows.push(kw);
+    }
+  }
+  plannedKeywords = fromPayload.length
+    ? fromPayload
+    : fromSearch.length
+      ? fromSearch
+      : fromRows;
+  activeKeywordTab =
+    payload.activeKeywordTab &&
+    (payload.activeKeywordTab === "all" ||
+      plannedKeywords.some((k) => k.toLowerCase() === String(payload.activeKeywordTab).toLowerCase()))
+      ? payload.activeKeywordTab
+      : "all";
+  currentData.forEach((r) => ensureStableKey(r));
+  dedupeCurrentDataKeepFirst();
+  return true;
+}
+
+function writeResultsLocalCache() {
+  try {
+    const key = getResultsStorageKey();
+    if (!currentData.length) {
+      localStorage.removeItem(key);
+      localStorage.removeItem(STORAGE_RESULTS_KEY);
+      return;
+    }
+    localStorage.setItem(key, JSON.stringify(buildResultsWorkspacePayload()));
+    // Tránh key cũ shared bị user khác migrate nhầm
+    if (key !== STORAGE_RESULTS_KEY) {
+      localStorage.removeItem(STORAGE_RESULTS_KEY);
+      const email = String(currentUser?.email || "").trim().toLowerCase();
+      if (email) localStorage.setItem(STORAGE_LEGACY_CLAIM_KEY, email);
+    }
+  } catch (e) {
+    console.warn("TimDiemBan: lưu localStorage thất bại", e);
+  }
+}
+
+async function flushResultsToDatabase() {
+  if (!currentUser || !getAuthToken()) return null;
+  if (_dbSaveInFlight) {
+    _dbSaveQueued = true;
+    return _dbSaveInFlight;
+  }
+
+  const epoch = _resultsSaveEpoch;
+  const payload = buildResultsWorkspacePayload();
+  _dbSaveInFlight = (async () => {
+    try {
+      // Bị "Làm mới"/xóa trong lúc chờ → bỏ bản ghi cũ, không ghi đè DB
+      if (epoch !== _resultsSaveEpoch) return { skipped: true };
+
+      if (!payload.data.length) {
+        await apiRequest("/api/search/results", { method: "DELETE" });
+        return { cleared: true, resultCount: 0 };
+      }
+      const res = await apiRequest("/api/search/results", {
+        method: "PUT",
+        body: JSON.stringify(payload),
+        keepalive: true
+      });
+      if (epoch !== _resultsSaveEpoch) return { skipped: true };
+      return res;
+    } catch (e) {
+      console.warn("TimDiemBan: lưu DB thất bại", e.message || e);
+      return null;
+    } finally {
+      _dbSaveInFlight = null;
+      if (_dbSaveQueued && epoch === _resultsSaveEpoch) {
+        _dbSaveQueued = false;
+        flushResultsToDatabase();
+      } else {
+        _dbSaveQueued = false;
+      }
+    }
+  })();
+
+  return _dbSaveInFlight;
+}
+
+function scheduleResultsDatabaseSave(immediate = false) {
+  if (!currentUser || !getAuthToken()) return;
+  if (_dbSaveTimer) clearTimeout(_dbSaveTimer);
+  if (immediate || document.visibilityState === "hidden") {
+    _dbSaveTimer = null;
+    flushResultsToDatabase();
+    return;
+  }
+  // Debounce mạng lâu hơn localStorage để tránh spam khi scrape realtime
+  _dbSaveTimer = setTimeout(() => {
+    _dbSaveTimer = null;
+    flushResultsToDatabase();
+  }, 1500);
+}
+
 function saveResultsToStorage(immediate = false) {
   const write = () => {
     _storageSaveTimer = null;
-    try {
-      if (!currentData.length) {
-        localStorage.removeItem(STORAGE_RESULTS_KEY);
-        return;
-      }
-      localStorage.setItem(
-        STORAGE_RESULTS_KEY,
-        JSON.stringify({
-          data: currentData,
-          search: currentSearch,
-          sentKeys: Array.from(sentKeys),
-          jobsSyncResults: Array.from(jobsSyncResults.entries()),
-          savedAt: Date.now()
-        })
-      );
-    } catch (e) {
-      console.warn("TimDiemBan: lưu storage thất bại", e);
-    }
+    writeResultsLocalCache();
+    scheduleResultsDatabaseSave(immediate);
   };
   if (immediate || document.visibilityState === "hidden") {
     if (_storageSaveTimer) clearTimeout(_storageSaveTimer);
@@ -49,21 +227,89 @@ function saveResultsToStorage(immediate = false) {
 }
 
 function loadResultsFromStorage() {
-  try {
-    const raw = localStorage.getItem(STORAGE_RESULTS_KEY);
-    if (!raw) return false;
-    const { data, search, sentKeys: sk, jobsSyncResults: jsr } = JSON.parse(raw);
-    if (!Array.isArray(data) || !data.length) return false;
-    currentData = data;
-    currentSearch = search || null;
-    currentData.forEach((r) => ensureStableKey(r));
-    if (Array.isArray(sk)) sk.forEach((k) => sentKeys.add(k));
-    jobsSyncResults = new Map(Array.isArray(jsr) ? jsr : []);
-    dedupeCurrentDataKeepFirst();
-    return true;
-  } catch {
-    return false;
+  const hit = peekLocalResultsWorkspace();
+  if (!hit) return false;
+  if (!applyResultsWorkspace(hit.parsed)) return false;
+  if (hit.kind === "legacy" && currentUser?.email) {
+    try {
+      localStorage.setItem(
+        STORAGE_LEGACY_CLAIM_KEY,
+        String(currentUser.email).trim().toLowerCase()
+      );
+      localStorage.removeItem(STORAGE_RESULTS_KEY);
+      writeResultsLocalCache();
+    } catch {}
   }
+  return true;
+}
+
+async function fetchResultsFromDatabase() {
+  if (!currentUser || !getAuthToken()) return null;
+  try {
+    const res = await apiRequest("/api/search/results");
+    if (!res?.exists || !Array.isArray(res.data) || !res.data.length) return null;
+    return res;
+  } catch (e) {
+    console.warn("TimDiemBan: tải kết quả từ DB thất bại", e.message || e);
+    return null;
+  }
+}
+
+async function restoreResultsWorkspace() {
+  if (!currentUser) {
+    if (loadResultsFromStorage()) return { ok: true, source: "local" };
+    return { ok: false, source: null };
+  }
+
+  const dbPayload = await fetchResultsFromDatabase();
+  const localHit = peekLocalResultsWorkspace();
+  const dbAt = workspaceSavedAt(dbPayload);
+  const localAt = workspaceSavedAt(localHit?.parsed);
+
+  // Chọn bản mới hơn giữa DB và local (tránh mất kết quả vừa tìm chưa kịp sync)
+  if (dbPayload && localHit) {
+    if (localAt > dbAt) {
+      if (!applyResultsWorkspace(localHit.parsed)) return { ok: false, source: null };
+      if (localHit.kind === "legacy") {
+        try {
+          localStorage.setItem(
+            STORAGE_LEGACY_CLAIM_KEY,
+            String(currentUser.email).trim().toLowerCase()
+          );
+          localStorage.removeItem(STORAGE_RESULTS_KEY);
+        } catch {}
+      }
+      writeResultsLocalCache();
+      await flushResultsToDatabase();
+      return { ok: true, source: "local-newer" };
+    }
+    if (!applyResultsWorkspace(dbPayload)) return { ok: false, source: null };
+    writeResultsLocalCache();
+    return { ok: true, source: "database" };
+  }
+
+  if (dbPayload) {
+    if (!applyResultsWorkspace(dbPayload)) return { ok: false, source: null };
+    writeResultsLocalCache();
+    return { ok: true, source: "database" };
+  }
+
+  if (localHit && applyResultsWorkspace(localHit.parsed)) {
+    if (localHit.kind === "legacy") {
+      try {
+        localStorage.setItem(
+          STORAGE_LEGACY_CLAIM_KEY,
+          String(currentUser.email).trim().toLowerCase()
+        );
+        localStorage.removeItem(STORAGE_RESULTS_KEY);
+      } catch {}
+    }
+    writeResultsLocalCache();
+    await flushResultsToDatabase();
+    return { ok: true, source: "local-migrated" };
+  }
+
+  return { ok: false, source: null };
 }
 
 // ——— Trạng thái quét lại ———
@@ -137,6 +383,7 @@ const els = {
   searchFilter: document.getElementById("searchFilter"),
   filterCount: document.getElementById("filterCount"),
   resultsBadge: document.getElementById("resultsBadge"),
+  keywordTabs: document.getElementById("keywordTabs"),
   searchResultText: document.getElementById("searchResultText"),
   searchResultBox: document.getElementById("searchResultBox"),
   tablePagination: document.getElementById("tablePagination"),
@@ -540,7 +787,7 @@ function markResultsRadiusFlags(rows, search) {
 function processResults(rows, search) {
   const cleaned = (rows || [])
     .filter((r) => isValidRowName(r.name))
-    .map((r) => normalizeRowCoords({ ...r }));
+    .map((r) => normalizeRowCoords(attachSearchKeyword({ ...r }, search)));
   const deduped = dedupeResultRows(cleaned);
   const marked = markResultsRadiusFlags(deduped, search);
   marked.sort((a, b) => (a.distanceKm ?? 999) - (b.distanceKm ?? 999));
@@ -566,7 +813,7 @@ function applyResults(rows, search, replace = false) {
     // (không gộp theo SĐT để tránh mất quán khác nhau cùng số tổng đài)
     const cleaned = (rows || [])
       .filter((r) => isValidRowName(r.name))
-      .map((r) => normalizeRowCoords({ ...r }));
+      .map((r) => normalizeRowCoords(attachSearchKeyword({ ...r }, search)));
     const marked = markResultsRadiusFlags(cleaned, search);
     const out = [];
     for (const row of marked) {
@@ -717,6 +964,106 @@ function clearResultsForNewSearch() {
   awaitingNewSearchResults = false;
 }
 
+function normalizeKeywordList(list) {
+  if (!Array.isArray(list)) return [];
+  const out = [];
+  for (const raw of list) {
+    const kw = String(raw || "").trim();
+    if (!kw) continue;
+    if (out.some((x) => x.toLowerCase() === kw.toLowerCase())) continue;
+    out.push(kw);
+  }
+  return out;
+}
+
+function mergeSearchKeywordTags(row, extraKw) {
+  const set = new Set();
+  const add = (k) => {
+    const s = String(k || "").trim();
+    if (s) set.add(s);
+  };
+  if (Array.isArray(row?.searchKeywords)) row.searchKeywords.forEach(add);
+  add(row?.searchKeyword);
+  add(extraKw);
+  const list = [...set];
+  return {
+    searchKeyword: list[list.length - 1] || "",
+    searchKeywords: list
+  };
+}
+
+function attachSearchKeyword(row, search = currentSearch) {
+  const kw = String(search?.keyword || "").trim();
+  const tags = mergeSearchKeywordTags(row, kw);
+  return { ...row, ...tags };
+}
+
+function getRowKeywords(row) {
+  if (Array.isArray(row?.searchKeywords) && row.searchKeywords.length) {
+    return normalizeKeywordList(row.searchKeywords);
+  }
+  const single = String(row?.searchKeyword || "").trim();
+  return single ? [single] : [];
+}
+
+function rowMatchesKeywordTab(row, tab) {
+  if (!tab || tab === "all") return true;
+  const want = String(tab).trim().toLowerCase();
+  return getRowKeywords(row).some((k) => k.toLowerCase() === want);
+}
+
+function getKeywordTabList() {
+  const ordered = normalizeKeywordList(plannedKeywords);
+  for (const row of currentData) {
+    for (const kw of getRowKeywords(row)) {
+      if (!ordered.some((x) => x.toLowerCase() === kw.toLowerCase())) ordered.push(kw);
+    }
+  }
+  return ordered;
+}
+
+function countRowsForKeyword(kw) {
+  if (kw === "all") return currentData.length;
+  return currentData.filter((r) => rowMatchesKeywordTab(r, kw)).length;
+}
+
+function renderKeywordTabs() {
+  const host = els.keywordTabs;
+  if (!host) return;
+  const tabs = getKeywordTabList();
+  if (!tabs.length) {
+    host.classList.add("hidden");
+    host.innerHTML = "";
+    activeKeywordTab = "all";
+    return;
+  }
+
+  if (activeKeywordTab !== "all" && !tabs.some((t) => t.toLowerCase() === String(activeKeywordTab).toLowerCase())) {
+    activeKeywordTab = "all";
+  }
+
+  const runningKw = currentSearch?.status === "running" ? String(currentSearch.keyword || "").trim() : "";
+  const items = [{ id: "all", label: "Tất cả" }, ...tabs.map((t) => ({ id: t, label: t }))];
+
+  host.classList.remove("hidden");
+  host.innerHTML = items
+    .map((item) => {
+      const count = countRowsForKeyword(item.id);
+      const active = String(activeKeywordTab) === String(item.id);
+      const running = runningKw && item.id !== "all" && item.id.toLowerCase() === runningKw.toLowerCase();
+      return `<button type="button" class="wm-keyword-tab${active ? " is-active" : ""}${running ? " is-running" : ""}" role="tab" aria-selected="${active ? "true" : "false"}" data-keyword-tab="${escapeHtml(item.id)}">${escapeHtml(item.label)}<span class="wm-keyword-tab-count">${count}</span></button>`;
+    })
+    .join("");
+}
+
+function setActiveKeywordTab(tab, opts = {}) {
+  activeKeywordTab = tab || "all";
+  currentPage = 1;
+  renderKeywordTabs();
+  if (opts.rerender !== false) renderFullTable();
+  updateFilterCount();
+}
+
 /** Bắt đầu lượt tìm mới — giữ nguyên kết quả đã lưu; chỉ cập nhật phiên + bản đồ. */
 function beginFreshSearchUi(searchParams) {
   if (searchParams) {
@@ -725,6 +1072,17 @@ function beginFreshSearchUi(searchParams) {
       status: "running",
       startedAt: new Date().toISOString()
     };
+    const batch = normalizeKeywordList(searchParams.keywords);
+    const kw = String(searchParams.keyword || "").trim();
+    const idx = Number(searchParams.keywordIndex);
+    if (batch.length) {
+      if (!Number.isFinite(idx) || idx <= 0 || !plannedKeywords.length) {
+        plannedKeywords = batch;
+      }
+    } else if (kw) {
+      plannedKeywords = [kw];
+    }
+    if (kw) activeKeywordTab = kw;
   }
   awaitingNewSearchResults = false;
   extensionMergedCount = 0;
@@ -738,6 +1096,7 @@ function beginFreshSearchUi(searchParams) {
   }
   // Lưu meta phiên hiện tại; KHÔNG xóa data cũ
   saveResultsToStorage(true);
+  renderKeywordTabs();
   updateView();
 }
 
@@ -1221,7 +1580,7 @@ function matchesFilter(row, q) {
 
 function upsertResult(result) {
   if (!isValidRowName(result.name)) return { isNew: false, index: -1, key: "", skipped: true };
-  const incoming = normalizeRowCoords({ ...result });
+  const incoming = normalizeRowCoords(attachSearchKeyword({ ...result }));
   if (currentSearch?.lat) {
     const c = resolveRowCoords(incoming);
     if (c) {
@@ -1230,14 +1589,26 @@ function upsertResult(result) {
     }
   }
 
+  const mergeKeywordFields = (prev, next) => mergeSearchKeywordTags({
+    searchKeyword: next.searchKeyword || prev.searchKeyword,
+    searchKeywords: [
+      ...(Array.isArray(prev.searchKeywords) ? prev.searchKeywords : []),
+      ...(Array.isArray(next.searchKeywords) ? next.searchKeywords : []),
+      prev.searchKeyword,
+      next.searchKeyword
+    ]
+  });
+
   const sourceKey = incoming._sourceKey || incoming.sourceKey;
   if (sourceKey) {
     const srcIdx = findRowIndexByStableKey(sourceKey);
     if (srcIdx >= 0) {
       const prev = currentData[srcIdx];
+      const kwTags = mergeKeywordFields(prev, incoming);
       const merged = normalizeRowCoords({
         ...prev,
         ...incoming,
+        ...kwTags,
         href: incoming.href || prev.href,
         mapsUrl: incoming.mapsUrl || incoming.href || prev.mapsUrl || prev.href,
         phone: incoming.phone || prev.phone,
@@ -1278,9 +1649,11 @@ function upsertResult(result) {
   const dupIdx = currentData.findIndex((r) => isDuplicateRow(r, incoming));
   if (dupIdx >= 0) {
     const prev = currentData[dupIdx];
+    const kwTags = mergeKeywordFields(prev, incoming);
     const merged = normalizeRowCoords({
       ...prev,
       ...incoming,
+      ...kwTags,
       href: incoming.href || prev.href,
       mapsUrl: incoming.mapsUrl || incoming.href || prev.mapsUrl || prev.href,
       phone: incoming.phone || prev.phone,
@@ -1312,9 +1685,11 @@ function upsertResult(result) {
   const sameIdx = currentData.findIndex((r) => isSamePlaceRow(r, incoming));
   if (sameIdx >= 0) {
     const prev = currentData[sameIdx];
+    const kwTags = mergeKeywordFields(prev, incoming);
     const merged = normalizeRowCoords({
       ...prev,
       ...incoming,
+      ...kwTags,
       href: incoming.href || prev.href,
       mapsUrl: incoming.mapsUrl || incoming.href || prev.mapsUrl || prev.href,
       phone: incoming.phone || prev.phone,
@@ -1374,7 +1749,10 @@ function formatRatingCell(row) {
 
 function buildFilteredData() {
   const q = els.searchFilter?.value.trim().toLowerCase() || "";
-  return q ? currentData.filter((r) => matchesFilter(r, q)) : currentData;
+  return currentData.filter((r) => {
+    if (!rowMatchesKeywordTab(r, activeKeywordTab)) return false;
+    return matchesFilter(r, q);
+  });
 }
 
 function getTotalPages(count) {
@@ -1393,19 +1771,22 @@ function updatePaginationControls(visibleCount) {
 }
 
 function updateFilterCount() {
-  const q = els.searchFilter?.value.trim().toLowerCase() || "";
-  const visible = q
-    ? currentData.filter((r) => matchesFilter(r, q)).length
-    : currentData.length;
+  const visible = buildFilteredData().length;
   const total = currentData.length;
+  const tabTotal =
+    activeKeywordTab === "all" ? total : countRowsForKeyword(activeKeywordTab);
   if (els.filterCount) {
-    els.filterCount.textContent = `Hiển thị ${visible} / ${total} kết quả`;
+    const tabHint =
+      activeKeywordTab !== "all" ? ` · tab "${activeKeywordTab}"` : "";
+    els.filterCount.textContent = `Hiển thị ${visible} / ${tabTotal} kết quả${tabHint}`;
+    els.filterCount.classList.toggle("hidden", !total);
   }
   if (els.resultsBadge) {
     els.resultsBadge.textContent = total
       ? `${visible} KẾT QUẢ PHÙ HỢP`
       : "0 KẾT QUẢ";
   }
+  renderKeywordTabs();
   if (els.tablePagination) {
     if (!visible) {
       els.tablePagination.textContent = "Hiển thị 0 điểm bán";
@@ -1468,7 +1849,19 @@ function hideLiveProgress() {
 }
 
 function renderSearchInfo(search) {
-  if (els.infoKeyword) els.infoKeyword.textContent = search.keyword || "-";
+  if (els.infoKeyword) {
+    const multi = normalizeKeywordList(search.keywords || plannedKeywords);
+    if (multi.length > 1) {
+      const idx = Number(search.keywordIndex);
+      const step =
+        Number.isFinite(idx) && search.status === "running"
+          ? ` (${idx + 1}/${multi.length}: ${search.keyword || multi[idx] || ""})`
+          : "";
+      els.infoKeyword.textContent = `${multi.join(", ")}${step}`;
+    } else {
+      els.infoKeyword.textContent = search.keyword || multi[0] || "-";
+    }
+  }
   if (els.infoRadius) {
     const rKm = search.radius;
     els.infoRadius.textContent = rKm
@@ -1564,7 +1957,7 @@ function upsertTableRow(result) {
   filteredData = buildFilteredData();
   const domKey = getDomKey(row);
 
-  if (q && !matchesFilter(row, q)) {
+  if ((q && !matchesFilter(row, q)) || !rowMatchesKeywordTab(row, activeKeywordTab)) {
     if (updated) renderFullTable();
     else updateFilterCount();
     saveResultsToStorage();
@@ -2216,17 +2609,25 @@ let lastSyncApplied = 0;
 let lastSyncRequestAt = 0;
 let syncRequestTimer = null;
 
+/** Số dòng thuộc từ khóa đang quét — dùng so với mergedCount của extension (không lẫn lượt trước) */
+function countRowsForActiveSearchKeyword() {
+  const kw = String(currentSearch?.keyword || "").trim();
+  if (!kw) return currentData.length;
+  return countRowsForKeyword(kw);
+}
+
 function maybeRequestSyncIfBehind(mergedCount) {
   if (mergedCount == null || mergedCount <= 0) return;
   if (currentSearch?.status !== "running") return;
-  const gap = mergedCount - currentData.length;
+  const tableForKw = countRowsForActiveSearchKeyword();
+  const gap = mergedCount - tableForKw;
   updateUnifiedCountUI(mergedCount);
   if (gap <= 0) return;
 
   const fire = () => {
     lastSyncRequestAt = Date.now();
     syncRequestTimer = null;
-    const g = extensionMergedCount - currentData.length;
+    const g = extensionMergedCount - countRowsForActiveSearchKeyword();
     if (g <= 0) return;
     window.TimDiemBanDrainQueue?.();
     window.TimDiemBanSearch?.requestSearchSync?.(
@@ -2251,23 +2652,31 @@ function updateUnifiedCountUI(mergedCount) {
     extensionMergedCount = Math.max(extensionMergedCount, Number(mergedCount));
   }
   const tableCount = currentData.length;
+  const tableForKw = countRowsForActiveSearchKeyword();
   const ext = extensionMergedCount;
-  const inSync = currentSearch?.status !== "running" || ext <= 0 || tableCount >= ext;
-  const behind = currentSearch?.status === "running" && ext > tableCount;
+  const behind = currentSearch?.status === "running" && ext > tableForKw;
 
   if (els.infoTotal) els.infoTotal.textContent = String(tableCount);
   if (els.resultsBadge && currentSearch?.status === "running" && ext > 0) {
+    const kw = String(currentSearch?.keyword || "").trim();
+    const label = kw ? `"${kw}"` : "ĐIỂM BÁN";
     els.resultsBadge.textContent = behind
-      ? `${tableCount} / ${ext} ĐIỂM BÁN · ĐANG ĐỒNG BỘ…`
-      : `${tableCount} ĐIỂM BÁN · ĐÃ ĐỒNG BỘ`;
+      ? `${tableForKw} / ${ext} ${label} · ĐANG ĐỒNG BỘ…`
+      : `${tableForKw} ${label} · ĐÃ ĐỒNG BỘ · tổng ${tableCount}`;
     els.resultsBadge.classList.toggle("wm-results-badge-warn", behind);
   }
 
   if (currentSearch?.status === "running" && ext > 0) {
     if (behind) {
-      setConnStatus(`Đang đồng bộ kết quả: Findmap đã nhận ${tableCount}/${ext} điểm bán`, "error");
+      setConnStatus(
+        `Đang đồng bộ kết quả: Findmap đã nhận ${tableForKw}/${ext} điểm (từ khóa hiện tại)`,
+        "error"
+      );
     } else {
-      setConnStatus(`Đã đồng bộ ${tableCount} điểm bán về Findmap`, "connected");
+      setConnStatus(
+        `Đã đồng bộ ${tableForKw} điểm từ khóa hiện tại · tổng bảng ${tableCount}`,
+        "connected"
+      );
     }
   }
 }
@@ -2314,9 +2723,9 @@ function applyExtensionDataSync(type, payload = {}) {
     }
     if (payload.text) {
       const ext = extensionMergedCount;
-      const n = currentData.length;
+      const n = countRowsForActiveSearchKeyword();
       const syncLabel =
-        ext > 0 ? (n >= ext ? "Maps=Web ✓" : `bảng ${n}/${ext} — đang bù`) : "";
+        ext > 0 ? (n >= ext ? "Maps=Web ✓" : `từ khóa ${n}/${ext} — đang bù`) : "";
       liveProgressText = syncLabel ? `${payload.text} · ${syncLabel}` : payload.text;
       setLiveProgress(liveProgressText, payload.percent || 0);
       if (currentData.length === 0 && els.loadingState) {
@@ -2347,8 +2756,8 @@ function applyExtensionDataSync(type, payload = {}) {
       );
     }
     updateUnifiedCountUI(extensionMergedCount);
-    // Lệch ngay sau item → bù snapshot, không chờ debounce dài
-    if (extensionMergedCount > currentData.length) {
+    // Lệch ngay sau item → bù snapshot (so theo từ khóa hiện tại)
+    if (extensionMergedCount > countRowsForActiveSearchKeyword()) {
       maybeRequestSyncIfBehind(extensionMergedCount);
     }
     return;
@@ -2445,6 +2854,16 @@ function applyExtensionDataSync(type, payload = {}) {
 
   if (type === "complete") {
     const search = payload.searchParams || currentSearch;
+    const completeId = search?.searchId || payload.searchId;
+    // Complete của lượt cũ khi đã sang từ khóa mới → bỏ qua (tránh lệch đồng bộ / nhảy trạng thái)
+    if (
+      completeId &&
+      currentSearch?.searchId &&
+      completeId !== currentSearch.searchId &&
+      currentSearch.status === "running"
+    ) {
+      return;
+    }
     awaitingNewSearchResults = false;
     currentSearch = {
       ...search,
@@ -2464,7 +2883,11 @@ function applyExtensionDataSync(type, payload = {}) {
     setConnStatus(`Hoàn tất — ${currentData.length} kết quả`, "connected");
     saveResultsToStorage(true);
     tryChargePendingSearch().catch(() => {});
-    window.dispatchEvent(new CustomEvent("timdiemban:search-finished"));
+    window.dispatchEvent(
+      new CustomEvent("timdiemban:search-finished", {
+        detail: { searchId: currentSearch?.searchId || search?.searchId || null }
+      })
+    );
     updateView();
   }
 }
@@ -2546,6 +2969,15 @@ async function handleExtensionPayload(type, payload) {
   }
 
   if (type === "error") {
+    const errId = payload?.searchParams?.searchId || payload?.searchId;
+    if (
+      errId &&
+      currentSearch?.searchId &&
+      errId !== currentSearch.searchId &&
+      currentSearch.status === "running"
+    ) {
+      return;
+    }
     awaitingNewSearchResults = false;
     if (currentSearch) currentSearch.status = "error";
     els.loadingState.classList.add("hidden");
@@ -2553,11 +2985,24 @@ async function handleExtensionPayload(type, payload) {
     showErrorBanner("Lỗi tìm kiếm", payload.error);
     setConnStatus(payload.error, "error");
     if (currentData.length) await tryChargePendingSearch();
-    window.dispatchEvent(new CustomEvent("timdiemban:search-finished"));
+    window.dispatchEvent(
+      new CustomEvent("timdiemban:search-finished", {
+        detail: { searchId: currentSearch?.searchId || payload?.searchParams?.searchId || null }
+      })
+    );
     updateView();
   }
 
   if (type === "tab_closed") {
+    const errId = payload?.searchParams?.searchId || payload?.searchId;
+    if (
+      errId &&
+      currentSearch?.searchId &&
+      errId !== currentSearch.searchId &&
+      currentSearch.status === "running"
+    ) {
+      return;
+    }
     awaitingNewSearchResults = false;
     if (currentSearch) currentSearch.status = "error";
     els.loadingState.classList.add("hidden");
@@ -2568,7 +3013,11 @@ async function handleExtensionPayload(type, payload) {
     );
     setConnStatus(payload.error, "error");
     if (currentData.length) await tryChargePendingSearch();
-    window.dispatchEvent(new CustomEvent("timdiemban:search-finished"));
+    window.dispatchEvent(
+      new CustomEvent("timdiemban:search-finished", {
+        detail: { searchId: currentSearch?.searchId || payload?.searchParams?.searchId || null }
+      })
+    );
     updateView();
   }
 
@@ -2659,7 +3108,21 @@ function deleteSelectedRows() {
 
 function clearAllData() {
   window.TimDiemBanSearch?.abandonExtensionSearch?.();
-  localStorage.removeItem(STORAGE_RESULTS_KEY);
+  // Hủy mọi lần lưu DB đang chờ / đang bay — tránh PUT cũ ghi đè sau DELETE
+  _resultsSaveEpoch += 1;
+  _dbSaveQueued = false;
+  if (_dbSaveTimer) {
+    clearTimeout(_dbSaveTimer);
+    _dbSaveTimer = null;
+  }
+  if (_storageSaveTimer) {
+    clearTimeout(_storageSaveTimer);
+    _storageSaveTimer = null;
+  }
+  try {
+    localStorage.removeItem(getResultsStorageKey());
+    localStorage.removeItem(STORAGE_RESULTS_KEY);
+  } catch {}
   clearChargedPhonesForUser();
   currentData = [];
   filteredData = [];
@@ -2668,9 +3131,12 @@ function clearAllData() {
   jobsSyncResults.clear();
   currentSearch = null;
   currentPage = 1;
+  plannedKeywords = [];
+  activeKeywordTab = "all";
   awaitingNewSearchResults = false;
   resetRescanUiState();
   renderEmptyTableRow();
+  renderKeywordTabs();
   els.jobsSyncSummary?.classList.add("hidden");
   if (els.searchFilter) els.searchFilter.value = "";
   hideErrorBanner();
@@ -2678,15 +3144,22 @@ function clearAllData() {
   window.TimDiemBanMap?.clearMarkers();
   window.TimDiemBanMap?.countInOut([]);
   updateView();
+  if (currentUser && getAuthToken()) {
+    apiRequest("/api/search/results", { method: "DELETE", keepalive: true }).catch((e) => {
+      console.warn("TimDiemBan: xóa kết quả DB thất bại", e.message || e);
+    });
+  }
   setConnStatus("Đã xóa toàn bộ dữ liệu", "");
 }
 
 function exportExcel() {
-  if (!currentData.length) return;
+  const exportRows = buildFilteredData();
+  if (!exportRows.length) return;
 
-  const rows = currentData.map((r, i) => ({
+  const rows = exportRows.map((r, i) => ({
     STT: i + 1,
     "Tên": r.name || "",
+    "Từ khóa": getRowKeywords(r).join(", "),
     "Đánh giá": r.rating || "",
     "Số review": r.reviews || "",
     "Loại hình": r.category || "",
@@ -2704,8 +3177,11 @@ function exportExcel() {
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "Ket qua");
 
-  const keyword = els.infoKeyword.textContent || "timkiem";
-  const filename = `timdiemban_${keyword.replace(/\s+/g, "_")}_${Date.now()}.xlsx`;
+  const keyword =
+    activeKeywordTab !== "all"
+      ? activeKeywordTab
+      : els.infoKeyword.textContent || "timkiem";
+  const filename = `timdiemban_${String(keyword).replace(/\s+/g, "_").slice(0, 40)}_${Date.now()}.xlsx`;
   XLSX.writeFile(wb, filename);
 }
 
@@ -2804,9 +3280,13 @@ els.resultsBody?.addEventListener("change", (e) => {
   }
 });
 
-function handleAuthClick() {
+async function handleAuthClick() {
   if (currentUser) {
-    apiRequest("/api/logout", { method: "POST" }).catch(() => {});
+    try {
+      if (_dbSaveTimer) clearTimeout(_dbSaveTimer);
+      await flushResultsToDatabase();
+    } catch {}
+    apiRequest("/api/auth/logout", { method: "POST" }).catch(() => {});
     setAuthToken("");
     currentUser = null;
     clearSessionInExtension();
@@ -2903,6 +3383,14 @@ document.addEventListener("click", (e) => {
   }
 });
 
+els.keywordTabs?.addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-keyword-tab]");
+  if (!btn || !els.keywordTabs.contains(btn)) return;
+  const tab = btn.getAttribute("data-keyword-tab") || "all";
+  if (tab === String(activeKeywordTab)) return;
+  setActiveKeywordTab(tab);
+});
+
 els.authForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   els.authError.classList.add("hidden");
@@ -2924,7 +3412,28 @@ els.authForm.addEventListener("submit", async (e) => {
       { source: "timdiemban-web", type: "LOGIN", payload: { token: data.token, user: data.user } },
       window.location.origin
     );
-    setConnStatus("Đăng nhập thành công", "connected");
+    const restored = await restoreResultsWorkspace();
+    if (restored.ok) {
+      renderFullTable();
+      if (currentSearch) {
+        renderSearchInfo(currentSearch);
+        const sp = currentSearch;
+        if (sp.lat && sp.lng && sp.radius) {
+          window.TimDiemBanMap?.setSearchArea({ lat: sp.lat, lng: sp.lng }, sp.radius, { fit: true });
+        }
+      }
+      window.TimDiemBanMap?.refreshMarkers(currentData);
+      window.TimDiemBanMap?.countInOut(currentData);
+      els.infoTotal.textContent = String(currentData.length);
+      syncExportButtons();
+      updateView();
+      setConnStatus(
+        `Đăng nhập thành công — đã khôi phục ${currentData.length} kết quả từ tài khoản`,
+        "connected"
+      );
+    } else {
+      setConnStatus("Đăng nhập thành công", "connected");
+    }
   } catch (err) {
     els.authError.textContent = err.message;
     els.authError.classList.remove("hidden");
@@ -2960,8 +3469,9 @@ loadCurrentUser().then(async () => {
   await loadWinmapSite();
   await loadJobsIntegrationStatus();
 
-  // Khôi phục dữ liệu đã lưu từ phiên trước
-  if (loadResultsFromStorage()) {
+  // Khôi phục theo tài khoản (DB) — fallback localStorage / migrate
+  const restored = await restoreResultsWorkspace();
+  if (restored.ok) {
     renderFullTable();
     if (currentSearch) {
       renderSearchInfo(currentSearch);
@@ -2974,11 +3484,18 @@ loadCurrentUser().then(async () => {
     window.TimDiemBanMap?.countInOut(currentData);
     els.infoTotal.textContent = String(currentData.length);
     syncExportButtons();
+    const sourceLabel =
+      restored.source === "database"
+        ? "tài khoản (máy chủ)"
+        : restored.source === "local-newer"
+          ? "phiên vừa tìm (đã đồng bộ lên tài khoản)"
+          : restored.source === "local-migrated"
+            ? "phiên cũ (đã đồng bộ lên tài khoản)"
+            : "phiên trước";
     setConnStatus(
-      `Đã khôi phục ${currentData.length} kết quả từ phiên trước · Nhấn "Làm mới" để xóa`,
+      `Đã khôi phục ${currentData.length} kết quả từ ${sourceLabel} · Nhấn "Làm mới" để xóa`,
       "connected"
     );
-    // Extension sẽ gửi search_status qua bridge — reconcile + trừ điểm nếu còn pending
     migrateLegacyChargedSearchIds();
     await refreshUserPoints();
     if (currentSearch?.status !== "running") {
@@ -3004,9 +3521,19 @@ setInterval(() => {
 }, 60000);
 
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible" && getAuthToken()) {
+  if (document.visibilityState === "hidden") {
+    writeResultsLocalCache();
+    scheduleResultsDatabaseSave(true);
+    return;
+  }
+  if (getAuthToken()) {
     refreshUserPoints().catch(() => {});
   }
+});
+
+window.addEventListener("pagehide", () => {
+  writeResultsLocalCache();
+  scheduleResultsDatabaseSave(true);
 });
 
 loadAvailablePackages();

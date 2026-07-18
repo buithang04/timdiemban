@@ -287,9 +287,12 @@
   let formBusy = false;
   let busyOperation = "";
   let submitting = false;
+  /** Đang chạy chuỗi nhiều từ khóa (khóa form tới khi xong hết) */
+  let multiKeywordBatch = false;
+  let multiKeywordAbort = false;
 
   function busyMessage() {
-    if (searchRunning) return "Đang tìm kiếm — vui lòng đợi hoàn tất.";
+    if (multiKeywordBatch || searchRunning) return "Đang tìm kiếm — vui lòng đợi hoàn tất.";
     if (submitting || busyOperation === "search") return "Đang chuẩn bị tìm kiếm — vui lòng đợi.";
     if (busyOperation === "gps") return "Đang lấy GPS — vui lòng đợi xong.";
     if (busyOperation === "maps") return "Đang lấy tọa độ từ Maps — vui lòng đợi.";
@@ -298,7 +301,111 @@
   }
 
   function isFormLocked() {
-    return formBusy || searchRunning || submitting;
+    return formBusy || searchRunning || submitting || multiKeywordBatch;
+  }
+
+  /** Tách "tạp hóa, phòng khám, quán ăn" → ["tạp hóa", "phòng khám", "quán ăn"] */
+  function parseSearchKeywords(raw) {
+    return String(raw || "")
+      .split(/[,，;|]+/)
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .filter((kw, i, arr) => arr.findIndex((x) => x.toLowerCase() === kw.toLowerCase()) === i)
+      .slice(0, 10);
+  }
+
+  function waitForSearchEnd(expectedSearchId, timeoutMs = 45 * 60 * 1000) {
+    return new Promise((resolve) => {
+      let done = false;
+      let timer = null;
+      const finish = (result) => {
+        if (done) return;
+        done = true;
+        if (timer) clearTimeout(timer);
+        window.removeEventListener("message", onMsg);
+        window.removeEventListener("timdiemban:search-finished", onFinished);
+        resolve(result);
+      };
+      const payloadSearchId = (payload = {}) =>
+        payload.searchParams?.searchId ||
+        payload.searchId ||
+        payload.search?.searchId ||
+        "";
+      const matchesSearch = (payload = {}) => {
+        if (!expectedSearchId) return true;
+        const sid = payloadSearchId(payload);
+        // Bắt buộc khớp searchId — tránh lượt trước kết thúc sớm làm nhảy từ khóa
+        return !!sid && sid === expectedSearchId;
+      };
+      function onMsg(event) {
+        if (event.origin !== window.location.origin) return;
+        if (event.data?.source !== "timdiemban-ext") return;
+        const t = event.data.type;
+        if (t === "complete" || t === "error" || t === "tab_closed") {
+          const payload = event.data.payload || {};
+          if (!matchesSearch(payload)) return;
+          finish({ type: t, payload });
+        }
+      }
+      function onFinished(ev) {
+        const sid = ev?.detail?.searchId;
+        // Chỉ nhận finished khi có searchId khớp (bỏ qua finished mồ côi)
+        if (!expectedSearchId || !sid || sid !== expectedSearchId) return;
+        finish({ type: "finished", payload: ev?.detail || {} });
+      }
+      timer = setTimeout(() => {
+        finish({
+          type: "timeout",
+          payload: { error: "Hết thời gian chờ kết thúc lượt tìm — dừng chuỗi từ khóa." }
+        });
+      }, timeoutMs);
+      window.addEventListener("message", onMsg);
+      window.addEventListener("timdiemban:search-finished", onFinished);
+    });
+  }
+
+  /** Chờ extension thật sự rảnh (không running, không còn Maps) trước khi START từ khóa tiếp */
+  async function waitForExtensionIdle(timeoutMs = 45000) {
+    const started = Date.now();
+    while (Date.now() - started < timeoutMs) {
+      const status = await requestSearchStatusAsync(4000);
+      const busy = !!(status?.running || status?.stalled || status?.mapsTabId);
+      if (!busy) {
+        // Đợi thêm một nhịp để closeMapsTab / resetScrapeState kịp xong
+        await new Promise((r) => setTimeout(r, 500));
+        const again = await requestSearchStatusAsync(3000);
+        if (!(again?.running || again?.stalled || again?.mapsTabId)) return true;
+      }
+      await new Promise((r) => setTimeout(r, 700));
+    }
+    return false;
+  }
+
+  async function startSearchExclusive(searchParams, { retries = 4 } = {}) {
+    let lastErr = null;
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      const idle = await waitForExtensionIdle(attempt === 0 ? 20000 : 30000);
+      if (!idle && attempt === retries) {
+        throw new Error(
+          "Tiện ích vẫn đang bận / tab Google Maps chưa đóng. Hãy đóng tab Maps thừa rồi thử lại."
+        );
+      }
+      try {
+        return await requestStartSearch(searchParams);
+      } catch (err) {
+        lastErr = err;
+        const msg = String(err?.message || "");
+        const busy =
+          /đang chạy|đang có tìm|Maps|đợi hoàn tất|Dừng quét/i.test(msg);
+        if (!busy || attempt === retries) throw err;
+        showSearchStatus(
+          `Chờ tiện ích sẵn sàng rồi tìm tiếp "${searchParams.keyword}"… (${attempt + 1}/${retries})`,
+          "info"
+        );
+        await new Promise((r) => setTimeout(r, 1000 + attempt * 500));
+      }
+    }
+    throw lastErr || new Error("Không bắt đầu được tìm kiếm");
   }
 
   function updateFormControls() {
@@ -307,11 +414,12 @@
       els.startBtn.disabled = false;
       els.startBtn.title = locked ? busyMessage() : "";
       els.startBtn.classList.toggle("is-busy", locked);
-      els.startBtn.classList.toggle("hidden", searchRunning);
+      els.startBtn.classList.toggle("hidden", searchRunning || multiKeywordBatch);
     }
     if (els.cancelSearchBtn) {
-      els.cancelSearchBtn.classList.toggle("hidden", !searchRunning);
-      els.cancelSearchBtn.disabled = !searchRunning;
+      const canCancel = searchRunning || multiKeywordBatch;
+      els.cancelSearchBtn.classList.toggle("hidden", !canCancel);
+      els.cancelSearchBtn.disabled = !canCancel;
     }
     if (els.btnFromGps) {
       els.btnFromGps.disabled = locked;
@@ -948,11 +1056,11 @@
       return;
     }
 
-    const keyword = els.keyword.value.trim();
+    const keywords = parseSearchKeywords(els.keyword.value);
     enforceRadiusInput();
     const radiusKm = radiusKmFromInput();
-    if (!keyword) {
-      showSearchStatus("Nhập từ khóa tìm kiếm.", "error");
+    if (!keywords.length) {
+      showSearchStatus("Nhập từ khóa tìm kiếm (có thể nhiều từ khóa, cách nhau bằng dấu phẩy).", "error");
       return;
     }
     if (!Number.isFinite(radiusKm) || radiusKm < MIN_RADIUS_KM || radiusKm > MAX_RADIUS_KM) {
@@ -1000,56 +1108,171 @@
       // Khóa tâm vào form — không force preview nếu đã đúng tọa độ
       setCenterFields(center.lat, center.lng, centerSource || "manual", "", { fit: false });
 
-      const searchParams = {
-        keyword,
-        radius: radiusKm,
-        lat: center.lat,
-        lng: center.lng,
-        centerSource,
-        webUrl: window.location.origin,
-        authToken: token,
-        searchId: `search_${Date.now()}`,
-        fastMode: document.getElementById("searchFastMode")?.checked || false,
-        mapsAutoFocus: isMapsAutoFocusChecked(),
-        mapsAutoReopen: isMapsAutoReopenChecked()
-      };
-
-      // Xóa bảng/marker phiên cũ ngay (trước cả khi extension trả "start")
-      window.dispatchEvent(
-        new CustomEvent("timdiemban:search-starting", { detail: searchParams })
-      );
-
+      const keywordLabel = keywords.join(", ");
       saveLastSearch({
-        keyword,
+        keyword: keywordLabel,
         radius: radiusKm,
         lat: center.lat,
         lng: center.lng,
         centerSource
       });
 
+      // Luôn khóa batch — kể cả 1 từ khóa — tránh double-submit / START chồng
+      multiKeywordBatch = true;
+      multiKeywordAbort = false;
       setSearchRunning(true);
       armSearchWatchdog();
       clearScrapeLog();
       lastKnownMergedCount = 0;
-      showSearchStatus(`Tâm: ${center.lat}, ${center.lng} — đang khởi động...`, "info");
-      updateSearchProgress(0, "0%");
+      updateFormControls();
 
-      // Vẽ vùng đúng 1 lần khi bắt đầu tìm
+      // Vẽ vùng đúng 1 lần khi bắt đầu chuỗi tìm
       window.TimDiemBanMap?.setSearchArea?.(
         { lat: center.lat, lng: center.lng },
         radiusKm,
         { fit: true }
       );
 
-      try {
-        await requestStartSearch(searchParams);
-        const autoFocusHint = searchParams.mapsAutoFocus
-          ? `Findmap sẽ đưa tab Google Maps lên trước mỗi ${getMapsAutoFocusMinutes()} phút để bạn theo dõi.`
-          : "Google Maps đang quét ở tab nền — bạn có thể tiếp tục làm việc, chỉ cần không đóng tab Maps.";
-        showSearchStatus(`Đang tìm "${keyword}" — ${autoFocusHint}`, "info");
-      } catch (err) {
-        showSearchStatus(err.message, "error");
-        setSearchRunning(false);
+      const baseParams = {
+        radius: radiusKm,
+        lat: center.lat,
+        lng: center.lng,
+        centerSource,
+        webUrl: window.location.origin,
+        authToken: token,
+        fastMode: document.getElementById("searchFastMode")?.checked || false,
+        mapsAutoFocus: isMapsAutoFocusChecked(),
+        mapsAutoReopen: isMapsAutoReopenChecked(),
+        keywords,
+        keywordTotal: keywords.length
+      };
+
+      const batchId = Date.now();
+      let stoppedEarly = false;
+
+      // Đảm bảo không còn lượt cũ / tab Maps trước khi bắt đầu chuỗi
+      showSearchStatus("Đang kiểm tra tiện ích sẵn sàng…", "info");
+      const ready0 = await waitForExtensionIdle(30000);
+      if (!ready0) {
+        throw new Error(
+          "Tiện ích hoặc tab Google Maps vẫn đang bận. Đóng tab Maps thừa rồi thử lại."
+        );
+      }
+
+      for (let i = 0; i < keywords.length; i++) {
+        if (multiKeywordAbort) {
+          stoppedEarly = true;
+          break;
+        }
+
+        const keyword = keywords[i];
+        const searchParams = {
+          ...baseParams,
+          keyword,
+          keywordIndex: i,
+          searchId: `search_${batchId}_${i}`
+        };
+
+        // Trước mỗi từ khóa (trừ đầu): chờ idle tuyệt đối — 1 tab Maps / 1 lúc
+        if (i > 0) {
+          showSearchStatus(
+            `Đã xong từ khóa trước — đóng Maps và chuẩn bị "${keyword}"…`,
+            "info"
+          );
+          const idle = await waitForExtensionIdle(60000);
+          if (!idle) {
+            showSearchStatus(
+              "Không thể bắt đầu từ khóa tiếp theo — tab Google Maps chưa đóng hết.",
+              "error"
+            );
+            stoppedEarly = true;
+            break;
+          }
+          // Đồng bộ nốt kết quả lượt trước về bảng trước khi tìm tiếp
+          try {
+            await window.TimDiemBanSearch?.requestSearchSync?.(
+              "Đồng bộ kết quả trước khi tìm từ khóa tiếp theo"
+            );
+          } catch {}
+          await new Promise((r) => setTimeout(r, 600));
+        }
+
+        if (multiKeywordAbort) {
+          stoppedEarly = true;
+          break;
+        }
+
+        window.dispatchEvent(
+          new CustomEvent("timdiemban:search-starting", { detail: searchParams })
+        );
+
+        const stepLabel =
+          keywords.length > 1
+            ? `Từ khóa ${i + 1}/${keywords.length}: "${keyword}"`
+            : `Đang tìm "${keyword}"`;
+        showSearchStatus(`${stepLabel} — tâm ${center.lat}, ${center.lng}`, "info");
+        updateSearchProgress(Math.round((i / keywords.length) * 100), stepLabel);
+        setSearchRunning(true);
+        armSearchWatchdog();
+
+        try {
+          // Gắn listener TRƯỚC START — và chỉ nhận đúng searchId này
+          const endPromise = waitForSearchEnd(searchParams.searchId);
+          await startSearchExclusive(searchParams);
+          const autoFocusHint = searchParams.mapsAutoFocus
+            ? `Findmap sẽ đưa tab Google Maps lên trước mỗi ${getMapsAutoFocusMinutes()} phút.`
+            : "Google Maps đang quét ở tab nền — chỉ 1 tab Maps cho từ khóa này.";
+          showSearchStatus(`${stepLabel} — ${autoFocusHint}`, "info");
+
+          const end = await endPromise;
+          clearSearchWatchdog();
+          setSearchRunning(false);
+
+          if (multiKeywordAbort || end.type === "error" || end.type === "tab_closed" || end.type === "timeout") {
+            stoppedEarly = true;
+            if (end.type === "error" || end.type === "tab_closed" || end.type === "timeout") {
+              showSearchStatus(
+                end.payload?.error || end.payload?.partialReason || `Dừng tại từ khóa "${keyword}"`,
+                "error"
+              );
+            }
+            // Hủy / lỗi: chờ idle để không để Maps treo
+            await waitForExtensionIdle(20000).catch(() => false);
+            break;
+          }
+
+          if (end.type === "complete" && end.payload?.partial) {
+            const reason = String(end.payload.partialReason || "");
+            if (/người dùng|dừng|hủy|cancel|abandon/i.test(reason) || multiKeywordAbort) {
+              stoppedEarly = true;
+              showSearchStatus(reason || "Đã dừng — kết quả đã lưu.", "info");
+              await waitForExtensionIdle(20000).catch(() => false);
+              break;
+            }
+          }
+
+          // Sau mỗi từ khóa: sync + chờ idle trước vòng sau
+          try {
+            await window.TimDiemBanSearch?.requestSearchSync?.(
+              `Đồng bộ kết quả "${keyword}"`
+            );
+          } catch {}
+        } catch (err) {
+          showSearchStatus(err.message, "error");
+          stoppedEarly = true;
+          await waitForExtensionIdle(20000).catch(() => false);
+          break;
+        }
+      }
+
+      if (!stoppedEarly) {
+        updateSearchProgress(100, "Hoàn tất");
+        showSearchStatus(
+          keywords.length > 1
+            ? `Hoàn tất ${keywords.length} từ khóa — xem các tab kết quả bên dưới.`
+            : "Hoàn tất — xem bảng kết quả bên dưới.",
+          "success"
+        );
       }
     } catch (err) {
       if (isGeoDeniedError(err)) {
@@ -1061,8 +1284,12 @@
         );
       }
     } finally {
+      multiKeywordBatch = false;
+      multiKeywordAbort = false;
       submitting = false;
       setFormBusy(false);
+      setSearchRunning(false);
+      updateFormControls();
     }
   }
 
@@ -1132,6 +1359,8 @@
     if (event.data.type === "complete" || event.data.type === "tab_closed") {
       clearSearchWatchdog();
       setSearchRunning(false);
+      // Chuỗi nhiều từ khóa: handleSubmit tự cập nhật trạng thái từng bước
+      if (multiKeywordBatch) return;
       if (event.data.type === "complete") {
         const partial = event.data.payload?.partial;
         updateSearchProgress(100, partial ? "Dừng sớm" : "Hoàn tất");
@@ -1340,12 +1569,15 @@
   els.form?.addEventListener("submit", handleSubmit);
 
   els.cancelSearchBtn?.addEventListener("click", async () => {
-    if (!searchRunning) return;
+    if (!searchRunning && !multiKeywordBatch) return;
+    multiKeywordAbort = true;
     els.cancelSearchBtn.disabled = true;
     showSearchStatus("Đang dừng quét...", "info");
     try {
-      await requestCancelSearch("Người dùng dừng tìm kiếm");
-      showSearchStatus("Đã dừng — đang tổng hợp kết quả...", "info");
+      if (searchRunning) {
+        await requestCancelSearch("Người dùng dừng tìm kiếm");
+        showSearchStatus("Đã dừng — đang tổng hợp kết quả...", "info");
+      }
     } catch (err) {
       showSearchStatus(err.message, "error");
       els.cancelSearchBtn.disabled = false;

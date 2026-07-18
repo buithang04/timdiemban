@@ -1497,31 +1497,33 @@ async function ensureReadyForNewSearch() {
     throw new Error("Đang có tìm kiếm chạy. Bấm 'Dừng quét điểm bán' hoặc đợi hoàn tất.");
   }
 
+  // Đóng tab Maps còn sót (tránh mở nhiều tab khi tìm tuần tự nhiều từ khóa)
+  if (scrapeState.mapsTabId) {
+    await closeMapsTabSafely();
+  }
+
   const cp = await getScrapeCheckpoint();
+  if (cp?.mapsTabId) {
+    try {
+      await chrome.tabs.get(cp.mapsTabId);
+      await chrome.tabs.remove(cp.mapsTabId).catch(() => {});
+    } catch {}
+  }
+
   if (!cp?.running) {
     if (cp && !scrapeState.searchParams) {
       await clearScrapeCheckpoint();
     }
+    try {
+      await chrome.storage.local.remove(["activeSearch", "pendingComplete", PENDING_SYNC_KEY]);
+    } catch {}
     return;
   }
 
-  let mapsAlive = false;
-  if (cp.mapsTabId) {
-    try {
-      await chrome.tabs.get(cp.mapsTabId);
-      mapsAlive = true;
-    } catch {}
-  }
-
-  if (mapsAlive) {
-    throw new Error(
-      "Vẫn còn tìm kiếm trên tab Google Maps — bấm 'Dừng quét điểm bán' hoặc đóng tab Maps trước khi tìm mới."
-    );
-  }
-
+  // Checkpoint còn "running" nhưng Maps đã chết → dọn sạch, cho phép tìm tiếp
   await clearScrapeCheckpoint();
   try {
-    await chrome.storage.local.remove(["activeSearch", "pendingComplete"]);
+    await chrome.storage.local.remove(["activeSearch", "pendingComplete", PENDING_SYNC_KEY]);
   } catch {}
 }
 
@@ -1560,6 +1562,8 @@ async function getSearchStatus() {
     gridIndex,
     totalCells,
     mergedCount,
+    searchId: scrapeState.searchParams?.searchId || cp?.searchParams?.searchId || null,
+    mapsTabId: scrapeState.mapsTabId || cp?.mapsTabId || null,
     lastHeartbeat: lastBeat,
     lastProgressAt: lastScrapeProgressAt || cp?.lastProgressAt || lastBeat,
     canCancel: running || checkpointRunning || mergedCount > 0,
@@ -2506,8 +2510,10 @@ async function handleScrapeComplete(data) {
 
   scrapeState.phase = partial ? "partial" : "completed";
   scrapeState.running = false;
-  // Quét đã xong — gỡ debugger ngay; phần sync còn lại chỉ làm việc với tab Findmap.
+  // Đóng Maps ngay — tránh để tab treo / mở thêm tab khi tìm từ khóa tiếp theo.
+  // Phần sync còn lại chỉ làm việc với tab Findmap.
   disableMapsBoost().catch(() => {});
+  await closeMapsTabSafely();
 
   const completePayload = {
     results: finalResults,
@@ -2858,6 +2864,8 @@ async function handleStartSearch(params) {
   }
 
   await ensureReadyForNewSearch();
+  // Chắc chắn không còn tab Maps cũ trước khi mở tab mới
+  await closeMapsTabSafely();
 
   // Xóa snapshot/checkpoint phiên cũ — tránh sync lại điểm Hà Nội vào lượt Bắc Ninh
   try {

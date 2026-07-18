@@ -223,6 +223,17 @@ async function createTables() {
         CONSTRAINT fk_integration_findmap_user FOREIGN KEY (findmap_user_id) REFERENCES users(id) ON DELETE CASCADE
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     `);
+
+    // Workspace kết quả tìm kiếm theo từng tài khoản (1 user = 1 bản ghi mới nhất)
+    await conn.execute(`
+      CREATE TABLE IF NOT EXISTS user_search_results (
+        user_id       VARCHAR(64)  NOT NULL PRIMARY KEY,
+        result_count  INT          NOT NULL DEFAULT 0,
+        payload       MEDIUMTEXT   NOT NULL,
+        updated_at    VARCHAR(64)  NOT NULL,
+        CONSTRAINT fk_usr_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
   } finally {
     conn.release();
   }

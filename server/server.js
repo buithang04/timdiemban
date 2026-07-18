@@ -30,6 +30,11 @@ const {
 const dbModule = require("./db");
 const authModule = require("./auth-store");
 const {
+  getUserSearchResults,
+  saveUserSearchResults,
+  deleteUserSearchResults
+} = require("./search-results-store");
+const {
   JobsIntegrationError,
   createJobsIntegrationService
 } = require("./jobs-integration");
@@ -284,7 +289,7 @@ app.use(cors({
   },
   credentials: true
 }));
-app.use(express.json({ limit: "5mb" }));
+app.use(express.json({ limit: "10mb" }));
 app.use(requestSanitizer);
 app.use(csrfOriginGuard);
 app.use("/api/", apiRateLimit);
@@ -951,6 +956,34 @@ app.post("/api/search/charge", requireAuth, async (req, res) => {
   try {
     const phoneCount = Math.max(0, Math.floor(Number(req.body?.phoneCount) || 0));
     const result = await chargePoints(req.user.id, phoneCount);
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// ——— Lưu / khôi phục kết quả tìm kiếm theo tài khoản ———
+app.get("/api/search/results", requireAuth, async (req, res) => {
+  try {
+    const result = await getUserSearchResults(req.user.id);
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.put("/api/search/results", requireAuth, async (req, res) => {
+  try {
+    const result = await saveUserSearchResults(req.user.id, req.body || {});
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.delete("/api/search/results", requireAuth, async (req, res) => {
+  try {
+    const result = await deleteUserSearchResults(req.user.id);
     res.json(result);
   } catch (err) {
     res.status(400).json({ error: err.message });

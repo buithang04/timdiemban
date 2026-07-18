@@ -136,8 +136,9 @@
               <label for="searchKeyword">Tên hoặc loại hình</label>
               <div class="wm-input-icon-wrap">
                 <svg class="wm-field-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-                <input type="text" id="searchKeyword" class="wm-control" placeholder="VD: tạp hóa, quán cơm…" required />
+                <input type="text" id="searchKeyword" class="wm-control" placeholder="VD: tạp hóa, phòng khám, quán ăn" required />
               </div>
+              <p class="wm-field-hint">Nhiều từ khóa: cách nhau bằng dấu phẩy — hệ thống tìm lần lượt từng từ khóa</p>
             </div>
 
             <div class="wm-field">
@@ -270,6 +271,8 @@
             </button>
           </div>
         </div>
+
+        <div id="keywordTabs" class="wm-keyword-tabs hidden" role="tablist" aria-label="Lọc theo từ khóa tìm kiếm"></div>
 
         <div id="jobsSyncSummary" class="jobs-sync-summary hidden" role="status">
           <div class="jobs-sync-summary-head">
