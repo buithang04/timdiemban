@@ -158,14 +158,52 @@ function pingMapsTabWake(tabId) {
   chrome.tabs.sendMessage(tabId, { action: "KEEPALIVE_TICK" }).catch(() => {});
 }
 
-/** Mở tab Google Maps — mặc định nền (không cướp cửa sổ). Chỉ focus nếu bật mapsAutoFocus. */
-async function openMapsScrapeTab(url, { focus } = {}) {
-  const shouldFocus = focus === true || (focus !== false && isMapsAutoFocusEnabled());
-  const tab = await chrome.tabs.create({ url, active: shouldFocus });
+function isValidWindowId(windowId) {
+  return Number.isInteger(windowId) && windowId >= 0;
+}
+
+async function getTabWindowId(tabId) {
+  if (!Number.isInteger(tabId)) return null;
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    return isValidWindowId(tab?.windowId) ? tab.windowId : null;
+  } catch {
+    return null;
+  }
+}
+
+async function activateTabAndWindow(tabId) {
+  const tab = await chrome.tabs.update(tabId, { active: true, autoDiscardable: false });
+  if (isValidWindowId(tab?.windowId)) {
+    await chrome.windows.update(tab.windowId, { focused: true }).catch(() => {});
+  }
+  return tab;
+}
+
+async function createFocusedMapsTab(url, preferredWindowId) {
+  const createOptions = { url, active: true };
+  if (isValidWindowId(preferredWindowId)) createOptions.windowId = preferredWindowId;
+
+  let tab;
+  try {
+    tab = await chrome.tabs.create(createOptions);
+  } catch (err) {
+    // Trang Findmap có thể vừa chuyển/đóng cửa sổ trong lúc kiểm tra tài khoản.
+    if (!isValidWindowId(preferredWindowId)) throw err;
+    tab = await chrome.tabs.create({ url, active: true });
+  }
+
+  return activateTabAndWindow(tab.id);
+}
+
+/**
+ * Mỗi phiên sở hữu một tab Maps riêng và luôn đưa tab đó lên trước khi bắt đầu.
+ * mapsAutoFocus chỉ điều khiển việc kéo người dùng quay lại định kỳ sau đó.
+ */
+async function openMapsScrapeTab(url) {
+  const preferredWindowId = await getTabWindowId(scrapeState.webTabId);
+  const tab = await createFocusedMapsTab(url, preferredWindowId);
   scrapeState.mapsWindowId = tab.windowId;
-  await chrome.tabs
-    .update(tab.id, { autoDiscardable: false, active: shouldFocus })
-    .catch(() => {});
   return tab;
 }
 
@@ -191,7 +229,7 @@ async function scrapeKeepAliveTick() {
           scrapeState._bgWarnSent = true;
           notifyProgress(
             calcProgressPercent(scrapeState.gridIndex, scrapeState.totalCells, 0.2),
-            "Tab Maps đang ẩn — quét chậm/treo. Giữ tab Google Maps mở để quét ổn định."
+            "Tab Google Maps đang ở nền. Nếu tiến độ không thay đổi, hãy đưa tab đó lên trước."
           );
         }
       } else {
@@ -218,7 +256,7 @@ async function scrapeKeepAliveTick() {
   if (mergedCount > 0 && now - lastKeepaliveSyncAt >= keepaliveMs) {
     lastKeepaliveSyncAt = now;
     if (behind) {
-      ensureWebSyncedToResults("Đồng bộ nền (bù lệch)...", true).catch(() => {});
+      ensureWebSyncedToResults("Đang bổ sung kết quả còn thiếu về Findmap…", true).catch(() => {});
     }
     reconcileWebCountWithExtension("keepalive").catch(() => {});
   }
@@ -235,21 +273,16 @@ async function focusMapsTabForSearch() {
   try {
     const tab = await chrome.tabs.get(scrapeState.mapsTabId);
     if (!tab) return;
-    if (tab.active) {
-      mapsTabInactiveSince = 0;
-      scrapeState._bgWarnSent = false;
-      return;
-    }
-    await chrome.tabs.update(scrapeState.mapsTabId, { active: true, autoDiscardable: false });
-    if (tab.windowId != null) {
-      await chrome.windows.update(tab.windowId, { focused: true });
-    }
+    const wasActive = tab.active;
+    await activateTabAndWindow(scrapeState.mapsTabId);
     mapsTabInactiveSince = 0;
     scrapeState._bgWarnSent = false;
-    notifyProgress(
-      calcProgressPercent(scrapeState.gridIndex, scrapeState.totalCells, 0.2),
-      "Đã tự chuyển sang tab Google Maps — giữ tab này mở để quét ổn định."
-    );
+    if (!wasActive) {
+      notifyProgress(
+        calcProgressPercent(scrapeState.gridIndex, scrapeState.totalCells, 0.2),
+        "Đã tự chuyển sang tab Google Maps — giữ tab này mở để quét ổn định."
+      );
+    }
   } catch (err) {
     console.warn("focusMapsTabForSearch:", err.message);
   }
@@ -366,7 +399,7 @@ async function reconcileWebCountWithExtension(reason = "reconcile") {
       }
 
       const pct = calcProgressPercent(scrapeState.gridIndex, scrapeState.totalCells, 0.35);
-      await pushSyncSnapshotToWeb(`Đồng bộ ${extCount} quán → web (${webCount})`, pct);
+      await pushSyncSnapshotToWeb(`Đang đồng bộ ${extCount} điểm bán về Findmap (${webCount} đã nhận)`, pct);
 
       stats = await readWebTabStats(tab.id);
       webCount = stats?.count ?? 0;
@@ -397,13 +430,13 @@ async function reconcileWebCountWithExtension(reason = "reconcile") {
 
 function buildProgressText(cell, cellIndex, totalCells, extra = {}) {
   const step = cellIndex + 1;
-  const label = cell?.cellLabel || cell?.cellId || `Vùng ${step}`;
-  const parts = [`Bước ${step}/${totalCells} — ${label}`];
+  const label = cell?.cellLabel || cell?.cellId || `Khu vực ${step}`;
+  const parts = [`Khu vực ${step}/${totalCells} · ${label}`];
   if (extra.action) parts.push(extra.action);
-  if (extra.newCount != null) parts.push(`+${extra.newCount} mới`);
-  if (extra.skipped != null) parts.push(`${extra.skipped} bỏ qua trùng`);
-  if (extra.total != null) parts.push(`Tổng ${extra.total} quán`);
-  return parts.join(" | ");
+  if (extra.newCount != null) parts.push(`${extra.newCount} điểm mới`);
+  if (extra.skipped != null) parts.push(`Bỏ qua ${extra.skipped} kết quả trùng`);
+  if (extra.total != null) parts.push(`Tổng ${extra.total} điểm bán`);
+  return parts.join(" · ");
 }
 
 function calcProgressPercent(cellIndex, totalCells, inCellRatio = 0) {
@@ -420,19 +453,21 @@ async function apiFetch(webUrl, path, options = {}) {
   const base = String(webUrl || "").replace(/\/$/, "");
   const res = await fetch(`${base}${path}`, options);
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || `API lỗi ${res.status}`);
+  if (!res.ok) {
+    throw new Error(data.error || `Không thể kết nối máy chủ Findmap (mã ${res.status}). Vui lòng thử lại.`);
+  }
   return data;
 }
 
 async function checkAuthAndPoints(webUrl, authToken) {
   if (!authToken) {
-    throw new Error(`Vui lòng đăng nhập tại trang kết quả (${getAppOriginLabel()}) trước khi tìm.`);
+    throw new Error(`Vui lòng đăng nhập Findmap tại ${getAppOriginLabel()} trước khi tìm kiếm.`);
   }
   const { user } = await apiFetch(webUrl, "/api/auth/me", {
     headers: { Authorization: `Bearer ${authToken}` }
   });
   if ((user.points || 0) <= 0) {
-    throw new Error("Hết điểm. Mỗi SĐT dùng 1 điểm — liên hệ admin để nạp gói.");
+    throw new Error("Tài khoản đã hết điểm. Mỗi kết quả có số điện thoại sử dụng 1 điểm. Vui lòng nạp thêm điểm để tiếp tục.");
   }
   return user;
 }
@@ -566,7 +601,7 @@ async function reloadWebTabAndWait(tabId) {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       chrome.tabs.onUpdated.removeListener(onUpdated);
-      reject(new Error("Trang kết quả reload quá lâu. Vui lòng thử lại."));
+      reject(new Error("Trang kết quả mất quá nhiều thời gian để tải lại. Vui lòng thử lại."));
     }, 15000);
 
     function onUpdated(updatedTabId, info) {
@@ -674,7 +709,9 @@ function sendItemToWeb(webUrl, result, searchParams) {
         itemSyncBackoffUntil = now + 800;
         itemsSinceLastForceSync = 0;
         await pushSyncSnapshotToWeb(
-          ok ? `Đồng bộ định kỳ — ${mergedCount} quán` : "Bù sync sau item lỗi...",
+          ok
+            ? `Đang cập nhật ${mergedCount} điểm bán về Findmap`
+            : "Đang gửi lại kết quả chưa được Findmap xác nhận…",
           0
         );
       }
@@ -858,7 +895,7 @@ async function pushSyncSnapshotToWeb(text, percent) {
       const payload = {
         results,
         searchParams: currentSearch,
-        text: text || `Đồng bộ — tổng ${results.length} quán`,
+        text: text || `Đang đồng bộ ${results.length} điểm bán về Findmap`,
         percent: percent ?? 0,
         mergedCount: results.length
       };
@@ -932,8 +969,8 @@ async function ensureWebSyncedToResults(reason, force = false) {
   const text =
     reason ||
     (stale
-      ? `Bù sync — ${count} quán (trước ${lastSyncedMergedCount})`
-      : `Đồng bộ — ${count} quán`);
+      ? `Đang bổ sung ${count - lastSyncedMergedCount} điểm còn thiếu về Findmap`
+      : `Đang đồng bộ ${count} điểm bán về Findmap`);
   return pushSyncSnapshotToWeb(text, pct);
 }
 
@@ -1106,7 +1143,7 @@ async function maybeRecoverStalledScrape() {
 
     notifyProgress(
       calcProgressPercent(scrapeState.gridIndex, scrapeState.totalCells, 0.3),
-      `Không thấy tiến trình ${Math.round(idleMs / 1000)}s — đang đánh thức tab Maps...`
+      `Tiến độ chưa thay đổi trong ${Math.round(idleMs / 1000)} giây. Findmap đang kết nối lại với Google Maps…`
     );
 
     await chrome.tabs.update(tabId, { autoDiscardable: false }).catch(() => {});
@@ -1121,7 +1158,7 @@ async function maybeRecoverStalledScrape() {
       if (!scrapeState._retriedCells) scrapeState._retriedCells = new Set();
       if (!scrapeState._retriedCells.has(idx) && !scrapeState.completedCells.has(idx)) {
         scrapeState._retriedCells.add(idx);
-        notifyPopup(`Vùng ${idx + 1} treo — thử quét lại lần 2...`);
+        notifyPopup(`Khu vực ${idx + 1} chưa phản hồi. Findmap đang thử lại…`);
         const staleLease = getActiveCellLease();
         if (staleLease) {
           await chrome.tabs
@@ -1133,14 +1170,18 @@ async function maybeRecoverStalledScrape() {
       }
       if (!scrapeState.completedCells.has(idx)) {
         scrapeState.completedCells.add(idx);
-        notifyPopup(`Vùng ${idx + 1} treo quá lâu — bỏ qua và chuyển vùng tiếp theo.`);
+        notifyPopup(`Khu vực ${idx + 1} không phản hồi sau khi thử lại. Findmap sẽ chuyển sang khu vực tiếp theo.`);
       }
       const next = idx + 1;
       if (next < scrapeState.totalCells) {
         scrapeState.gridIndex = next;
         await runGridCell(next);
       } else if (scrapeState.mergedPlaces.size > 0) {
-        await handleScrapeComplete({ searchParams: scrapeState.searchParams, partial: true, partialReason: "Một số vùng bị treo — kết thúc sớm" });
+        await handleScrapeComplete({
+          searchParams: scrapeState.searchParams,
+          partial: true,
+          partialReason: "Một số khu vực không phản hồi nên lượt tìm kiếm kết thúc sớm"
+        });
       }
     }
   } finally {
@@ -1181,7 +1222,7 @@ async function tryResumeFromCheckpoint() {
   }
 
   scrapeState.gridIndex = next;
-  notifyPopup(`Tiếp tục tìm kiếm từ vùng ${next + 1}/${cp.totalCells}...`);
+  notifyPopup(`Tiếp tục tìm kiếm từ khu vực ${next + 1}/${cp.totalCells}…`);
   runGridCell(next).catch(async (err) => {
     if (scrapeState.running || scrapeState.mergedPlaces.size > 0) {
       await abortSearch("RECOVER_FAILED", err?.message || String(err));
@@ -1347,7 +1388,7 @@ async function pushSearchSyncToWeb(reason) {
   if (!scrapeState.searchParams?.webUrl) return false;
 
   return ensureWebSyncedToResults(
-    reason || `Đồng bộ — ${scrapeState.mergedPlaces.size} quán`,
+    reason || `Đang đồng bộ ${scrapeState.mergedPlaces.size} điểm bán về Findmap`,
     true
   );
 }
@@ -1473,7 +1514,7 @@ async function reopenMapsTabForSearch() {
   lastScrapeProgressAt = Date.now();
   notifyProgress(
     calcProgressPercent(idx, scrapeState.totalCells, 0.2),
-    `Đã mở lại tab Maps — tiếp tục vùng ${idx + 1}/${scrapeState.totalCells}`
+    `Đã mở lại Google Maps · Tiếp tục khu vực ${idx + 1}/${scrapeState.totalCells}`
   );
 
   const resumeAt = scrapeState.completedCells.has(idx) ? idx + 1 : idx;
@@ -1521,7 +1562,7 @@ async function handleSearchMapsTabLost() {
       }
       notifyProgress(
         calcProgressPercent(scrapeState.gridIndex, scrapeState.totalCells, 0.1),
-        `Tab Maps đã đóng — đang mở lại (lần ${count}/${maxReopen})...`
+        `Tab Google Maps đã bị đóng. Đang mở lại · Lần ${count}/${maxReopen}…`
       );
       const ok = await reopenMapsTabForSearch();
       if (!ok) {
@@ -1586,13 +1627,13 @@ async function abortRescan(message, code = "TAB_MAPS_CLOSED") {
 }
 
 async function openRescanMapsTab() {
-  const tab = await chrome.tabs.create({
-    url: "https://www.google.com/maps/",
-    active: true
-  });
+  const webTab = await findWebTab(rescanState.webUrl).catch(() => null);
+  const tab = await createFocusedMapsTab(
+    "https://www.google.com/maps/",
+    isValidWindowId(webTab?.windowId) ? webTab.windowId : null
+  );
   rescanState.mapsTabId = tab.id;
   rescanState.mapsWindowId = tab.windowId;
-  await chrome.tabs.update(tab.id, { autoDiscardable: false }).catch(() => {});
   await waitTabComplete(tab.id);
   await sleep(800);
   return ensureMapsContentReady(tab.id);
@@ -1625,7 +1666,7 @@ async function handleRescanMapsTabLost() {
           ? Math.round((rescanState.done / rescanState.total) * 100)
           : 0,
         name: "",
-        info: `Tab Maps đã đóng — đang mở lại (lần ${count}/${maxReopen})...`
+        info: `Tab Google Maps đã bị đóng. Đang mở lại · Lần ${count}/${maxReopen}…`
       }).catch(() => {});
       const ok = await openRescanMapsTab();
       if (!ok) {
@@ -1643,7 +1684,7 @@ async function handleRescanMapsTabLost() {
           ? Math.round((rescanState.done / rescanState.total) * 100)
           : 0,
         name: "",
-        info: `Đã mở lại tab Maps — tiếp tục quét lại`
+        info: "Đã mở lại Google Maps. Findmap đang tiếp tục bổ sung thông tin."
       }).catch(() => {});
     } else {
       await abortRescan(
@@ -1755,14 +1796,14 @@ async function handleMapsTabReloaded() {
 
     notifyProgress(
       calcProgressPercent(scrapeState.gridIndex, scrapeState.totalCells, 0.2),
-      `Tab Maps bị reload (lần ${reloadCount}) — đang xử lý...`
+      `Tab Google Maps vừa được tải lại · Lần ${reloadCount}. Findmap đang khôi phục tiến trình…`
     );
 
     // Tiến trình đã treo + đã có kết quả → coi như dừng, trừ điểm ngay
     if (hasResults && idleMs >= 60000) {
       await abortSearch(
         "MAPS_RELOAD_IDLE",
-        "Tab Google Maps bị reload khi tiến trình đang treo — kết thúc và lưu kết quả đã tìm.",
+        "Tab Google Maps được tải lại khi tiến trình không phản hồi. Findmap sẽ kết thúc và giữ kết quả đã có.",
         { chargePartial: true }
       );
       return;
@@ -1771,7 +1812,7 @@ async function handleMapsTabReloaded() {
     if (reloadCount >= 3 && hasResults) {
       await abortSearch(
         "MAPS_RELOAD_STOP",
-        "Tab Google Maps bị reload nhiều lần — kết thúc và lưu kết quả đã tìm.",
+        "Tab Google Maps đã được tải lại nhiều lần. Findmap sẽ kết thúc và giữ kết quả đã có.",
         { chargePartial: true }
       );
       return;
@@ -1782,7 +1823,7 @@ async function handleMapsTabReloaded() {
     if (!ready) {
       await abortSearch(
         "MAPS_RELOAD_FAILED",
-        "Tab Google Maps bị reload — không kết nối lại được. Kết thúc và lưu kết quả đã tìm.",
+        "Không kết nối lại được sau khi tab Google Maps tải lại. Findmap sẽ kết thúc và giữ kết quả đã có.",
         { chargePartial: true }
       );
       return;
@@ -1790,7 +1831,7 @@ async function handleMapsTabReloaded() {
 
     lastScrapeProgressAt = Date.now();
     notifyPopup(
-      `Tab Maps đã reload — tiếp tục vùng ${scrapeState.gridIndex + 1}/${scrapeState.totalCells}`
+      `Đã kết nối lại Google Maps · Tiếp tục khu vực ${scrapeState.gridIndex + 1}/${scrapeState.totalCells}`
     );
 
     const idx = scrapeState.gridIndex;
@@ -1800,7 +1841,7 @@ async function handleMapsTabReloaded() {
         await handleScrapeComplete({
           searchParams: scrapeState.searchParams,
           partial: true,
-          partialReason: "Tab Maps bị reload sau khi quét xong các vùng"
+          partialReason: "Tab Google Maps được tải lại sau khi các khu vực đã hoàn tất"
         });
       }
       return;
@@ -1823,7 +1864,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   scheduleMapsReloadRecovery();
 });
 
-const REQUIRED_CONTENT_VERSION = 58;
+const REQUIRED_CONTENT_VERSION = 59;
 
 async function ensureMapsContentReady(tabId) {
   for (let attempt = 0; attempt < 8; attempt++) {
@@ -1870,10 +1911,10 @@ async function ensureMapsContentReady(tabId) {
 
 async function sendMapsMessage(action, data) {
   const tabId = scrapeState.mapsTabId;
-  if (!tabId) throw new Error("Không có tab Google Maps");
+  if (!tabId) throw new Error("Không tìm thấy tab Google Maps đang dùng để quét.");
 
   const ready = await ensureMapsContentReady(tabId);
-  if (!ready) throw new Error("Không kết nối được script trên Google Maps. Reload extension rồi thử lại.");
+  if (!ready) throw new Error("Không kết nối được với Google Maps. Hãy tải lại tab Google Maps rồi thử lại.");
 
   try {
     return await chrome.tabs.sendMessage(tabId, { action, data });
@@ -1889,7 +1930,10 @@ async function sendMapsMessageWithTimeout(action, data, timeoutMs = 75000) {
     return await Promise.race([
       sendMapsMessage(action, data),
       new Promise((_, reject) => {
-        timer = setTimeout(() => reject(new Error(`Timeout ${Math.round(timeoutMs / 1000)}s`)), timeoutMs);
+        timer = setTimeout(
+          () => reject(new Error(`Google Maps chưa phản hồi sau ${Math.round(timeoutMs / 1000)} giây.`)),
+          timeoutMs
+        );
       })
     ]);
   } finally {
@@ -1925,14 +1969,14 @@ async function runGridCell(cellIndex) {
     notifyProgress(
       3,
       buildProgressText(cell, cellIndex, scrapeState.totalCells, {
-        action: "Mở Google Maps..."
+        action: "Đang mở Google Maps…"
       })
     );
     let tab;
     try {
       tab = await openMapsScrapeTab(url);
     } catch (err) {
-      throw new Error(`Không mở được tab Google Maps: ${err.message}`);
+      throw new Error(`Không mở được Google Maps. ${err.message}`);
     }
     scrapeState.mapsTabId = tab.id;
     markMapsControlledActivity(120000);
@@ -1941,22 +1985,22 @@ async function runGridCell(cellIndex) {
     await sleep(1200);
     const ready = await ensureMapsContentReady(scrapeState.mapsTabId);
     if (!ready) {
-      throw new Error("Không inject được script lên Google Maps — reload extension rồi thử lại.");
+      throw new Error("Không kết nối được với Google Maps. Hãy tải lại tab Google Maps rồi thử lại.");
     }
     notifyProgress(
       5,
       buildProgressText(cell, cellIndex, scrapeState.totalCells, {
-        action: "Đang tải danh sách quán..."
+        action: "Đang tải danh sách điểm bán…"
       })
     );
   } else {
     notifyProgress(
       calcProgressPercent(cellIndex, scrapeState.totalCells),
       buildProgressText(cell, cellIndex, scrapeState.totalCells, {
-        action: "Chuyển vùng tìm..."
+        action: "Đang chuyển sang khu vực tiếp theo…"
       })
     );
-    await navigateMapsTab({ url, active: false });
+    await navigateMapsTab({ url });
     await sleep(1100);
   }
 
@@ -1983,10 +2027,10 @@ async function runGridCell(cellIndex) {
       600000
     );
   } catch (err) {
-    notifyPopup(`Lỗi vùng ${cellIndex + 1}: ${err.message}`);
+    notifyPopup(`Khu vực ${cellIndex + 1} gặp sự cố: ${err.message}`);
     notifyProgress(
       calcProgressPercent(cellIndex, scrapeState.totalCells),
-      `Lỗi ô ${cellIndex + 1}: ${err.message}`
+      `Khu vực ${cellIndex + 1} gặp sự cố: ${err.message}`
     );
     result = { success: false, places: [], skippedCount: 0, clickAttempts: 0, ...lease };
     await chrome.tabs
@@ -1999,7 +2043,7 @@ async function runGridCell(cellIndex) {
   if (!scrapeState.running || cellGen !== scrapeState.cellGeneration) return;
 
   if (!RunLease.same(lease, result)) {
-    notifyPopup(`Bỏ kết quả cũ của vùng ${cellIndex + 1}.`);
+    notifyPopup(`Đã bỏ qua dữ liệu cũ của khu vực ${cellIndex + 1}.`);
     return;
   }
 
@@ -2036,7 +2080,7 @@ async function enrichPlaceByUrl(place, params, progressText, pct, profile) {
 
   beginMapsCellWork();
   try {
-    await navigateMapsTab({ url: href, active: false });
+    await navigateMapsTab({ url: href });
     await sleep(650);
 
     const result = await sendMapsMessageWithTimeout(
@@ -2067,7 +2111,7 @@ async function enrichPlacesInCell(cellPlaces, cellIndex, params, processed, tota
 
   beginMapsCellWork();
   try {
-    await navigateMapsTab({ url: searchUrl, active: false });
+    await navigateMapsTab({ url: searchUrl });
     await sleep(500);
 
     let done = processed;
@@ -2162,7 +2206,7 @@ function pushLiveItemsToWeb(items, meta = {}) {
     newCount: newUnique,
     skipped: skippedCount,
     total,
-    action: `Xong vùng (+${newUnique} mới / ${places.length} quán)`
+    action: `Hoàn tất khu vực với ${places.length} điểm bán`
   });
 
   scheduleSyncSnapshot(progressText, pct, true);
@@ -2182,7 +2226,7 @@ function pushLiveItemsToWeb(items, meta = {}) {
   if (allPlaces.length === 0) {
     chrome.runtime.sendMessage({
       action: "SCRAPE_ERROR",
-      error: "Không tìm thấy điểm bán nào"
+      error: "Không tìm thấy điểm bán phù hợp trong khu vực đã chọn."
     });
     scrapeState.running = false;
     await closeMapsTabSafely();
@@ -2190,7 +2234,7 @@ function pushLiveItemsToWeb(items, meta = {}) {
     return;
   }
 
-  notifyProgress(95, `Đang tổng hợp ${allPlaces.length} địa điểm...`);
+  notifyProgress(95, `Đang hoàn tất ${allPlaces.length} điểm bán…`);
 
   try {
     await sendMapsMessage("SCRAPE_FINISH", {});
@@ -2213,15 +2257,14 @@ async function runEnrichPhase() {
   let processed = 0;
 
   if (!skipEnrich) {
-    const fastCount = toEnrich.filter((p) => getEnrichProfile(p)?.fast).length;
     notifyProgress(
       55,
-      `Đã thu ${list.length} quán — bổ sung ${toEnrich.length} quán (${fastCount} nhanh qua list)...`
+      `Đã thu thập ${list.length} điểm bán. Đang bổ sung thông tin cho ${toEnrich.length} điểm…`
     );
 
     try {
       await sendMapsMessage("SCRAPE_SHIELD_UPDATE", {
-        text: `Giai đoạn 2/2 — Bổ sung ${toEnrich.length} quán (click list, không reload từng URL)...`,
+        text: `Đang bổ sung thông tin cho ${toEnrich.length} điểm bán…`,
         percent: 55
       });
     } catch {}
@@ -2233,7 +2276,7 @@ async function runEnrichPhase() {
 
       notifyProgress(
         55 + Math.round((processed / toEnrich.length) * 38),
-        `Giai đoạn 2/2 — Vùng ${cellIndex + 1}: ${cellPlaces.length} quán...`
+        `Khu vực ${cellIndex + 1} · Đang bổ sung thông tin cho ${cellPlaces.length} điểm bán…`
       );
 
       try {
@@ -2269,7 +2312,7 @@ async function runEnrichPhase() {
   if (allPlaces.length === 0) {
     chrome.runtime.sendMessage({
       action: "SCRAPE_ERROR",
-      error: "Không tìm thấy điểm bán nào"
+      error: "Không tìm thấy điểm bán phù hợp trong khu vực đã chọn."
     });
     scrapeState.running = false;
     await closeMapsTabSafely();
@@ -2277,7 +2320,7 @@ async function runEnrichPhase() {
     return;
   }
 
-  notifyProgress(95, `Đang tổng hợp ${allPlaces.length} địa điểm...`);
+  notifyProgress(95, `Đang hoàn tất ${allPlaces.length} điểm bán…`);
 
   try {
     await sendMapsMessage("SCRAPE_FINISH", {});
@@ -2325,7 +2368,7 @@ async function handleScrapeComplete(data) {
   };
 
   // Đồng bộ snapshot đầy đủ trước complete — tránh web nhận ít hơn extension
-  await pushSyncSnapshotToWeb(`Đồng bộ cuối — ${finalResults.length} quán`, 99);
+  await pushSyncSnapshotToWeb(`Đang đồng bộ ${finalResults.length} điểm bán về Findmap…`, 99);
   for (let syncTry = 0; syncTry < 6; syncTry++) {
     const tab = scrapeState.webTabId
       ? await chrome.tabs.get(scrapeState.webTabId).catch(() => null)
@@ -2339,7 +2382,7 @@ async function handleScrapeComplete(data) {
       );
       if (verified.ok) break;
     }
-    await pushSyncSnapshotToWeb(`Bù dữ liệu — ${finalResults.length} quán (lần ${syncTry + 2})`, 99);
+    await pushSyncSnapshotToWeb(`Đang kiểm tra và bổ sung kết quả về Findmap · Lần ${syncTry + 2}`, 99);
     await sleep(400 * (syncTry + 1));
   }
 
@@ -2499,6 +2542,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         .set({ lastSearch: scrapeState.searchParams, activeSearch: scrapeState.searchParams })
         .catch(() => {});
     }
+    if (enabled) focusMapsTabForSearch().catch(() => {});
     sendResponse({ success: true, enabled });
     return true;
   }
@@ -2617,7 +2661,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (!scrapeState._lastShieldItemAt || Date.now() - scrapeState._lastShieldItemAt > 400) {
       scrapeState._lastShieldItemAt = Date.now();
       updateMapsShield(
-        `v${REQUIRED_CONTENT_VERSION} · Bước ${cellIdx + 1}/${cells} — tổng ${total} quán đã gửi · ${merged.name || ""}`.slice(0, 140),
+        `Khu vực ${cellIdx + 1}/${cells} · Đã đồng bộ ${total} điểm bán${merged.name ? ` · ${merged.name}` : ""}`.slice(0, 140),
         Math.max(pct, 3)
       );
     }
@@ -2648,7 +2692,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 async function handleStartSearch(params) {
   if (scrapeState.running) {
-    throw new Error("Đang có tìm kiếm chạy. Bấm 'Dừng ' hoặc đợi hoàn tất.");
+    throw new Error("Một lượt tìm kiếm đang chạy. Hãy bấm 'Dừng quét điểm bán' hoặc đợi hoàn tất.");
   }
 
   await ensureReadyForNewSearch();
@@ -2698,7 +2742,7 @@ async function handleStartSearch(params) {
   const center = normalizeCenterCoords(params.lat, params.lng);
   if (!center) {
     throw new Error(
-      "Tọa độ trung tâm không hợp lệ. Hãy nhập lat/lng chính xác hoặc lấy từ tab Google Maps."
+      "Tọa độ trung tâm không hợp lệ. Hãy chọn lại tâm trên bản đồ hoặc nhập đúng vĩ độ và kinh độ."
     );
   }
   params.lat = center.lat;
@@ -2760,7 +2804,7 @@ async function handleStartSearch(params) {
 
   await notifyProgress(
     2,
-    `Bán kính ${params.radius}km — ${grid.totalCells} ô × ${grid.viewportM}m (cuộn + lấy SĐT/địa chỉ) | ${authUser.points} điểm`
+    `Đã tạo ${grid.totalCells} khu vực tìm kiếm trong bán kính ${params.radius} km. Đang mở Google Maps…`
   );
 
   runGridCell(0).catch(async (err) => {
@@ -2773,9 +2817,9 @@ async function handleStartSearch(params) {
   if (!mapsReady && scrapeState.running) {
     await abortSearch(
       "MAPS_OPEN_TIMEOUT",
-      "Không mở được Google Maps — cho phép popup/tab mới, reload extension rồi thử lại."
+      "Không mở được Google Maps. Hãy kiểm tra tiện ích được phép hoạt động trên google.com/maps rồi thử lại."
     );
-    throw new Error("Không mở được Google Maps — reload extension rồi thử lại.");
+    throw new Error("Không mở được Google Maps. Hãy kiểm tra quyền truy cập Google Maps rồi thử lại.");
   }
 
   return { success: true, gridCells: grid.totalCells };
@@ -2785,7 +2829,7 @@ async function handleStartSearch(params) {
 
 async function sendMapsMessageToTab(tabId, action, data, timeoutMs = 45000) {
   const ready = await ensureMapsContentReady(tabId);
-  if (!ready) throw new Error("Không kết nối được content script trên Maps");
+  if (!ready) throw new Error("Không kết nối được với Google Maps. Hãy tải lại tab Google Maps rồi thử lại.");
   let timer;
   try {
     return await Promise.race([
@@ -2799,7 +2843,7 @@ async function sendMapsMessageToTab(tabId, action, data, timeoutMs = 45000) {
       })(),
       new Promise((_, reject) => {
         timer = setTimeout(
-          () => reject(new Error(`Timeout ${Math.round(timeoutMs / 1000)}s`)),
+          () => reject(new Error(`Google Maps chưa phản hồi sau ${Math.round(timeoutMs / 1000)} giây.`)),
           timeoutMs
         );
       })
@@ -2811,7 +2855,7 @@ async function sendMapsMessageToTab(tabId, action, data, timeoutMs = 45000) {
 
 async function handleStartRescan(params) {
   if (scrapeState.running) {
-    throw new Error("Đang có tìm kiếm chạy — đợi hoàn tất hoặc đóng cửa sổ Maps.");
+    throw new Error("Một lượt tìm kiếm đang chạy. Hãy đợi hoàn tất hoặc dừng lượt tìm kiếm trước.");
   }
   if (rescanState.running) {
     throw new Error("Đang quét lại — vui lòng đợi hoàn tất.");
@@ -2850,8 +2894,8 @@ async function enrichRescanPlace(place, searchParams) {
   while (attempts < 3 && rescanState.running) {
     attempts += 1;
     try {
-      if (!rescanState.mapsTabId) throw new Error("Tab Google Maps không còn");
-      await chrome.tabs.update(rescanState.mapsTabId, { url: href, active: false });
+      if (!rescanState.mapsTabId) throw new Error("Tab Google Maps đã bị đóng.");
+      await chrome.tabs.update(rescanState.mapsTabId, { url: href });
       await waitTabComplete(rescanState.mapsTabId);
       await sleep(700);
 
@@ -2938,7 +2982,7 @@ async function finishRescanNormal() {
 async function doRescan(params) {
   const opened = await openRescanMapsTab();
   if (!opened) {
-    throw new Error("Không mở được tab Google Maps — reload extension rồi thử lại.");
+    throw new Error("Không mở được Google Maps. Hãy kiểm tra quyền truy cập Google Maps rồi thử lại.");
   }
 
   await sendToWebPage(rescanState.webUrl, "rescan_start", { total: rescanState.total });

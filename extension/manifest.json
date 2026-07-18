@@ -1,14 +1,16 @@
 {
   "manifest_version": 3,
-  "name": "Findmap Extension",
+  "name": "Findmap – Tìm điểm bán",
+  "short_name": "Findmap",
   "version": "0.0.1",
+  "description": "Tiện ích Findmap lấy tên, số điện thoại, địa chỉ và vị trí điểm bán từ Google Maps, rồi đồng bộ kết quả về Findmap.",
+  "homepage_url": "https://findmap.vn",
   "permissions": [
     "activeTab",
     "tabs",
     "windows",
     "storage",
     "scripting",
-    "geolocation",
     "alarms"
   ],
   "host_permissions": [
@@ -24,7 +26,7 @@
   ],
   "action": {
     "default_popup": "popup.html",
-    "default_title": "Findmap Extension"
+    "default_title": "Mở tiện ích Findmap"
   },
   "background": {
     "service_worker": "background.js"
