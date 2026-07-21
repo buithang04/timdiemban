@@ -4128,6 +4128,8 @@
     let detailIdx = 0;
     const maxPerCell = parseInt(searchParams.maxPlacesPerCell, 10) || 0;
     const fastMode = !!searchParams.fastMode;
+    const tCellStart = Date.now();
+    const secsSinceCellStart = () => Math.round((Date.now() - tCellStart) / 1000);
 
     const mapLat = cellLat ?? searchParams.lat;
     const mapLng = cellLng ?? searchParams.lng;
@@ -4225,6 +4227,11 @@
       });
     }
 
+    tbLog(
+      `[DIAG] ${cellLabel}: pha CUỘN xong sau ${secsSinceCellStart()}s · gom được ${pending.size} điểm · ` +
+        `endMarker=${hasEndMarker(feed)} · trùng đã bỏ=${skippedCount}`
+    );
+
     if (pending.size > 0) {
       sendProgress(
         calcProgressPercent(cellIndex, totalCells, 0.48),
@@ -4302,14 +4309,41 @@
       return true;
     };
 
-    for (const { listData, place } of pending.values()) {
-      if (isAborted) break;
-      if (maxPerCell > 0 && results.length >= maxPerCell) break;
+    const tDetailStart = Date.now();
+    let loopExitReason = "hết danh sách";
+    let findMsTotal = 0;
+    let idxInLoop = 0;
 
+    for (const { listData, place } of pending.values()) {
+      if (isAborted) {
+        loopExitReason = "isAborted (nhận SCRAPE_ABORT từ background)";
+        break;
+      }
+      if (maxPerCell > 0 && results.length >= maxPerCell) {
+        loopExitReason = `chạm maxPlacesPerCell=${maxPerCell}`;
+        break;
+      }
+
+      idxInLoop++;
+      const tFind = Date.now();
       let item = findListItemForPlace(listData, getFeedPanel());
       if (!item) {
         item = await scrollToFindListItem(listData, getFeedPanel(), fastMode ? 5000 : 9000);
       }
+      const findMs = Date.now() - tFind;
+      findMsTotal += findMs;
+
+      // Cứ 10 điểm ghi 1 dòng: nếu chi phí tìm item tăng dần theo thứ tự
+      // thì nút thắt là scrollToFindListItem chứ không phải thời gian click.
+      if (idxInLoop % 10 === 0 || findMs > 4000) {
+        const detailSecs = Math.round((Date.now() - tDetailStart) / 1000);
+        tbLog(
+          `[DIAG] điểm ${idxInLoop}/${pending.size} · tìm item ${findMs}ms ` +
+            `(tổng tìm ${Math.round(findMsTotal / 1000)}s) · pha chi tiết ${detailSecs}s · ` +
+            `tổng ô ${secsSinceCellStart()}s · TB ${Math.round((Date.now() - tDetailStart) / idxInLoop)}ms/điểm`
+        );
+      }
+
       if (!item) {
         markCollected(listData, place, seenTrack, seenKeys, seenCanonical);
         if (typeof sanitizeAddressField === "function") {
@@ -4322,6 +4356,12 @@
 
       await scrapeOneFromList(item, listData, place);
     }
+
+    tbLog(
+      `[DIAG] ${cellLabel}: pha CHI TIẾT kết thúc — lý do: ${loopExitReason} · ` +
+        `xử lý ${idxInLoop}/${pending.size} điểm · pha chi tiết ${Math.round((Date.now() - tDetailStart) / 1000)}s · ` +
+        `tổng ô ${secsSinceCellStart()}s`
+    );
 
     if (results.length > 0) {
       sendProgress(

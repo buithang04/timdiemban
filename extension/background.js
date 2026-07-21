@@ -64,6 +64,9 @@ let mapsCellWorkDepth = 0;
 let mapsTabInactiveSince = 0;
 let mapsTabLossBusy = false;
 
+/** Ngân sách thời gian tối đa cho một ô (pha cuộn + pha lấy chi tiết) */
+const CELL_SCRAPE_TIMEOUT_MS = 600000;
+
 const SCRAPE_CHECKPOINT_KEY = "scrapeCheckpoint";
 const PENDING_SYNC_KEY = "pendingSearchSync";
 const WEB_DATA_TYPES = new Set(["item", "sync", "items_batch", "progress", "complete", "start"]);
@@ -1108,6 +1111,19 @@ function notifyPopup(error) {
   chrome.runtime.sendMessage({ action: "SEARCH_ERROR", error }).catch(() => {});
 }
 
+/**
+ * Log chẩn đoán từ background — đi cùng luồng với SCRAPE_LOG của content.js
+ * nên hiện ở cả Console, popup và trang kết quả.
+ */
+function bgLog(line) {
+  const text = `[BG] ${line}`;
+  console.log("TimDiemBan:", text);
+  chrome.runtime.sendMessage({ action: "SEARCH_LOG", line: text }).catch(() => {});
+  if (currentSearch?.webUrl) {
+    sendToWebPage(currentSearch.webUrl, "log", { line: text }).catch(() => {});
+  }
+}
+
 function notifyProgress(percent, text) {
   lastScrapeProgressAt = Date.now();
   chrome.runtime.sendMessage({ action: "SEARCH_PROGRESS", percent, text }).catch(() => {});
@@ -1270,6 +1286,8 @@ async function maybeRecoverStalledScrape() {
   try {
     const tabId = scrapeState.mapsTabId;
     if (!tabId) return;
+
+    bgLog(`STALL WATCHDOG kích hoạt · idle ${Math.round(idleMs / 1000)}s · ô hiện tại ${scrapeState.gridIndex + 1}`);
 
     notifyProgress(
       calcProgressPercent(scrapeState.gridIndex, scrapeState.totalCells, 0.3),
@@ -2193,6 +2211,9 @@ async function runGridCell(cellIndex) {
   if (!scrapeState.running || cellGen !== scrapeState.cellGeneration) return;
 
   let result;
+  const cellStartedAt = Date.now();
+  const cellElapsed = () => Math.round((Date.now() - cellStartedAt) / 1000);
+  bgLog(`Ô ${cellIndex + 1}/${scrapeState.totalCells} bắt đầu · budget ${CELL_SCRAPE_TIMEOUT_MS / 1000}s`);
   beginMapsCellWork();
   try {
     result = await sendMapsMessageWithTimeout(
@@ -2210,9 +2231,14 @@ async function runGridCell(cellIndex) {
         globalSeen,
         navigateInPage: false
       },
-      600000
+      CELL_SCRAPE_TIMEOUT_MS
+    );
+    bgLog(
+      `Ô ${cellIndex + 1} content trả về sau ${cellElapsed()}s · ${result?.places?.length || 0} điểm · ` +
+        `clickAttempts=${result?.clickAttempts || 0} skipped=${result?.skippedCount || 0}`
     );
   } catch (err) {
+    bgLog(`Ô ${cellIndex + 1} THOÁT DO TIMEOUT/LỖI sau ${cellElapsed()}s: ${err.message}`);
     notifyPopup(`Khu vực ${cellIndex + 1} gặp sự cố: ${err.message}`);
     notifyProgress(
       calcProgressPercent(cellIndex, scrapeState.totalCells),
@@ -2380,6 +2406,7 @@ function pushLiveItemsToWeb(items, meta = {}) {
   async function handleCellListComplete(data) {
   const { places, cellIndex, totalCells, skippedCount = 0, clickAttempts = 0 } = data;
   const beforeCount = scrapeState.mergedPlaces.size;
+  bgLog(`Ô ${cellIndex + 1} đánh dấu HOÀN TẤT · nhận ${places.length} điểm từ content`);
   scrapeState.completedCells.add(cellIndex);
   mergePlaces(places);
   const newUnique = scrapeState.mergedPlaces.size - beforeCount;
