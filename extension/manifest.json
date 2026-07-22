@@ -13,9 +13,6 @@
     "scripting",
     "alarms"
   ],
-  "optional_permissions": [
-    "debugger"
-  ],
   "host_permissions": [
     "https://www.google.com/maps/*",
     "https://findmap.vn/*",

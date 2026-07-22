@@ -21,5 +21,6 @@ Các chức năng chính:
 - Tự khôi phục khi service worker của Chrome ngủ hoặc trình duyệt được mở lại.
 - Quét lại các điểm còn thiếu số điện thoại hoặc địa chỉ.
 
-Tiện ích chỉ hoạt động khi người dùng chủ động bắt đầu tìm kiếm trên Findmap. Chế độ quét nền ổn
-định là tùy chọn và chỉ được bật sau khi người dùng cấp quyền rõ ràng trong popup.
+Tiện ích chỉ hoạt động khi người dùng chủ động bắt đầu tìm kiếm trên Findmap. Findmap mở một tab
+Google Maps chuyên dụng và giữ tab đó ở phía trước trong lúc quét để Chrome không tạm dừng trang.
+Tiện ích không yêu cầu quyền gỡ lỗi và tự đóng tab Maps khi hoàn tất hoặc bị hủy.

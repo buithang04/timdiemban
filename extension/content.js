@@ -1,6 +1,6 @@
 (function () {
   // Bump version mỗi lần sửa content — background sẽ reinject nếu Maps còn bản cũ
-  const CONTENT_VERSION = 59;
+  const CONTENT_VERSION = 60;
   if (window.__timDiemBanLoaded && window.__timDiemBanVersion === CONTENT_VERSION) return;
   if (typeof window.__timDiemBanCleanup === "function") {
     try {
@@ -59,71 +59,7 @@
     }
   }
 
-  let antiThrottleStop = null;
   let scrapeInProgress = false;
-  let bgWakeInterval = null;
-
-  function startBackgroundWakeLoop() {
-    if (bgWakeInterval) return;
-    bgWakeInterval = setInterval(() => {
-      if (!scrapeInProgress || !document.hidden) return;
-      startAntiThrottle();
-      document.dispatchEvent(new CustomEvent("timdiemban-wake", { bubbles: true }));
-    }, 1000);
-  }
-
-  function stopBackgroundWakeLoop() {
-    if (bgWakeInterval) {
-      clearInterval(bgWakeInterval);
-      bgWakeInterval = null;
-    }
-  }
-  let antiThrottleCtx = null;
-
-  function startAntiThrottle() {
-    if (antiThrottleCtx) {
-      resumeAntiThrottle();
-      return;
-    }
-    try {
-      const Ctx = window.AudioContext || window.webkitAudioContext;
-      if (!Ctx) return;
-      const ctx = new Ctx();
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      gain.gain.value = 0.0001;
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start();
-      antiThrottleCtx = ctx;
-      if (ctx.state === "suspended") ctx.resume().catch(() => {});
-      antiThrottleStop = () => {
-        try {
-          osc.stop();
-          ctx.close();
-        } catch {}
-        antiThrottleStop = null;
-        antiThrottleCtx = null;
-      };
-    } catch {}
-  }
-
-  // AudioContext thường bị chặn autoplay tới khi trang có user gesture —
-  // background phát gesture qua debugger rồi bắn event này để mở khóa.
-  function resumeAntiThrottle() {
-    if (antiThrottleCtx?.state === "suspended") antiThrottleCtx.resume().catch(() => {});
-  }
-
-  function handleAudioUnlock() {
-    startAntiThrottle();
-    resumeAntiThrottle();
-  }
-
-  document.addEventListener("timdiemban-audio-unlock", handleAudioUnlock);
-
-  function stopAntiThrottle() {
-    if (antiThrottleStop) antiThrottleStop();
-  }
 
   function sleep(ms) {
     return new Promise((resolve) => {
@@ -150,9 +86,6 @@
         timer = setTimeout(advance, chunk);
         if (document.hidden) {
           document.addEventListener("timdiemban-wake", advance, { once: true });
-          // Chế độ quét nền ép compositor render → rAF vẫn chạy dù tab ẩn,
-          // cho nhịp chờ sát thời gian thật thay vì đợi timer bị throttle.
-          requestAnimationFrame(advance);
         }
       };
       step();
@@ -215,14 +148,8 @@
   }
 
   function handleVisibilityChange() {
-    if (document.hidden && scrapeInProgress) {
-      startAntiThrottle();
-      startBackgroundWakeLoop();
-    } else if (!document.hidden) {
-      stopBackgroundWakeLoop();
-      if (scrapeInProgress) {
-        safeSend({ action: "MAPS_TAB_VISIBLE" });
-      }
+    if (!document.hidden && scrapeInProgress) {
+      safeSend({ action: "MAPS_TAB_VISIBLE" });
     }
     document.dispatchEvent(new CustomEvent("timdiemban-wake", { bubbles: true }));
   }
@@ -275,7 +202,7 @@
         <div class="shield-text" id="timdiemban-shield-text">Đang chuẩn bị thu thập thông tin điểm bán…</div>
         <div class="shield-bar-wrap"><div class="shield-bar" id="timdiemban-shield-bar"></div></div>
         <div class="shield-percent" id="timdiemban-shield-percent">0%</div>
-        <div class="shield-warn" id="timdiemban-shield-warn">Kết quả đang được đồng bộ về Findmap. Bạn có thể chuyển sang tab khác để làm việc — Findmap tự duy trì việc quét.</div>
+        <div class="shield-warn" id="timdiemban-shield-warn">Kết quả đang được đồng bộ về Findmap. Hãy giữ tab Google Maps này ở phía trước để Chrome không tạm dừng lượt quét.</div>
         <div class="shield-hint">Không đóng hoặc tải lại tab Google Maps cho đến khi Findmap báo hoàn tất.</div>
       </div>`;
     const block = (e) => { e.stopPropagation(); e.preventDefault(); };
@@ -288,7 +215,7 @@
 
   function formatShieldWarn(webLabel) {
     const target = webLabel || "Findmap";
-    return `Kết quả đang được đồng bộ về ${target}. Bạn có thể chuyển sang tab khác để làm việc — Findmap tự duy trì việc quét.`;
+    return `Kết quả đang được đồng bộ về ${target}. Hãy giữ tab Google Maps này ở phía trước để Chrome không tạm dừng lượt quét.`;
   }
 
   function resolveWebLabel(webUrl) {
@@ -314,8 +241,6 @@
     shieldLogLines.length = 0;
     scrapeInProgress = true;
     updateShield(text, percent);
-    startAntiThrottle();
-    if (document.hidden) startBackgroundWakeLoop();
     blockKeysHandler = (e) => {
       if (isDevToolsShortcut(e)) {
         if (e.ctrlKey && e.shiftKey && e.key.toUpperCase() === "D") {
@@ -357,8 +282,6 @@
 
   function hideShield() {
     scrapeInProgress = false;
-    stopBackgroundWakeLoop();
-    stopAntiThrottle();
     shieldPeek = false;
     shieldLogLines.length = 0;
     if (blockKeysHandler) {
@@ -4462,8 +4385,6 @@
   }
 
   window.__timDiemBanWake = function () {
-    startAntiThrottle();
-    if (scrapeInProgress && document.hidden) startBackgroundWakeLoop();
     document.dispatchEvent(new CustomEvent("timdiemban-wake", { bubbles: true }));
   };
 
@@ -4544,10 +4465,7 @@
   window.__timDiemBanCleanup = function () {
     extAlive = false;
     isAborted = true;
-    stopBackgroundWakeLoop();
-    stopAntiThrottle();
     document.removeEventListener("visibilitychange", handleVisibilityChange);
-    document.removeEventListener("timdiemban-audio-unlock", handleAudioUnlock);
     try {
       chrome.runtime.onMessage.removeListener(handleRuntimeMessage);
     } catch {}

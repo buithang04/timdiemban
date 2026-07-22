@@ -44,11 +44,11 @@ function assertSafeReleaseManifest(manifest) {
   if (String(manifest.description || "").length > 132) {
     throw new Error("Description vượt giới hạn 132 ký tự của Chrome Web Store.");
   }
-  if ((manifest.permissions || []).includes("debugger")) {
-    throw new Error('Quyền "debugger" phải nằm trong optional_permissions.');
-  }
-  if (!(manifest.optional_permissions || []).includes("debugger")) {
-    throw new Error('Thiếu optional permission "debugger" cho chế độ quét nền.');
+  if (
+    (manifest.permissions || []).includes("debugger") ||
+    (manifest.optional_permissions || []).includes("debugger")
+  ) {
+    throw new Error('Bản phát hành không được yêu cầu quyền "debugger".');
   }
 
   const broadPatterns = new Set(["<all_urls>", "http://*/*", "https://*/*", "*://*/*"]);

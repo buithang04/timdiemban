@@ -8,8 +8,8 @@ node scripts/build-extension-release.js
 ```
 
 File tải lên Chrome Web Store được tạo tại `dist/findmap-extension-<version>.zip`.
-Script build tự loại `localhost`, chặn quyền toàn Internet và kiểm tra `debugger`
-chỉ là quyền tùy chọn.
+Script build tự loại `localhost`, chặn quyền toàn Internet và từ chối gói phát hành
+nếu còn quyền `debugger`.
 
 ## 2. Chuẩn bị Developer Dashboard
 
@@ -25,14 +25,15 @@ chỉ là quyền tùy chọn.
 
 - Cài ZIP bằng `chrome://extensions` ở Developer mode.
 - Đăng nhập Findmap, chạy một lượt tìm kiếm ngắn và một lượt nhiều khu vực.
-- Kiểm tra trường hợp chưa bật quyền quét nền: Maps được đưa lên trước và vẫn chạy.
-- Mở popup, bật "Quét nền ổn định", chạy lại và chuyển sang tab khác.
+- Chạy tìm kiếm; xác nhận tab Maps chuyên dụng được đưa lên trước và tiến độ tiếp tục ổn định.
+- Chuyển sang tab khác; khi bật tùy chọn giữ Maps hoạt động, xác nhận Findmap tự đưa Maps trở lại.
 - Trong lúc quét, bấm "service worker" > Terminate/Stop nếu Chrome cung cấp, sau đó chờ tối đa 30–60 giây và xác nhận phiên tự tiếp tục.
 - Khởi động lại Chrome trong lúc quét với tùy chọn tự mở lại Maps đang bật và xác nhận checkpoint được khôi phục.
-- Hoàn tất lượt quét phải đóng tab Maps, gỡ debugger và không còn alarm hoạt động.
+- Hoàn tất lượt quét phải đóng tab Maps và không còn alarm công việc hoạt động.
 
 ## 4. Lưu ý duyệt chợ
 
-Manifest V3 không hỗ trợ service worker chạy vĩnh viễn. Findmap dùng alarm, storage checkpoint
-và event của tab để phục hồi. Không thêm offscreen page, WebSocket giả hoặc vòng lặp gọi API chỉ
-nhằm né lifecycle vì có thể bị Chrome Web Store đánh giá là lạm dụng nền.
+Manifest V3 không hỗ trợ service worker chạy vĩnh viễn và không bảo đảm tab ẩn tiếp tục render.
+Findmap dùng tab Maps foreground, alarm, storage checkpoint và event của tab để phục hồi. Không
+thêm debugger, offscreen page, AudioContext/WebSocket giả hoặc vòng lặp gọi API chỉ nhằm né
+lifecycle vì có thể bị Chrome Web Store đánh giá là lạm dụng nền.

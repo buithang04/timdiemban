@@ -189,8 +189,15 @@ function syncManifest() {
     ...bridgeMatches
   ];
   manifest.host_permissions = [...new Set(manifest.host_permissions)];
-  manifest.optional_permissions = [...new Set([...(manifest.optional_permissions || []), "debugger"])]
-    .filter((permission) => !(manifest.permissions || []).includes(permission));
+  manifest.permissions = [...new Set(manifest.permissions || [])].filter(
+    (permission) => permission !== "debugger"
+  );
+  if (Array.isArray(manifest.optional_permissions)) {
+    manifest.optional_permissions = manifest.optional_permissions.filter(
+      (permission) => permission !== "debugger"
+    );
+    if (manifest.optional_permissions.length === 0) delete manifest.optional_permissions;
+  }
 
   const bridge = manifest.content_scripts.find((s) => (s.js || []).includes("web-bridge.js"));
   if (bridge) {

@@ -29,7 +29,8 @@ test("manifest mô tả đúng sản phẩm và có metadata phát hành đầy 
     "GPS thuộc website Findmap; extension không được xin quyền vị trí khi không sử dụng"
   );
   assert.equal(manifest.permissions.includes("activeTab"), false);
-  assert.ok(manifest.optional_permissions.includes("debugger"));
+  assert.equal(manifest.permissions.includes("debugger"), false);
+  assert.equal((manifest.optional_permissions || []).includes("debugger"), false);
   assert.ok(Number(manifest.minimum_chrome_version) >= 120);
   for (const pattern of manifest.host_permissions || []) {
     assert.doesNotMatch(pattern, /^(?:https?|\*):\/\/\*\//, `host permission quá rộng: ${pattern}`);
@@ -80,8 +81,8 @@ test("popup mô tả đúng kết nối Findmap và không còn logic giao diệ
   assert.match(html, /Đang kiểm tra kết nối với Findmap/i);
   assert.match(popup, /Tiện ích đã sẵn sàng/i);
   assert.match(popup, /Đã kết nối với/i);
-  assert.match(popup, /permissions\.request\(\{ permissions: \["debugger"\] \}\)/);
-  assert.match(html, /id="enableBackgroundMode"/);
+  assert.doesNotMatch(popup, /permissions\.request|BACKGROUND_MODE_CHANGED/);
+  assert.doesNotMatch(html, /id="enableBackgroundMode"/);
   assert.doesNotMatch(popup, /searchForm|loginPanel|loginPassword|startBtn/);
   assert.doesNotMatch(popup, /Chạy ngầm|["'`]OK["'`]|mọi domain/i);
 });

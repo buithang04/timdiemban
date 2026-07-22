@@ -27,9 +27,9 @@ chủ động cấu hình trong hệ thống Findmap.
 
 ## Quyền trình duyệt
 
-Findmap chỉ truy cập Google Maps và các domain Findmap được khai báo trong manifest. Quyền
-`debugger` là tùy chọn, chỉ được xin sau thao tác rõ ràng của người dùng và chỉ áp dụng cho tab
-Google Maps của lượt quét nhằm duy trì xử lý khi tab nằm nền.
+Findmap chỉ truy cập Google Maps và các domain Findmap được khai báo trong manifest. Tiện ích
+không yêu cầu quyền `debugger`, không đọc lịch sử duyệt web và không truy cập các website ngoài
+phạm vi đã khai báo. Tab Google Maps chuyên dụng chỉ được mở khi người dùng chủ động bắt đầu quét.
 
 ## Xóa dữ liệu
 

@@ -57,7 +57,9 @@
     try {
       if (!els.mapsAutoFocus) return;
       const saved = localStorage.getItem(MAPS_AUTO_FOCUS_KEY);
-      els.mapsAutoFocus.checked = saved === "1";
+      // Không dùng debugger: giữ Maps foreground là cách ổn định và đúng MV3 nhất.
+      els.mapsAutoFocus.checked = saved == null ? true : saved === "1";
+      if (saved == null) localStorage.setItem(MAPS_AUTO_FOCUS_KEY, "1");
     } catch {}
     updateMapsAutoFocusLabel();
   }
@@ -71,7 +73,7 @@
   function updateMapsAutoFocusLabel() {
     if (!els.mapsAutoFocusLabel) return;
     const mins = getMapsAutoFocusMinutes();
-    els.mapsAutoFocusLabel.textContent = `Tùy chọn theo dõi: tự đưa tab Google Maps lên trước mỗi ${mins} phút khi đang quét. Mặc định Findmap quét ở tab nền — bạn có thể làm việc ở tab khác, chỉ cần không đóng tab Maps.`;
+    els.mapsAutoFocusLabel.textContent = `Nên bật: tự đưa Google Maps lên trước khi Chrome chuyển tab sang nền và kiểm tra lại mỗi ${mins} phút. Tắt tùy chọn này có thể làm lượt quét chậm hoặc tạm dừng.`;
   }
 
   function syncMapsAutoFocusCheckbox(enabled) {
@@ -152,7 +154,7 @@
     if (!els.searchOptionsHint) return;
     const tags = [];
     if (els.fastMode?.checked) tags.push("Nhanh");
-    if (els.mapsAutoFocus?.checked) tags.push("Focus Maps");
+    if (els.mapsAutoFocus?.checked) tags.push("Giữ Maps hoạt động");
     if (els.mapsAutoReopen?.checked) tags.push("Mở lại tab");
     els.searchOptionsHint.textContent = tags.length ? tags.join(" · ") : "Chưa bật";
   }
@@ -1243,8 +1245,8 @@
           const endPromise = waitForSearchEnd(searchParams.searchId);
           await startSearchExclusive(searchParams);
           const autoFocusHint = searchParams.mapsAutoFocus
-            ? `Findmap sẽ đưa tab Google Maps lên trước mỗi ${getMapsAutoFocusMinutes()} phút.`
-            : "Google Maps đang quét ở tab nền — chỉ 1 tab Maps cho từ khóa này.";
+            ? "Hãy giữ tab Google Maps ở phía trước; Findmap sẽ tự đưa tab trở lại khi cần."
+            : "Đang tắt tự-focus. Nếu tiến độ dừng, hãy tự đưa tab Google Maps lên trước.";
           showSearchStatus(`${stepLabel} — ${autoFocusHint}`, "info");
 
           const end = await endPromise;
