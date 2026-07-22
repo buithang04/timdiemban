@@ -35,6 +35,7 @@ test("manifest mô tả đúng sản phẩm và có metadata phát hành đầy 
     "GPS thuộc website Findmap; extension không được xin quyền vị trí khi không sử dụng"
   );
   assert.equal(manifest.permissions.includes("activeTab"), false);
+  assert.equal(manifest.permissions.includes("tabs"), false);
   assert.equal(manifest.permissions.includes("debugger"), false);
   assert.equal((manifest.optional_permissions || []).includes("debugger"), false);
   assert.ok(Number(manifest.minimum_chrome_version) >= 120);
@@ -128,12 +129,22 @@ test("thông báo kết nối không còn chỉ dẫn kỹ thuật hoặc gây h
   }
 });
 
+test("chỉ nhớ origin sau khi bridge Findmap đã xác thực", () => {
+  const bridge = read("extension", "site-bridge.js");
+  const start = bridge.indexOf("async function ensureBridgeOnTab");
+  const end = bridge.indexOf("async function syncRegisteredBridgeScripts", start);
+  const source = bridge.slice(start, end);
+  const pingAt = source.indexOf("await pingBridgeOnTab(tab.id)");
+  const rememberAt = source.indexOf("await rememberWebOrigin(origin)");
+
+  assert.ok(pingAt >= 0, "phải ping bridge Findmap");
+  assert.ok(rememberAt > pingAt, "không được nhớ origin trước khi bridge xác thực");
+});
+
 test("build release khóa đúng allowlist quyền và production hosts", () => {
   const build = read("scripts", "build-extension-release.js");
 
   assert.deepEqual(readSetLiteral(build, "allowedReleasePermissions"), [
-    "tabs",
-    "windows",
     "storage",
     "scripting",
     "alarms"

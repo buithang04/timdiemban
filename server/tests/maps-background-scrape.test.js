@@ -141,9 +141,187 @@ test("chỉ phản hồi thật từ Maps mới đặt lại đồng hồ 5 phú
   );
 
   assert.doesNotMatch(notify, /lastScrapeProgressAt|markMapsDataActivity/);
-  assert.match(progressHandler, /markMapsDataActivity\(\)/);
+  assert.match(progressHandler, /message\.dataActivity === true/);
+  assert.doesNotMatch(
+    progressHandler,
+    /if \(!scrapeState\.running[^]*?return;\s*markMapsDataActivity\(\)/
+  );
   assert.match(itemHandler, /markMapsDataActivity\(\)/);
   assert.match(directResponse, /markMapsDataActivity\(\)/);
+});
+
+test("wake pulse dùng token nên finally của lượt cũ không dừng lượt mới", async () => {
+  const pulse = section("const MAPS_CONTENT_WAKE_INTERVAL_MS", "function isValidWindowId");
+  const work = section("function beginMapsCellWork", "function isMapsLoadingExpected");
+  const reset = section("async function resetScrapeState", "function isMapsAutoReopenEnabled");
+  const sends = [];
+  let clearCount = 0;
+  const context = vm.createContext({
+    chrome: {
+      tabs: {
+        sendMessage: async (tabId, message) => {
+          sends.push([tabId, message]);
+          return { ok: true };
+        }
+      }
+    },
+    setInterval: () => ({ id: Math.random() }),
+    clearInterval: () => {
+      clearCount += 1;
+    }
+  });
+  vm.runInContext(
+    `
+      const scrapeState = {
+        mapsTabId: 7,
+        _mapsCellWorkActive: false,
+        _programmaticMapsNavUntil: 0
+      };
+      const rescanState = { mapsTabId: 9 };
+      const mapsCellWorkTokens = new Set();
+      const mapsRescanWorkTokens = new Set();
+      let mapsContentWakeTimer = null;
+      let mapsContentWakeTickBusy = false;
+      function markMapsControlledActivity() {}
+      ${pulse}
+      ${work}
+      this.api = {
+        beginMapsCellWork,
+        endMapsCellWork,
+        clearMapsCellWorkTokens,
+        cellCount: () => mapsCellWorkTokens.size,
+        isCellActive: () => scrapeState._mapsCellWorkActive,
+        hasTimer: () => Boolean(mapsContentWakeTimer)
+      };
+    `,
+    context
+  );
+
+  assert.match(pulse, /MAPS_CONTENT_WAKE_INTERVAL_MS = 1000/);
+  assert.match(pulse, /KEEPALIVE_TICK/);
+  assert.match(pulse, /mapsContentWakeTickBusy/);
+  assert.match(work, /startMapsContentWakePulse\(\)/);
+  assert.match(reset, /clearMapsCellWorkTokens\(\)/);
+
+  const oldToken = context.api.beginMapsCellWork();
+  context.api.clearMapsCellWorkTokens();
+  const newToken = context.api.beginMapsCellWork();
+  context.api.endMapsCellWork(oldToken);
+  await Promise.resolve();
+
+  assert.equal(context.api.cellCount(), 1);
+  assert.equal(context.api.isCellActive(), true);
+  assert.equal(context.api.hasTimer(), true);
+  assert.equal(clearCount, 1);
+  assert.ok(sends.some(([tabId, message]) => tabId === 7 && message.action === "KEEPALIVE_TICK"));
+
+  context.api.endMapsCellWork(newToken);
+  assert.equal(context.api.cellCount(), 0);
+  assert.equal(context.api.isCellActive(), false);
+  assert.equal(context.api.hasTimer(), false);
+  assert.equal(clearCount, 2);
+});
+
+test("rescan tab nền được wake trong toàn bộ thao tác đọc URL", async () => {
+  const pulse = section("const MAPS_CONTENT_WAKE_INTERVAL_MS", "function isValidWindowId");
+  const work = section("function beginMapsCellWork", "function isMapsLoadingExpected");
+  const rescanFlow = section("async function enrichRescanPlace", "async function runRescanPlacesLoop");
+  const sends = [];
+  const context = vm.createContext({
+    chrome: {
+      tabs: {
+        sendMessage: async (tabId, message) => {
+          sends.push([tabId, message]);
+          return { ok: true };
+        }
+      }
+    },
+    setInterval: () => ({ id: 1 }),
+    clearInterval: () => {}
+  });
+  vm.runInContext(
+    `
+      const scrapeState = {
+        mapsTabId: null,
+        _mapsCellWorkActive: false,
+        _programmaticMapsNavUntil: 0
+      };
+      const rescanState = { mapsTabId: 29 };
+      const mapsCellWorkTokens = new Set();
+      const mapsRescanWorkTokens = new Set();
+      let mapsContentWakeTimer = null;
+      let mapsContentWakeTickBusy = false;
+      function markMapsControlledActivity() {}
+      ${pulse}
+      ${work}
+      this.api = { beginMapsRescanWork, endMapsRescanWork };
+    `,
+    context
+  );
+
+  const token = context.api.beginMapsRescanWork();
+  await Promise.resolve();
+
+  assert.ok(sends.some(([tabId, message]) => tabId === 29 && message.action === "KEEPALIVE_TICK"));
+  assert.ok(
+    rescanFlow.indexOf("beginMapsRescanWork()") < rescanFlow.indexOf("chrome.tabs.update"),
+    "rescan phải bật wake trước khi điều hướng URL"
+  );
+  assert.match(rescanFlow, /finally\s*\{\s*endMapsRescanWork\(rescanWorkToken\)/);
+  context.api.endMapsRescanWork(token);
+});
+
+test("cleanup cũ khóa mọi START mới cho tới khi dọn xong", () => {
+  const ownership = section("function beginOperationTransition", "/** Ngân sách cho một lần thu danh sách");
+  const completeSearch = section("async function handleScrapeComplete", "function dispatchRuntimeMessage");
+  const completeRescan = section(
+    "async function deliverRescanTerminalCompletion",
+    "async function abortRescan"
+  );
+  const completeCell = section("async function completeCellAfterEnrich", "function runEnrichPhase");
+  const recovery = section("async function recoverDurableWork", "function ensureServiceReady");
+  const context = vm.createContext({});
+  vm.runInContext(
+    `
+      let isAborting = false;
+      let durableRecoveryBusy = false;
+      const scrapeState = { running: false };
+      const rescanState = { running: false };
+      const operationTransitionTokens = new Set();
+      ${ownership}
+      this.api = {
+        beginOperationTransition,
+        endOperationTransition,
+        claimOperationStart,
+        transitionCount: () => operationTransitionTokens.size
+      };
+    `,
+    context
+  );
+
+  const oldCleanup = context.api.beginOperationTransition("old-cleanup");
+  assert.throws(
+    () => context.api.claimOperationStart("search"),
+    /đang hoàn tất lượt trước/
+  );
+  context.api.endOperationTransition(oldCleanup);
+
+  const newStart = context.api.claimOperationStart("search");
+  assert.equal(context.api.transitionCount(), 1);
+  assert.throws(
+    () => context.api.claimOperationStart("rescan"),
+    /đang hoàn tất lượt trước/
+  );
+  context.api.endOperationTransition(newStart);
+  assert.equal(context.api.transitionCount(), 0);
+
+  assert.match(completeSearch, /beginOperationTransition\("complete-search"\)/);
+  assert.match(completeSearch, /finally\s*\{\s*endOperationTransition\(transitionToken\)/);
+  assert.match(completeRescan, /beginOperationTransition\("complete-rescan"\)/);
+  assert.match(completeRescan, /finally\s*\{\s*endOperationTransition\(transitionToken\)/);
+  assert.match(completeCell, /beginOperationTransition\("complete-empty-search"\)/);
+  assert.match(recovery, /operationTransitionTokens\.size > 0/);
+  assert.match(ownership, /durableRecoveryBusy/);
 });
 
 test("focus Maps khôi phục cửa sổ bị thu nhỏ", async () => {
@@ -397,7 +575,8 @@ test("checkpoint kiểu cũ được quay lại ô 1 để không bỏ pha click
     mergedPlaces: new Map()
   };
   const context = vm.createContext({
-    CELL_FLOW_VERSION: 2,
+    CELL_FLOW_VERSION: 3,
+    PER_CELL_ENRICH_FLOW_VERSION: 2,
     DurableLifecycle: lifecycle,
     scrapeState,
     placesToMap: (places) => new Map((places || []).map((place, index) => [String(index), place])),
@@ -594,10 +773,32 @@ test("reload Maps chỉ khôi phục, không abort bằng mã reload cũ", () =>
   assert.match(reload, /runGridCell\(resumeAt\)/);
 });
 
-test("timeout danh sách dưới 5 phút", () => {
+test("mỗi request danh sách kết thúc dưới giới hạn 5 phút của MV3", () => {
   const match = background.match(/const\s+CELL_LIST_TIMEOUT_MS\s*=\s*(\d+)\s*;/);
   assert.ok(match, "không tìm thấy CELL_LIST_TIMEOUT_MS");
+  assert.ok(Number(match[1]) >= 240000, `timeout hiện tại là ${match[1]}ms`);
   assert.ok(Number(match[1]) < 300000, `timeout hiện tại là ${match[1]}ms`);
+});
+
+test("danh sách dài được checkpoint theo chunk rồi cuộn tiếp cùng ô", () => {
+  const checkpoint = section("async function persistScrapeCheckpoint", "function restoreScrapeStateFromCheckpoint");
+  const restore = section("function restoreScrapeStateFromCheckpoint", "function nextPendingCellFromScrapeState");
+  const retry = section("async function retryIncompleteGridCell", "function isCompleteCellResult");
+  const runCell = section("async function runGridCell", "function getEnrichCheckpointKey");
+
+  assert.match(checkpoint, /pendingCellPlaces/);
+  assert.match(checkpoint, /pendingCellIndex/);
+  assert.match(checkpoint, /cellContinueFlags/);
+  assert.match(restore, /hasChunkedCellList/);
+  assert.match(retry, /reason === "chunk_budget"/);
+  assert.match(retry, /continueFlags\[cellIndex\] = canContinueChunk/);
+  assert.match(runCell, /resumeFromCurrent: continuingSameCell/);
+  assert.match(runCell, /stagePendingCellPlaces\(cellIndex, stampedPlaces\)/);
+  assert.ok(
+    runCell.indexOf("stagePendingCellPlaces(cellIndex, stampedPlaces)") <
+      runCell.indexOf("if (!isCompleteCellResult(result))"),
+    "URL của chunk phải được lưu trước khi retry"
+  );
 });
 
 test("waitTabComplete gắn listener trước khi re-check tabs.get", async () => {

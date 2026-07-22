@@ -271,6 +271,7 @@ test("recovery thử rescan sau khi main checkpoint không resume được", asy
   const calls = [];
   const context = vm.createContext({
     durableRecoveryBusy: false,
+    operationTransitionTokens: new Set(),
     scrapeState: { running: false },
     rescanState: { running: false },
     DurableLifecycle: {

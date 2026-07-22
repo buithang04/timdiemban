@@ -223,9 +223,136 @@ test("feed-content wait honors the caller's absolute deadline", async () => {
   assert.equal(ready, false);
   assert.equal(now, 1000);
   assert.match(content, /const CELL_FEED_WAIT_MS = 24000;/);
-  assert.match(content, /const CELL_SCROLL_BUDGET_MS = 220000;/);
+  assert.match(content, /const CELL_SCROLL_CHUNK_MS = 210000;/);
   assert.match(
     content,
     /sendResponse\(\{ success: true, signature: getFeedSignature\(\), instanceId: CONTENT_INSTANCE_ID \}\)/
+  );
+});
+
+test("hidden-tab feed scrolling is immediate and still nudges the loaded bottom", async () => {
+  const source = section(
+    "function updateEndMarkerConfirmation",
+    "async function enrichAllWithDetails"
+  );
+  let now = 0;
+  let scrollTop = 0;
+  let loading = false;
+  let loadingTriggered = false;
+  const scrollCalls = [];
+  const scrollAssignments = [];
+  const feed = {
+    isConnected: true,
+    clientHeight: 500,
+    scrollHeight: 1500,
+    get scrollTop() {
+      return scrollTop;
+    },
+    set scrollTop(value) {
+      const before = scrollTop;
+      const requested = Math.max(0, Number(value) || 0);
+      const maxBefore = Math.max(0, this.scrollHeight - this.clientHeight);
+      scrollTop = Math.min(requested, maxBefore);
+      if (before >= maxBefore - 40 && requested > before && !loadingTriggered) {
+        loading = true;
+        loadingTriggered = true;
+      }
+      scrollAssignments.push({ before, requested, after: scrollTop, maxBefore });
+    },
+    scrollBy(options) {
+      const before = scrollTop;
+      const maxBefore = Math.max(0, this.scrollHeight - this.clientHeight);
+      const top = Number(options?.top) || 0;
+
+      // A smooth scroll does not synchronously move a throttled hidden tab.
+      if (options?.behavior !== "smooth") {
+        this.scrollTop = before + top;
+      }
+      scrollCalls.push({
+        behavior: options?.behavior,
+        top,
+        before,
+        after: scrollTop,
+        maxBefore
+      });
+    }
+  };
+  const context = vm.createContext({
+    CELL_SCROLL_CHUNK_MS: 220000,
+    T: { scroll: 150, scrollInit: 100 },
+    Date: { now: () => now },
+    document: { hidden: true },
+    isAborted: false,
+    getFeedPanel: () => feed,
+    waitForFeed: async () => feed,
+    waitForFeedContentReady: async () => {
+      if (loading) {
+        loading = false;
+        feed.scrollHeight += 500;
+      }
+      return true;
+    },
+    isFeedLoading: () => loading,
+    hasEndMarker: () => loadingTriggered && !loading,
+    feedScrollStep: (panel, ratio, minPx) =>
+      Math.max(panel.clientHeight * ratio, minPx),
+    sleep: async (ms) => {
+      now += ms;
+    },
+    tbLog: () => {}
+  });
+  vm.runInContext(`${source}\nthis.scrollFeed = scrollFeed;`, context);
+
+  const outcome = await context.scrollFeed(
+    feed,
+    async () => ({ total: feed.scrollHeight > 1500 ? 5 : 3 }),
+    { safetyMax: 20, maxMs: 20000 }
+  );
+
+  assert.equal(context.document.hidden, true);
+  assert.equal(outcome.reachedEnd, true);
+  assert.equal(outcome.reason, "end_marker");
+  assert.equal(loadingTriggered, true, "an instant nudge at the loaded bottom must trigger loading");
+  assert.ok(
+    scrollAssignments.some(
+      (assignment) =>
+        assignment.before >= assignment.maxBefore - 40 &&
+        assignment.requested > assignment.before
+    ),
+    "scrollFeed must synchronously nudge even when it is already at the bottom"
+  );
+  assert.ok(scrollCalls.length + scrollAssignments.length > 0);
+  for (const call of scrollCalls) {
+    assert.notEqual(call.behavior, "smooth");
+    assert.equal(
+      call.after,
+      Math.max(0, Math.min(call.before + call.top, call.maxBefore)),
+      "each scrollBy call must update scrollTop synchronously"
+    );
+  }
+  for (const assignment of scrollAssignments) {
+    assert.equal(
+      assignment.after,
+      Math.max(0, Math.min(assignment.requested, assignment.maxBefore)),
+      "each scrollTop assignment must take effect synchronously"
+    );
+  }
+});
+
+test("chunk tiếp theo giữ vị trí cuộn và trả URL đã gom dù chưa tới cuối", () => {
+  const scroll = section("function updateEndMarkerConfirmation", "async function enrichAllWithDetails");
+  const collect = section("async function scrollAndScrapePlaces", "async function waitForFeed");
+  const readiness = section("async function waitForCellFeedReady", "let _lastKnownTotalCells");
+
+  assert.match(scroll, /if \(feed && !resumeFromCurrent\) \{/);
+  assert.match(scroll, /reason = "chunk_budget"/);
+  assert.match(collect, /maxMs: CELL_SCROLL_CHUNK_MS/);
+  assert.match(collect, /resumeFromCurrent/);
+  assert.match(readiness, /if \(!resumeFromCurrent\) \{\s*feed\.scrollTop = 0/);
+  assert.match(readiness, /if \(!resumeFromCurrent\) feed\.scrollTop = 0/);
+  assert.ok(
+    collect.indexOf("for (const { listData, place } of pending.values())") <
+      collect.indexOf("if (scrollOutcome.reachedEnd)"),
+    "chunk chưa tới cuối vẫn phải trả các URL vừa gom cho background checkpoint"
   );
 });

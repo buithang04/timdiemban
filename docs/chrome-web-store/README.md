@@ -37,5 +37,12 @@ nếu còn quyền `debugger`.
 Manifest V3 không hỗ trợ service worker chạy vĩnh viễn và không bảo đảm tab nền luôn render.
 Findmap ưu tiên chạy Maps ở nền, dùng alarm, storage checkpoint và event của tab để phục hồi;
 chỉ đưa Maps lên trước tạm thời khi không có dữ liệu mới trong 5 phút hoặc thao tác nền thất bại.
-Không thêm debugger, offscreen page, AudioContext/WebSocket giả hoặc vòng lặp gọi API chỉ nhằm
-né lifecycle vì có thể bị Chrome Web Store đánh giá là lạm dụng nền.
+Pha cuộn dài được chia thành các chunk dưới 5 phút, lưu URL đã gom vào checkpoint rồi tiếp tục
+cùng ô. Trong đúng thời gian thao tác do người dùng khởi chạy, background gửi wake message có giới
+hạn để timer của tab ẩn tiếp tục tiến; pulse dừng ngay khi chunk/URL hoàn tất và không chạy khi rảnh.
+Không thêm debugger, offscreen page, AudioContext/WebSocket giả hoặc keepalive chạy vĩnh viễn.
+
+## 5. Quy tắc version
+
+- `1.0.0` chỉ dùng khi tạo listing Chrome Web Store mới.
+- Nếu listing đã từng phát hành `1.0.3`, bản tiếp theo phải lớn hơn, ví dụ `1.0.4`; Chrome Web Store không cho hạ version.

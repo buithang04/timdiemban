@@ -1,6 +1,6 @@
 (function () {
   // Bump version mỗi lần sửa content — background sẽ reinject nếu Maps còn bản cũ
-  const CONTENT_VERSION = 67;
+  const CONTENT_VERSION = 70;
   if (window.__timDiemBanLoaded && window.__timDiemBanVersion === CONTENT_VERSION) return;
   if (typeof window.__timDiemBanCleanup === "function") {
     try {
@@ -108,7 +108,8 @@
     coordWait: 2200
   };
   const CELL_FEED_WAIT_MS = 24000;
-  const CELL_SCROLL_BUDGET_MS = 220000;
+  // Chia pha cuộn thành chunk dưới 5 phút để service worker MV3 không giữ một request quá lâu.
+  const CELL_SCROLL_CHUNK_MS = 210000;
   let isAborted = false;
   let activeCellLease = null;
   let activeCellTask = null;
@@ -313,9 +314,15 @@
     return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   }
 
-  function sendProgress(percent, text) {
+  function sendProgress(percent, text, options = {}) {
     updateShield(text, percent);
-    safeSend({ action: "SCRAPE_PROGRESS", percent, text, ...(activeCellLease || {}) });
+    safeSend({
+      action: "SCRAPE_PROGRESS",
+      percent,
+      text,
+      dataActivity: options.dataActivity === true,
+      ...(activeCellLease || {})
+    });
   }
 
   function sendItem(result, searchParams, index, total) {
@@ -3375,7 +3382,8 @@
     totalCells = 0,
     previousFeedSignature = "",
     requireFeedChange = cellIndex > 0,
-    previousFeedInstanceId = ""
+    previousFeedInstanceId = "",
+    resumeFromCurrent = false
   ) {
     const start = Date.now();
     const deadline = start + Math.min(Math.max(0, Number(maxMs) || 0), CELL_FEED_WAIT_MS);
@@ -3449,8 +3457,10 @@
             lastSignature = signature;
           }
           if (stableRounds >= 3 || (readyByChange && stableRounds >= 2)) {
-            feed.scrollTop = 0;
-            await sleep(Math.min(T.scrollInit, Math.max(0, deadline - Date.now())));
+            if (!resumeFromCurrent) {
+              feed.scrollTop = 0;
+              await sleep(Math.min(T.scrollInit, Math.max(0, deadline - Date.now())));
+            }
             if (!(await waitForFeedContentReady(feed, 12000, deadline))) {
               if (isAborted) throw new Error("Đã hủy");
               continue;
@@ -3493,7 +3503,7 @@
       hasNewListEvidence &&
       !isFeedLoading(feed)
     ) {
-      feed.scrollTop = 0;
+      if (!resumeFromCurrent) feed.scrollTop = 0;
       tbLog(`Khu vực ${cellIndex + 1}: đang dùng danh sách hiện có sau khi chờ.`, "warn");
       return feed;
     }
@@ -3959,13 +3969,45 @@
     return { confirmations: next, reachedEnd: next >= 2 };
   }
 
+  function scrollFeedInstantly(feed, delta) {
+    if (!feed) return { before: 0, after: 0 };
+    const before = Number(feed.scrollTop || 0);
+    const maxScroll = Math.max(0, Number(feed.scrollHeight || 0) - Number(feed.clientHeight || 0));
+    const target = Math.max(0, Math.min(maxScroll, before + Number(delta || 0)));
+    const style = feed.style;
+    const previousScrollBehavior = style?.scrollBehavior;
+
+    try {
+      // Đặt setter trước để chuyển động không phụ thuộc CSS scroll-behavior của Maps.
+      if (Math.abs(target - before) > 1 || typeof feed.scrollBy !== "function") {
+        feed.scrollTop = target;
+      } else if (style) {
+        style.scrollBehavior = "auto";
+      }
+      if (target === before && typeof feed.scrollBy === "function") {
+        feed.scrollBy({ top: delta, behavior: "auto" });
+      }
+    } catch {
+      feed.scrollTop = target;
+    } finally {
+      if (style) style.scrollBehavior = previousScrollBehavior || "";
+    }
+
+    // Maps/CSS có thể bỏ qua scrollBy ở tab nền; setter là bước dự phòng đồng bộ.
+    if (Math.abs(Number(feed.scrollTop || 0) - target) > 1) {
+      feed.scrollTop = target;
+    }
+    return { before, after: Number(feed.scrollTop || 0), target };
+  }
+
   async function scrollFeed(feed, onItems, options = {}) {
     const {
       requireEndMarker = true,
       safetyMax = 240,
-      maxMs = CELL_SCROLL_BUDGET_MS,
+      maxMs = CELL_SCROLL_CHUNK_MS,
       fastScroll = false,
-      onProgress = null
+      onProgress = null,
+      resumeFromCurrent = false
     } = options;
     const scrollPause = fastScroll ? 180 : Math.max(T.scroll, 220);
     const scrollInitPause = fastScroll ? 80 : T.scrollInit;
@@ -3983,7 +4025,7 @@
     let rounds = 0;
     const scrollStart = Date.now();
     const scrollDeadline =
-      scrollStart + Math.min(Math.max(0, Number(maxMs) || 0), CELL_SCROLL_BUDGET_MS);
+      scrollStart + Math.min(Math.max(0, Number(maxMs) || 0), CELL_SCROLL_CHUNK_MS);
     const pauseBeforeDeadline = async (ms) => {
       const remainingMs = Math.max(0, scrollDeadline - Date.now());
       if (!remainingMs) return false;
@@ -3991,7 +4033,7 @@
       return Date.now() < scrollDeadline;
     };
     feed = getFeedPanel() || feed;
-    if (feed) {
+    if (feed && !resumeFromCurrent) {
       feed.scrollTop = 0;
       await pauseBeforeDeadline(scrollInitPause);
       await waitForFeedContentReady(feed, settleMs, scrollDeadline);
@@ -4005,7 +4047,7 @@
       }
       if (Date.now() >= scrollDeadline) {
         tbLog(`Đã dừng tải thêm sau ${Math.round((scrollDeadline - scrollStart) / 1000)} giây.`);
-        reason = "timeout";
+        reason = "chunk_budget";
         break;
       }
 
@@ -4028,7 +4070,7 @@
 
       await waitForFeedContentReady(feed, settleMs, scrollDeadline);
       if (Date.now() >= scrollDeadline) {
-        reason = "timeout";
+        reason = "chunk_budget";
         break;
       }
 
@@ -4056,16 +4098,19 @@
         const beforeTotal = found.total;
         const beforeHeight = feed.scrollHeight;
 
-        // Giữ nhịp cuộn giống thao tác chuột: chạm đáy, chờ Maps tải rồi mới kiểm tra.
-        if (typeof feed.scrollBy === "function") {
-          feed.scrollBy({ top: Math.max(48, Math.round(feed.clientHeight * 0.18)), behavior: "smooth" });
-        } else {
-          feed.scrollTop = Math.max(0, feed.scrollHeight - feed.clientHeight);
+        // Wheel thật ở đáy vẫn phát ý định cuộn. Dùng auto để không phụ thuộc animation bị
+        // Chrome đóng băng khi tab ẩn; nếu Maps chưa phản ứng thì lùi nhẹ rồi cuộn lại đáy.
+        const bottomNudge = Math.max(48, Math.round(feed.clientHeight * 0.18));
+        scrollFeedInstantly(feed, bottomNudge);
+        if (!isFeedLoading(feed)) {
+          scrollFeedInstantly(feed, -Math.min(32, Math.max(16, bottomNudge * 0.2)));
+          await pauseBeforeDeadline(40);
+          scrollFeedInstantly(feed, bottomNudge);
         }
         await pauseBeforeDeadline(scrollPause + 120);
         await waitForFeedContentReady(feed, settleMs, scrollDeadline);
         if (Date.now() >= scrollDeadline) {
-          reason = "timeout";
+          reason = "chunk_budget";
           break;
         }
 
@@ -4117,11 +4162,7 @@
       }
 
       const step = feedScrollStep(feed, stepRatio, stepMin);
-      if (typeof feed.scrollBy === "function") {
-        feed.scrollBy({ top: step, behavior: "smooth" });
-      } else {
-        feed.scrollTop = Math.min(feed.scrollTop + step, feed.scrollHeight);
-      }
+      scrollFeedInstantly(feed, step);
       await pauseBeforeDeadline(scrollPause);
     }
     return {
@@ -4219,7 +4260,8 @@
     searchUrl = "",
     previousFeedSignature = "",
     requireFeedChange = cellIndex > 0,
-    previousFeedInstanceId = ""
+    previousFeedInstanceId = "",
+    resumeFromCurrent = false
   ) {
     const seenTrack = new Set(globalSeen);
     const seenKeys = new Set(
@@ -4326,20 +4368,25 @@
       return { newCount: newInRound, total: pending.size };
     };
 
+    let lastScrollProgressTotal = 0;
     const onScrollProgress = (total, round) => {
       const ratio = Math.min(0.42, 0.05 + round * 0.008);
+      const dataActivity = total > lastScrollProgressTotal;
+      lastScrollProgressTotal = Math.max(lastScrollProgressTotal, total);
       sendProgress(
         calcProgressPercent(cellIndex, totalCells, ratio),
-        `Khu vực ${cellIndex + 1}/${totalCells} · Đang tải danh sách · ${total} điểm bán`
+        `Khu vực ${cellIndex + 1}/${totalCells} · Đang tải danh sách · ${total} điểm bán`,
+        { dataActivity }
       );
     };
 
     const scrollOutcome = await scrollFeed(feed, collectOnly, {
       requireEndMarker: true,
-      safetyMax: 240,
-      maxMs: CELL_SCROLL_BUDGET_MS,
+      safetyMax: 2000,
+      maxMs: CELL_SCROLL_CHUNK_MS,
       fastScroll: fastMode,
-      onProgress: onScrollProgress
+      onProgress: onScrollProgress,
+      resumeFromCurrent
     });
     feed = scrollOutcome.feed;
 
@@ -4349,18 +4396,18 @@
         `rounds=${scrollOutcome.rounds} · trùng đã bỏ=${skippedCount}`
     );
 
-    if (scrollOutcome.reachedEnd) {
-      for (const { listData, place } of pending.values()) {
-        if (isAborted) break;
-        markCollected(listData, place, seenTrack, seenKeys, seenCanonical);
-        place._phase = "list";
-        place.name = cleanPlaceName(place.name);
-        if (typeof sanitizeAddressField === "function") {
-          place.address = sanitizeAddressField(place.address);
-        }
-        results.push(place);
+    for (const { listData, place } of pending.values()) {
+      if (isAborted) break;
+      markCollected(listData, place, seenTrack, seenKeys, seenCanonical);
+      place._phase = "list";
+      place.name = cleanPlaceName(place.name);
+      if (typeof sanitizeAddressField === "function") {
+        place.address = sanitizeAddressField(place.address);
       }
+      results.push(place);
+    }
 
+    if (scrollOutcome.reachedEnd) {
       sendProgress(
         calcProgressPercent(cellIndex, totalCells, 0.94),
         `Đã tải hết khu vực ${cellIndex + 1}/${totalCells} · ${results.length} điểm bán`
@@ -4411,7 +4458,8 @@
       searchUrl,
       previousFeedSignature,
       requireFeedChange,
-      previousFeedInstanceId
+      previousFeedInstanceId,
+      resumeFromCurrent
     } = data;
     isAborted = false;
     if (totalCells > 0) _lastKnownTotalCells = totalCells;
@@ -4433,7 +4481,8 @@
       totalCells,
       previousFeedSignature,
       requireFeedChange,
-      previousFeedInstanceId
+      previousFeedInstanceId,
+      resumeFromCurrent
     );
     const outcome = await scrollAndScrapePlaces(
       feed,
@@ -4447,7 +4496,8 @@
       searchUrl || "",
       previousFeedSignature,
       requireFeedChange,
-      previousFeedInstanceId
+      previousFeedInstanceId,
+      resumeFromCurrent
     );
 
     return {

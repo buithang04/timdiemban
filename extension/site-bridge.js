@@ -113,8 +113,8 @@ async function ensureBridgeOnTab(tab) {
   if (isMapsOrChromeUrl(tab.url)) {
     return { ok: false, error: "Trang hiện tại không phải Findmap." };
   }
-  await rememberWebOrigin(origin);
   if (await pingBridgeOnTab(tab.id)) {
+    await rememberWebOrigin(origin);
     return { ok: true, origin, auto: true };
   }
   return {

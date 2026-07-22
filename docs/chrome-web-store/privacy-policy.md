@@ -20,10 +20,11 @@ chống mất kết quả và đồng bộ dữ liệu vào tài khoản Findmap
 
 ## Lưu trữ và chia sẻ
 
-Checkpoint và token phiên được lưu trong vùng lưu trữ riêng của extension trên thiết bị. Kết quả
-được gửi đến máy chủ Findmap khi người dùng sử dụng chức năng đồng bộ. Findmap không bán dữ liệu,
-không dùng dữ liệu cho quảng cáo và không chia sẻ với bên thứ ba ngoài các tích hợp mà người dùng
-chủ động cấu hình trong hệ thống Findmap.
+Checkpoint được lưu trong vùng lưu trữ riêng của extension trên thiết bị. Token phiên được lưu
+trong vùng lưu trữ extension và vùng lưu trữ cục bộ của chính các trang Findmap để duy trì đăng nhập
+và đồng bộ giữa website với tiện ích. Kết quả được gửi đến máy chủ Findmap khi người dùng sử dụng
+chức năng đồng bộ. Findmap không bán dữ liệu, không dùng dữ liệu cho quảng cáo và không chia sẻ với
+bên thứ ba ngoài các tích hợp mà người dùng chủ động cấu hình trong hệ thống Findmap.
 
 ## Quyền trình duyệt
 
@@ -38,5 +39,8 @@ bộ của extension. Yêu cầu liên quan đến dữ liệu tài khoản có 
 
 ## Liên hệ
 
-Trước khi công bố, thay đoạn này bằng email hỗ trợ chính thức và thông tin pháp nhân/đơn vị vận hành
-Findmap. Chính sách này phải được đăng tại một URL HTTPS công khai thuộc `findmap.vn`.
+- Đơn vị vận hành: Công Ty TNHH An Đức Tâm.
+- Email hỗ trợ: `[CẦN ĐIỀN EMAIL HỖ TRỢ CHÍNH THỨC]`.
+
+Trước khi nộp Chrome Web Store, đăng chính sách này tại một URL HTTPS công khai thuộc `findmap.vn`
+và thay placeholder email bằng địa chỉ hỗ trợ đang hoạt động.
