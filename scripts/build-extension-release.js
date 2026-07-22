@@ -13,6 +13,13 @@ const version = sourceManifest.version;
 const releaseName = `findmap-extension-${version}`;
 const releaseDir = path.join(distDir, releaseName);
 const zipPath = path.join(distDir, `${releaseName}.zip`);
+const allowedReleasePermissions = new Set(["tabs", "windows", "storage", "scripting", "alarms"]);
+const allowedReleaseHosts = new Set([
+  "https://www.google.com/maps/*",
+  "https://findmap.vn/*",
+  "https://www.findmap.vn/*",
+  "https://app.findmap.vn/*"
+]);
 
 const releaseFiles = [
   "app-config.js",
@@ -51,15 +58,32 @@ function assertSafeReleaseManifest(manifest) {
     throw new Error('Bản phát hành không được yêu cầu quyền "debugger".');
   }
 
+  for (const permission of [
+    ...(manifest.permissions || []),
+    ...(manifest.optional_permissions || [])
+  ]) {
+    if (!allowedReleasePermissions.has(permission)) {
+      throw new Error(`Quyền chưa được duyệt cho bản release: ${permission}`);
+    }
+  }
+
   const broadPatterns = new Set(["<all_urls>", "http://*/*", "https://*/*", "*://*/*"]);
   for (const pattern of manifest.host_permissions || []) {
-    if (broadPatterns.has(pattern) || isDevelopmentOrigin(pattern)) {
+    if (
+      broadPatterns.has(pattern) ||
+      isDevelopmentOrigin(pattern) ||
+      !allowedReleaseHosts.has(pattern)
+    ) {
       throw new Error(`Host permission không được phép trong bản release: ${pattern}`);
     }
   }
   for (const script of manifest.content_scripts || []) {
     for (const pattern of script.matches || []) {
-      if (broadPatterns.has(pattern) || isDevelopmentOrigin(pattern)) {
+      if (
+        broadPatterns.has(pattern) ||
+        isDevelopmentOrigin(pattern) ||
+        !allowedReleaseHosts.has(pattern)
+      ) {
         throw new Error(`Content-script match không được phép trong bản release: ${pattern}`);
       }
     }

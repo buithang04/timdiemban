@@ -3079,7 +3079,7 @@ async function handleExtensionPayload(type, payload) {
 
   if (type === "rescan_complete") {
     resetRescanUiState();
-    const { done, total, error, partial } = payload || {};
+    const { done, total, error, partial, failed = 0 } = payload || {};
     try {
       await flushChargeNewPhones();
     } catch (err) {
@@ -3091,6 +3091,14 @@ async function handleExtensionPayload(type, payload) {
         : error;
       setConnStatus(`Quét lại: ${msg}`, partial ? "info" : "error");
       if (!partial) showErrorBanner("Quét lại lỗi", error);
+    } else if (Number(failed) > 0) {
+      const processed = Number(done ?? total ?? 0);
+      const updated = Math.max(0, processed - Number(failed));
+      setConnStatus(
+        `Quét lại xong — ${updated}/${total ?? processed} điểm đã cập nhật, ${failed} điểm không đọc được`,
+        "info"
+      );
+      saveResultsToStorage();
     } else {
       setConnStatus(`Quét lại xong — ${done ?? total} điểm`, "connected");
       saveResultsToStorage();

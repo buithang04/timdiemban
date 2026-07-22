@@ -8,6 +8,7 @@ const rootDir = path.join(__dirname, "..", "..");
 const read = (...parts) => fs.readFileSync(path.join(rootDir, ...parts), "utf8");
 const background = read("extension", "background.js");
 const content = read("extension", "content.js");
+const webApp = read("web", "app.js");
 const webSearch = read("web", "search.js");
 const webIndex = read("web", "index.html");
 const manifest = JSON.parse(read("extension", "manifest.json"));
@@ -75,7 +76,10 @@ test("dừng quét luôn dọn tab Maps kể cả khi sync cuối lỗi", () => 
 
   // Dọn dẹp phải nằm trong finally — lỗi giữa chừng không được làm kẹt tab Maps
   assert.match(abort, /\} finally \{\s*isAborting = false;/);
-  assert.match(complete, /\} finally \{[\s\S]*closeMapsTabSafely\(\);[\s\S]*resetScrapeState\(\);/);
+  assert.match(
+    complete,
+    /\} finally \{[\s\S]*closeMapsTabSafely\(\);[\s\S]*resetScrapeState\(\{ preserveCheckpoint: !sent \}\);/
+  );
 });
 
 test("watchdog không focus khi đổi URL; chỉ phục hồi khi update hoặc message lỗi", () => {
@@ -319,10 +323,7 @@ test("mỗi ô phải cuộn lấy URL rồi mở tuần tự từng URL trướ
   const completeCell = section("async function completeCellAfterEnrich", "async function runEnrichPhase");
   const enrich = section("async function runEnrichPhase", "async function closeMapsTabSafely");
   const enrichUrls = section("async function enrichPlacesInCell", "function pushLiveItemsToWeb");
-  const contentEnrich = contentSection(
-    'if (message.action === "ENRICH_PLACE")',
-    'if (message.action === "ENRICH_ONE")'
-  );
+  const contentEnrich = contentSection("function runEnrichPlaceMessage", "window.__timDiemBanWake");
 
   assert.doesNotMatch(collect, /scrapeItemInPlace\(/);
   assert.match(collect, /place\.href = listData\.href/);
@@ -337,9 +338,12 @@ test("mỗi ô phải cuộn lấy URL rồi mở tuần tự từng URL trướ
   assert.ok(markDoneAt >= 0 && nextCellAt > markDoneAt);
 
   assert.match(enrich, /Number\(place\._enrichCellIndex\) === Number\(cellIndex\)/);
-  assert.match(enrich, /cellPlaces\.filter\(\(place\) => getPlaceDetailUrl\(place\)\)/);
+  assert.match(
+    enrich,
+    /cellPlaces\.filter\([\s\S]*!scrapeState\.enrichedPlaceKeys\.has\(getEnrichCheckpointKey\(place\)\)/
+  );
   assert.doesNotMatch(enrich, /placeNeedsEnrich/);
-  assert.match(enrichUrls, /await enrichPlaceByUrl\(place, params, progressText, pct\)/);
+  assert.match(enrichUrls, /await enrichPlaceByUrl\(place, params, progressText, pct, attempt\)/);
   assert.match(enrichUrls, /MAX_DIRECT_URL_RETRIES/);
   assert.doesNotMatch(enrichUrls, /ENRICH_ONE|findListItemForPlace|scrollToFindListItem|scrapeItemInPlace/);
   assert.match(contentEnrich, /thorough = false/);
@@ -427,4 +431,340 @@ test("checkpoint kiểu cũ được quay lại ô 1 để không bỏ pha click
   assert.match(restore, /hasPerCellEnrich \? cp\.gridIndex \|\| 0 : 0/);
   assert.match(restore, /hasPerCellEnrich \? cp\.completedCells \|\| \[\] : \[\]/);
   assert.match(restore, /DurableLifecycle\.nextPendingCell\(\{[\s\S]*scrapeState\.gridIndex/);
+});
+
+test("feed instance cũ được đọc trước khi đổi vùng và chỉ bắt buộc đổi ở ô mới", () => {
+  const runCell = section("async function runGridCell", "function getEnrichCheckpointKey");
+  const readSignatureAt = runCell.indexOf('sendMapsMessage("GET_FEED_SIGNATURE"');
+  const navigateAt = runCell.indexOf("await navigateMapsTab({ url })");
+  const scrapeAt = runCell.indexOf('"SCRAPE_CELL_LIST"');
+  const passSignatureAt = runCell.indexOf("previousFeedSignature", scrapeAt);
+  const passInstanceAt = runCell.indexOf("previousFeedInstanceId", scrapeAt);
+  const passRequireAt = runCell.indexOf("requireFeedChange", scrapeAt);
+
+  assert.ok(readSignatureAt >= 0, "pha grid phải đọc chữ ký feed hiện tại");
+  assert.ok(navigateAt > readSignatureAt, "phải đọc chữ ký trước khi navigate");
+  assert.ok(scrapeAt > navigateAt, "chỉ scrape sau khi đã navigate sang vùng mới");
+  assert.ok(passSignatureAt > scrapeAt, "request scrape phải mang previousFeedSignature");
+  assert.ok(passInstanceAt > scrapeAt, "request scrape phải mang previousFeedInstanceId");
+  assert.ok(passRequireAt > scrapeAt, "request scrape phải mang requireFeedChange");
+  assert.match(runCell, /previousFeedInstanceId\s*=\s*String\(signature\?\.instanceId \|\| ""\)/);
+  assert.match(runCell, /const requireFeedChange = cellIndex > 0 && !retryingSameCell/);
+  assert.match(
+    runCell,
+    /retryingSameCell\s*=\s*[\s\S]*_cellRetryCounts[\s\S]*_cellRecoveryCounts/
+  );
+
+  const waitFeed = contentSection("async function waitForCellFeedReady", "let _lastKnownTotalCells");
+  assert.match(waitFeed, /previousFeedSignature\s*\|\|\s*getFeedSignature\(getFeedPanel\(\)\)/);
+  assert.match(waitFeed, /hasNewListEvidence\s*=\s*[\s\S]*finalSignatureChanged/);
+  assert.match(
+    waitFeed,
+    /getResultItems\(feed\)\.length\s*>\s*0\s*&&\s*centerMatches\s*&&\s*hasNewListEvidence\s*&&\s*!isFeedLoading\(feed\)/
+  );
+});
+
+test("watchdog vô hiệu hóa lease cũ trước khi abort và retry", () => {
+  const watchdog = section(
+    "async function maybeRecoverStalledScrape",
+    "async function tryResumeFromCheckpoint"
+  );
+  const invalidateAt = watchdog.indexOf("scrapeState.cellGeneration = staleLease.cellGeneration + 1");
+  const persistAt = watchdog.indexOf("await persistScrapeCheckpoint()", invalidateAt);
+  const abortAt = watchdog.indexOf('action: "SCRAPE_ABORT"', persistAt);
+  const retryAt = watchdog.indexOf('retryIncompleteGridCell(idx, "stall_watchdog")', abortAt);
+
+  assert.ok(invalidateAt >= 0, "watchdog phải tăng generation của cell");
+  assert.ok(persistAt > invalidateAt, "generation mới phải được persist");
+  assert.ok(abortAt > persistAt, "chỉ abort request cũ sau khi đã invalidate");
+  assert.ok(retryAt > abortAt, "watchdog chỉ tạo retry sau khi abort request cũ");
+});
+
+test("pha enrich background là single-flight", async () => {
+  const source = section("function runEnrichPhase()", "async function runEnrichPhaseInternal()");
+  const pending = [];
+  let runs = 0;
+  const context = vm.createContext({
+    enrichRunPromise: null,
+    runEnrichPhaseInternal: () => {
+      runs += 1;
+      return new Promise((resolve) => pending.push(resolve));
+    }
+  });
+  vm.runInContext(`${source}\nthis.runEnrichPhase = runEnrichPhase;`, context);
+
+  const first = context.runEnrichPhase();
+  const duplicate = context.runEnrichPhase();
+  assert.equal(first, duplicate);
+  assert.equal(runs, 1);
+
+  pending.shift()();
+  await first;
+  await Promise.resolve();
+
+  const next = context.runEnrichPhase();
+  assert.notEqual(next, first);
+  assert.equal(runs, 2);
+  pending.shift()();
+  await next;
+});
+
+test("enrich dùng opId, hủy đúng thao tác và bỏ response sai opId", () => {
+  const backgroundEnrich = section(
+    "async function cancelActiveEnrichOperation",
+    "async function markEnrichFailure"
+  );
+  const contentEnrich = contentSection("function cancelActiveEnrich", "window.__timDiemBanWake");
+  const contentHandler = contentSection(
+    'if (message.action === "ENRICH_PLACE")',
+    'if (message.action === "ENRICH_ONE")'
+  );
+
+  assert.match(backgroundEnrich, /ENRICH_ABORT[\s\S]*data:\s*\{\s*opId\s*\}/);
+  assert.match(backgroundEnrich, /ENRICH_PLACE[\s\S]*thorough:\s*true,[\s\S]*opId/);
+  assert.match(backgroundEnrich, /result\?\.opId\s*!==\s*opId\s*\|\|\s*result\?\.success\s*!==\s*true/);
+  assert.match(contentEnrich, /activeEnrichTask\s*&&\s*activeEnrichOpId\s*===\s*opId/);
+  assert.match(contentEnrich, /activeEnrichOpId\s*!==\s*opId/);
+  assert.match(contentHandler, /ENRICH_ABORT[\s\S]*cancelActiveEnrich\(opId\)/);
+});
+
+test("URL enrich thiếu hoặc lỗi được đánh dấu xong rồi tiếp tục URL sau", async () => {
+  const source = section("async function markEnrichFailure", "function pushLiveItemsToWeb");
+  const completed = [];
+  const sent = [];
+  const attempts = new Map();
+  const scrapeState = {
+    running: true,
+    totalCells: 1,
+    enrichedPlaceKeys: new Set(),
+    failedEnrichKeys: new Set()
+  };
+  const context = vm.createContext({
+    scrapeState,
+    MAX_DIRECT_URL_RETRIES: 2,
+    getEnrichCheckpointKey: (place) => place.name,
+    getPlaceDetailUrl: (place) => place.href || "",
+    bgLog: () => {},
+    notifyPopup: () => {},
+    notifyProgress: () => {},
+    calcProgressPercent: () => 50,
+    sleep: async () => {},
+    preserveEnrichMetadata: (place) => place,
+    enrichPlaceByUrl: async (place) => {
+      attempts.set(place.name, (attempts.get(place.name) || 0) + 1);
+      if (place.name === "Lỗi") throw new Error("detail failed");
+      return { ...place, phone: "0900000000" };
+    },
+    upsertMergedPlace: () => {},
+    sendItemToWeb: (_webUrl, place) => sent.push(place.name),
+    markEnrichAttemptComplete: async (place) => {
+      scrapeState.enrichedPlaceKeys.add(place.name);
+      completed.push(place.name);
+    },
+    console: { warn: () => {} }
+  });
+  vm.runInContext(`${source}\nthis.enrichPlacesInCell = enrichPlacesInCell;`, context);
+
+  const done = await context.enrichPlacesInCell(
+    [
+      { name: "Thiếu URL" },
+      { name: "Lỗi", href: "https://www.google.com/maps/place/loi" },
+      { name: "Tốt", href: "https://www.google.com/maps/place/tot" }
+    ],
+    0,
+    { webUrl: "https://findmap.vn" },
+    0,
+    3
+  );
+
+  assert.equal(done, 3);
+  assert.deepEqual([...scrapeState.failedEnrichKeys], ["Thiếu URL", "Lỗi"]);
+  assert.deepEqual(completed, ["Thiếu URL", "Lỗi", "Tốt"]);
+  assert.deepEqual(sent, ["Tốt"]);
+  assert.equal(attempts.get("Lỗi"), 2);
+  assert.equal(attempts.get("Tốt"), 1);
+});
+
+test("reload Maps chỉ khôi phục, không abort bằng mã reload cũ", () => {
+  const reload = section("async function handleMapsTabReloaded", "chrome.tabs.onUpdated.addListener");
+
+  assert.doesNotMatch(reload, /MAPS_RELOAD_(?:IDLE|STOP|FAILED)/);
+  assert.doesNotMatch(reload, /abortSearch\(\s*["']MAPS_RELOAD_/);
+  assert.match(reload, /runEnrichPhase\(\)/);
+  assert.match(reload, /runGridCell\(resumeAt\)/);
+});
+
+test("timeout danh sách dưới 5 phút", () => {
+  const match = background.match(/const\s+CELL_LIST_TIMEOUT_MS\s*=\s*(\d+)\s*;/);
+  assert.ok(match, "không tìm thấy CELL_LIST_TIMEOUT_MS");
+  assert.ok(Number(match[1]) < 300000, `timeout hiện tại là ${match[1]}ms`);
+});
+
+test("waitTabComplete gắn listener trước khi re-check tabs.get", async () => {
+  const source = section("async function waitTabComplete", "const EXT_QUEUE_KEY");
+  const calls = [];
+  const event = (name) => ({
+    addListener: () => calls.push(`add:${name}`),
+    removeListener: () => calls.push(`remove:${name}`)
+  });
+  const chrome = {
+    tabs: {
+      onUpdated: event("updated"),
+      onRemoved: event("removed"),
+      get: async () => {
+        calls.push("get");
+        return { status: "complete" };
+      }
+    }
+  };
+  const context = vm.createContext({ chrome, setTimeout, clearTimeout, Error });
+  vm.runInContext(`${source}\nthis.waitTabComplete = waitTabComplete;`, context);
+
+  await context.waitTabComplete(17, 100);
+
+  assert.deepEqual(calls.slice(0, 3), ["add:updated", "add:removed", "get"]);
+  assert.deepEqual(calls.slice(3), ["remove:updated", "remove:removed"]);
+});
+
+test("rescan delivery thất bại giữ nguyên placeIndex và retry qua alarm", async () => {
+  const source =
+    section("async function sendRescanDataWithRetry", "async function abortRescan") +
+    section("async function runRescanPlacesLoop", "async function finishRescanNormal");
+  const calls = [];
+  const rescanState = {
+    running: true,
+    placeIndex: 0,
+    done: 0,
+    failed: 0,
+    total: 1,
+    places: [{ name: "A", href: "https://www.google.com/maps/place/A" }],
+    webUrl: "https://findmap.vn",
+    searchParams: {}
+  };
+  const context = vm.createContext({
+    rescanState,
+    enrichRescanPlace: async () => ({ name: "A", phone: "090" }),
+    sendToWebPage: async () => (calls.push("deliver"), false),
+    sleep: async () => {},
+    persistRescanCheckpoint: async () => calls.push("checkpoint"),
+    ensureDurableWorkAlarm: async () => calls.push("alarm"),
+    markRescanDataActivity: () => {},
+    console
+  });
+  vm.runInContext(`${source}\nthis.runRescanPlacesLoop = runRescanPlacesLoop;`, context);
+
+  assert.equal(await context.runRescanPlacesLoop(), false);
+  assert.equal(rescanState.placeIndex, 0);
+  assert.equal(rescanState.done, 0);
+  assert.equal(calls.filter((call) => call === "deliver").length, 4);
+  assert.deepEqual(calls.slice(-2), ["checkpoint", "alarm"]);
+});
+
+test("rescan bỏ qua URL hỏng, tiếp tục hàng đợi và báo số lỗi", async () => {
+  const source =
+    section("async function sendRescanDataWithRetry", "async function abortRescan") +
+    section("async function runRescanPlacesLoop", "async function finishRescanNormal");
+  const rescanState = {
+    running: true,
+    placeIndex: 0,
+    done: 0,
+    failed: 0,
+    total: 1,
+    places: [{ name: "URL hỏng" }],
+    webUrl: "https://findmap.vn",
+    searchParams: {}
+  };
+  const context = vm.createContext({
+    rescanState,
+    enrichRescanPlace: async () => null,
+    sendToWebPage: async () => true,
+    sleep: async () => {},
+    persistRescanCheckpoint: async () => true,
+    ensureDurableWorkAlarm: async () => {},
+    markRescanDataActivity: () => {},
+    console
+  });
+  vm.runInContext(`${source}\nthis.runRescanPlacesLoop = runRescanPlacesLoop;`, context);
+
+  assert.equal(await context.runRescanPlacesLoop(), true);
+  assert.equal(rescanState.placeIndex, 1);
+  assert.equal(rescanState.done, 1);
+  assert.equal(rescanState.failed, 1);
+  assert.match(webApp, /điểm không đọc được/);
+});
+
+test("rescan terminal resume gửi complete mà không mở lại Maps", async () => {
+  const source = section("async function tryResumeRescanFromCheckpoint", "function resetRescanState");
+  const calls = [];
+  const state = { running: false, placeIndex: 0, places: null };
+  const context = vm.createContext({
+    scrapeState: { running: false },
+    rescanState: state,
+    getRescanCheckpoint: async () => ({ running: true, placeIndex: 1, places: [{ name: "A" }] }),
+    restoreRescanStateFromCheckpoint: (checkpoint) => {
+      state.running = true;
+      state.placeIndex = checkpoint.placeIndex;
+      state.places = checkpoint.places;
+      return true;
+    },
+    ensureDurableWorkAlarm: async () => calls.push("alarm"),
+    finishRescanNormal: async () => (calls.push("complete"), true),
+    chrome: { tabs: { get: async () => { throw new Error("Maps must not open"); } } },
+    isRescanAutoReopenEnabled: () => false,
+    openRescanMapsTab: async () => { throw new Error("Maps must not open"); }
+  });
+  vm.runInContext(`${source}\nthis.tryResumeRescanFromCheckpoint = tryResumeRescanFromCheckpoint;`, context);
+
+  assert.equal(await context.tryResumeRescanFromCheckpoint(), true);
+  assert.deepEqual(calls, ["alarm", "complete"]);
+});
+
+test("rescan đã abort chỉ retry terminal payload, không chạy lại hàng đợi", async () => {
+  const source = section("async function tryResumeRescanFromCheckpoint", "function resetRescanState");
+  const calls = [];
+  const state = { running: false, placeIndex: 0, places: null, _terminalCompletion: null };
+  const terminalCompletion = {
+    done: 2,
+    failed: 1,
+    total: 5,
+    error: "Đã dừng quét lại",
+    code: "MAPS_REOPEN_LIMIT",
+    partial: true
+  };
+  const context = vm.createContext({
+    scrapeState: { running: false },
+    rescanState: state,
+    getRescanCheckpoint: async () => ({
+      running: true,
+      placeIndex: 2,
+      places: [{}, {}, {}, {}, {}],
+      terminalCompletion
+    }),
+    restoreRescanStateFromCheckpoint: (checkpoint) => {
+      state.running = true;
+      state.placeIndex = checkpoint.placeIndex;
+      state.places = checkpoint.places;
+      state._terminalCompletion = checkpoint.terminalCompletion;
+      return true;
+    },
+    ensureDurableWorkAlarm: async () => calls.push("alarm"),
+    deliverRescanTerminalCompletion: async () => (calls.push("terminal"), true),
+    finishRescanNormal: async () => { throw new Error("must not finish as normal"); },
+    chrome: { tabs: { get: async () => { throw new Error("must not inspect Maps"); } } },
+    isRescanAutoReopenEnabled: () => true,
+    openRescanMapsTab: async () => { throw new Error("must not reopen Maps"); }
+  });
+  vm.runInContext(`${source}\nthis.tryResumeRescanFromCheckpoint = tryResumeRescanFromCheckpoint;`, context);
+
+  assert.equal(await context.tryResumeRescanFromCheckpoint(), true);
+  assert.deepEqual(calls, ["alarm", "terminal"]);
+});
+
+test("START_RESCAN dọn checkpoint main sau khi flush completion", () => {
+  const start = section("async function handleStartRescan", "async function enrichRescanPlace");
+  const flushAt = start.indexOf('flushPendingComplete("before_rescan")');
+  const clearAt = start.indexOf("await clearScrapeCheckpoint()", flushAt);
+  const staleAt = start.indexOf('"activeSearch", PENDING_SYNC_KEY', clearAt);
+  assert.ok(flushAt >= 0 && clearAt > flushAt && staleAt > clearAt);
+  assert.match(start, /if \(pendingComplete\.pending\)/);
 });

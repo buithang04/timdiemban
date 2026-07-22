@@ -1,6 +1,6 @@
 (function () {
   // Bump version mỗi lần sửa content — background sẽ reinject nếu Maps còn bản cũ
-  const CONTENT_VERSION = 65;
+  const CONTENT_VERSION = 67;
   if (window.__timDiemBanLoaded && window.__timDiemBanVersion === CONTENT_VERSION) return;
   if (typeof window.__timDiemBanCleanup === "function") {
     try {
@@ -9,6 +9,12 @@
   }
   window.__timDiemBanLoaded = true;
   window.__timDiemBanVersion = CONTENT_VERSION;
+
+  const CONTENT_INSTANCE_ID =
+    window.__timDiemBanDocumentInstanceId ||
+    globalThis.crypto?.randomUUID?.() ||
+    `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  window.__timDiemBanDocumentInstanceId = CONTENT_INSTANCE_ID;
 
   const RunLease = globalThis.TimDiemBanRunLease;
 
@@ -101,9 +107,14 @@
     click: 120,
     coordWait: 2200
   };
+  const CELL_FEED_WAIT_MS = 24000;
+  const CELL_SCROLL_BUDGET_MS = 220000;
   let isAborted = false;
   let activeCellLease = null;
   let activeCellTask = null;
+  let activeEnrichTask = null;
+  let activeEnrichOpId = "";
+  let activeEnrichCancelMarker = null;
   let shieldEl = null;
   let blockKeysHandler = null;
   let shieldPeek = false;
@@ -1814,19 +1825,26 @@
   }
 
   /** Chờ sau cuộn: hết spinner + số dòng & chiều cao list ổn định trước khi đọc DOM. */
-  async function waitForFeedContentReady(feed, maxMs = 6000) {
+  async function waitForFeedContentReady(feed, maxMs = 6000, deadline = Infinity) {
     if (!feed) return false;
     const start = Date.now();
+    const effectiveDeadline = Math.min(
+      start + Math.max(0, Number(maxMs) || 0),
+      Number.isFinite(deadline) ? deadline : Infinity
+    );
     let lastCount = -1;
     let lastHeight = -1;
     let stableRounds = 0;
 
-    while (Date.now() - start < maxMs) {
+    while (Date.now() < effectiveDeadline) {
+      if (isAborted) return false;
       feed = getFeedPanel() || feed;
       if (!feed?.isConnected) return false;
 
       if (isFeedLoading(feed)) {
-        await waitForFeedSettled(feed, Math.min(4000, maxMs - (Date.now() - start)));
+        const remainingMs = Math.max(0, effectiveDeadline - Date.now());
+        if (!remainingMs) break;
+        await waitForFeedSettled(feed, Math.min(4000, remainingMs), effectiveDeadline);
         stableRounds = 0;
         lastCount = -1;
         lastHeight = -1;
@@ -1846,25 +1864,37 @@
 
       // Ổn định 2 lần → OK
       if (stableRounds >= 2) {
-        await sleep(150);
+        const remainingMs = Math.max(0, effectiveDeadline - Date.now());
+        if (!remainingMs) break;
+        await sleep(Math.min(150, remainingMs));
         if (!isFeedLoading(feed)) return true;
         stableRounds = 1;
       }
 
-      await sleep(180);
+      const remainingMs = Math.max(0, effectiveDeadline - Date.now());
+      if (!remainingMs) break;
+      await sleep(Math.min(180, remainingMs));
     }
 
-    return !isFeedLoading(feed);
+    return !isAborted && !isFeedLoading(feed);
   }
 
-  async function waitForFeedSettled(feed, maxMs = 5000) {
+  async function waitForFeedSettled(feed, maxMs = 5000, deadline = Infinity) {
     const start = Date.now();
-    while (Date.now() - start < maxMs) {
+    const effectiveDeadline = Math.min(
+      start + Math.max(0, Number(maxMs) || 0),
+      Number.isFinite(deadline) ? deadline : Infinity
+    );
+    while (Date.now() < effectiveDeadline) {
       if (!isFeedLoading(feed)) {
-        await sleep(120);
+        const remainingMs = Math.max(0, effectiveDeadline - Date.now());
+        if (!remainingMs) break;
+        await sleep(Math.min(120, remainingMs));
         if (!isFeedLoading(feed)) return true;
       }
-      await sleep(200);
+      const remainingMs = Math.max(0, effectiveDeadline - Date.now());
+      if (!remainingMs) break;
+      await sleep(Math.min(200, remainingMs));
     }
     return !isFeedLoading(feed);
   }
@@ -3300,15 +3330,62 @@
     return Math.abs(c.lat - cellLat) <= toleranceDeg && Math.abs(c.lng - cellLng) <= toleranceDeg;
   }
 
-  function getFirstListPlaceHref(feed) {
-    const items = getResultItems(feed || getFeedPanel());
-    return items[0]?.querySelector("a[href*='/maps/place']")?.href?.split("?")[0] || "";
+  function hashFeedUrls(urls) {
+    let hash = 0xcbf29ce484222325n;
+    for (const url of urls) {
+      for (let i = 0; i < url.length; i++) {
+        hash ^= BigInt(url.charCodeAt(i));
+        hash = BigInt.asUintN(64, hash * 0x100000001b3n);
+      }
+      hash ^= 0xffn;
+      hash = BigInt.asUintN(64, hash * 0x100000001b3n);
+    }
+    return hash.toString(16).padStart(16, "0");
+  }
+
+  function getFeedSignature(feed = getFeedPanel()) {
+    if (!feed) return "0:";
+    const hrefs = [];
+    const seen = new Set();
+    for (const link of feed.querySelectorAll("a[href*='/maps/place']")) {
+      let href = link.href || link.getAttribute("href") || "";
+      try {
+        const url = new URL(href, window.location.origin);
+        href = `${url.origin}${url.pathname}`.replace(/\/$/, "");
+      } catch {
+        href = href.split(/[?#]/, 1)[0].replace(/\/$/, "");
+      }
+      if (!href || seen.has(href)) continue;
+      seen.add(href);
+      hrefs.push(href);
+    }
+    const count = getResultItems(feed).length;
+    if (!count && !hrefs.length) return "0:";
+    hrefs.sort();
+    return `${count}:${hrefs.length}:${hashFeedUrls(hrefs)}`;
   }
 
   /** Chờ Maps tải đúng vùng — tránh đọc list cũ sau khi background chuyển URL (Apify: mỗi ô = search mới) */
-  async function waitForCellFeedReady(searchUrl, cellLat, cellLng, cellIndex = 0, maxMs = 28000, totalCells = 0) {
+  async function waitForCellFeedReady(
+    searchUrl,
+    cellLat,
+    cellLng,
+    cellIndex = 0,
+    maxMs = 28000,
+    totalCells = 0,
+    previousFeedSignature = "",
+    requireFeedChange = cellIndex > 0,
+    previousFeedInstanceId = ""
+  ) {
     const start = Date.now();
-    const oldFirstHref = cellIndex > 0 ? getFirstListPlaceHref(getFeedPanel()) : "";
+    const deadline = start + Math.min(Math.max(0, Number(maxMs) || 0), CELL_FEED_WAIT_MS);
+    const needsFeedChange = !!requireFeedChange;
+    const baselineSignature =
+      needsFeedChange ? previousFeedSignature || getFeedSignature(getFeedPanel()) : "";
+    const instanceChanged =
+      needsFeedChange &&
+      !!previousFeedInstanceId &&
+      previousFeedInstanceId !== CONTENT_INSTANCE_ID;
     let lastHeartbeat = 0;
     if (totalCells > 0) _lastKnownTotalCells = totalCells;
     const cellsHint = Math.max(1, totalCells || _lastKnownTotalCells || 1);
@@ -3325,17 +3402,19 @@
       );
     };
 
-    while (Date.now() - start < maxMs) {
+    while (Date.now() < deadline) {
+      if (isAborted) throw new Error("Đã hủy");
       heartbeat();
       if (urlCenterMatchesCell(window.location.href, cellLat, cellLng)) break;
-      await sleep(200);
+      await sleep(Math.min(200, Math.max(0, deadline - Date.now())));
     }
 
     let sawLoading = false;
     let stableRounds = 0;
     let lastCount = -1;
+    let lastSignature = "";
 
-    while (Date.now() - start < maxMs) {
+    while (Date.now() < deadline) {
       if (isAborted) throw new Error("Đã hủy");
       heartbeat();
 
@@ -3344,41 +3423,76 @@
         sawLoading = true;
         stableRounds = 0;
         lastCount = -1;
-        await sleep(300);
+        await sleep(Math.min(300, Math.max(0, deadline - Date.now())));
         continue;
       }
 
       const count = feed ? getResultItems(feed).length : 0;
-      const firstHref = getFirstListPlaceHref(feed);
-      const hrefChanged = cellIndex > 0 && oldFirstHref && firstHref && firstHref !== oldFirstHref;
-      const readyByChange = cellIndex > 0 && (sawLoading || hrefChanged) && count > 0;
+      const signature = getFeedSignature(feed);
+      const signatureChanged =
+        needsFeedChange &&
+        !!baselineSignature &&
+        signature !== "0:" &&
+        signature !== baselineSignature;
+      const hasNewListEvidence =
+        !needsFeedChange || sawLoading || signatureChanged || instanceChanged;
+      const readyByChange = hasNewListEvidence && count > 0;
 
       if (count > 0) {
-        const urlOk = urlCenterMatchesCell(window.location.href, cellLat, cellLng);
-        const minWait = cellIndex > 0 && Date.now() - start > 1600;
-        if (cellIndex === 0 || readyByChange || (urlOk && minWait)) {
-          if (count === lastCount) {
+        const centerMatches = urlCenterMatchesCell(window.location.href, cellLat, cellLng);
+        if (centerMatches && readyByChange) {
+          if (count === lastCount && signature === lastSignature) {
             stableRounds++;
           } else {
             stableRounds = 0;
             lastCount = count;
+            lastSignature = signature;
           }
           if (stableRounds >= 3 || (readyByChange && stableRounds >= 2)) {
             feed.scrollTop = 0;
-            await sleep(T.scrollInit);
-            await waitForFeedContentReady(feed, 12000);
-            tbLog(`Khu vực ${cellIndex + 1}: danh sách đã tải · ${count} kết quả${hrefChanged ? " mới" : ""}`);
+            await sleep(Math.min(T.scrollInit, Math.max(0, deadline - Date.now())));
+            if (!(await waitForFeedContentReady(feed, 12000, deadline))) {
+              if (isAborted) throw new Error("Đã hủy");
+              continue;
+            }
+            const settledSignature = getFeedSignature(feed);
+            const settledSignatureChanged =
+              needsFeedChange &&
+              !!baselineSignature &&
+              settledSignature !== "0:" &&
+              settledSignature !== baselineSignature;
+            if (needsFeedChange && !sawLoading && !instanceChanged && !settledSignatureChanged) {
+              stableRounds = 0;
+              continue;
+            }
+            tbLog(
+              `Khu vực ${cellIndex + 1}: danh sách đã tải · ${count} kết quả${signatureChanged ? " mới" : ""}`
+            );
             return feed;
           }
         }
       }
 
-      await sleep(220);
+      await sleep(Math.min(220, Math.max(0, deadline - Date.now())));
     }
 
     const feed = getFeedPanel();
     const centerMatches = urlCenterMatchesCell(window.location.href, cellLat, cellLng);
-    if (feed && getResultItems(feed).length > 0 && centerMatches) {
+    const finalSignature = getFeedSignature(feed);
+    const finalSignatureChanged =
+      needsFeedChange &&
+      !!baselineSignature &&
+      finalSignature !== "0:" &&
+      finalSignature !== baselineSignature;
+    const hasNewListEvidence =
+      !needsFeedChange || sawLoading || finalSignatureChanged || instanceChanged;
+    if (
+      feed &&
+      getResultItems(feed).length > 0 &&
+      centerMatches &&
+      hasNewListEvidence &&
+      !isFeedLoading(feed)
+    ) {
       feed.scrollTop = 0;
       tbLog(`Khu vực ${cellIndex + 1}: đang dùng danh sách hiện có sau khi chờ.`, "warn");
       return feed;
@@ -3849,7 +3963,7 @@
     const {
       requireEndMarker = true,
       safetyMax = 240,
-      maxMs = 300000,
+      maxMs = CELL_SCROLL_BUDGET_MS,
       fastScroll = false,
       onProgress = null
     } = options;
@@ -3868,11 +3982,19 @@
     let reason = "safety_limit";
     let rounds = 0;
     const scrollStart = Date.now();
+    const scrollDeadline =
+      scrollStart + Math.min(Math.max(0, Number(maxMs) || 0), CELL_SCROLL_BUDGET_MS);
+    const pauseBeforeDeadline = async (ms) => {
+      const remainingMs = Math.max(0, scrollDeadline - Date.now());
+      if (!remainingMs) return false;
+      await sleep(Math.min(ms, remainingMs));
+      return Date.now() < scrollDeadline;
+    };
     feed = getFeedPanel() || feed;
     if (feed) {
       feed.scrollTop = 0;
-      await sleep(scrollInitPause);
-      await waitForFeedContentReady(feed, settleMs);
+      await pauseBeforeDeadline(scrollInitPause);
+      await waitForFeedContentReady(feed, settleMs, scrollDeadline);
     }
 
     for (let round = 0; round < safetyMax; round++) {
@@ -3881,8 +4003,8 @@
         reason = "aborted";
         break;
       }
-      if (Date.now() - scrollStart > maxMs) {
-        tbLog(`Đã dừng tải thêm sau ${Math.round(maxMs / 1000)} giây.`);
+      if (Date.now() >= scrollDeadline) {
+        tbLog(`Đã dừng tải thêm sau ${Math.round((scrollDeadline - scrollStart) / 1000)} giây.`);
         reason = "timeout";
         break;
       }
@@ -3890,7 +4012,10 @@
       feed = getFeedPanel();
       if (!feed?.isConnected) {
         try {
-          feed = await waitForFeed(5000);
+          feed = await waitForFeed(
+            Math.min(5000, Math.max(0, scrollDeadline - Date.now())),
+            scrollDeadline
+          );
         } catch {
           reason = "feed_missing";
           break;
@@ -3901,7 +4026,11 @@
         break;
       }
 
-      await waitForFeedContentReady(feed, settleMs);
+      await waitForFeedContentReady(feed, settleMs, scrollDeadline);
+      if (Date.now() >= scrollDeadline) {
+        reason = "timeout";
+        break;
+      }
 
       const found = await onItems(feed, round);
       if (typeof onProgress === "function") onProgress(found.total, round);
@@ -3933,8 +4062,12 @@
         } else {
           feed.scrollTop = Math.max(0, feed.scrollHeight - feed.clientHeight);
         }
-        await sleep(scrollPause + 120);
-        await waitForFeedContentReady(feed, settleMs);
+        await pauseBeforeDeadline(scrollPause + 120);
+        await waitForFeedContentReady(feed, settleMs, scrollDeadline);
+        if (Date.now() >= scrollDeadline) {
+          reason = "timeout";
+          break;
+        }
 
         const afterNudge = await onItems(feed, round);
         const grew =
@@ -3945,7 +4078,7 @@
           lastTotal = Math.max(lastTotal, afterNudge.total || 0);
           staleBottomRounds = 0;
           endMarkerConfirmations = 0;
-          await sleep(scrollPause);
+          await pauseBeforeDeadline(scrollPause);
           continue;
         }
 
@@ -3966,7 +4099,7 @@
             lastTotal = Math.max(lastTotal, afterNudge.total || 0);
             break;
           }
-          await sleep(endConfirmMs);
+          await pauseBeforeDeadline(endConfirmMs);
           continue;
         }
 
@@ -3979,7 +4112,7 @@
         }
 
         // Không có end marker thì vẫn tiếp tục. Maps có thể đứng vài nhịp rồi mới nạp đợt kế tiếp.
-        await sleep(scrollPause + Math.min(1200, staleBottomRounds * 80));
+        await pauseBeforeDeadline(scrollPause + Math.min(1200, staleBottomRounds * 80));
         continue;
       }
 
@@ -3989,7 +4122,7 @@
       } else {
         feed.scrollTop = Math.min(feed.scrollTop + step, feed.scrollHeight);
       }
-      await sleep(scrollPause);
+      await pauseBeforeDeadline(scrollPause);
     }
     return {
       feed,
@@ -4083,7 +4216,10 @@
     cellLabel = "Tâm",
     cellLat = null,
     cellLng = null,
-    searchUrl = ""
+    searchUrl = "",
+    previousFeedSignature = "",
+    requireFeedChange = cellIndex > 0,
+    previousFeedInstanceId = ""
   ) {
     const seenTrack = new Set(globalSeen);
     const seenKeys = new Set(
@@ -4109,7 +4245,19 @@
         ? haversineDistance(searchParams.lat, searchParams.lng, mapLat, mapLng)
         : 0;
 
-    feed = await waitForCellFeedReady(searchUrl, mapLat, mapLng, cellIndex);
+    if (!feed?.isConnected || !getResultItems(feed).length) {
+      feed = await waitForCellFeedReady(
+        searchUrl,
+        mapLat,
+        mapLng,
+        cellIndex,
+        5000,
+        totalCells,
+        previousFeedSignature,
+        false,
+        previousFeedInstanceId
+      );
+    }
     if (!feed) {
       try {
         feed = await waitForFeed(20000);
@@ -4189,7 +4337,7 @@
     const scrollOutcome = await scrollFeed(feed, collectOnly, {
       requireEndMarker: true,
       safetyMax: 240,
-      maxMs: 300000,
+      maxMs: CELL_SCROLL_BUDGET_MS,
       fastScroll: fastMode,
       onProgress: onScrollProgress
     });
@@ -4236,12 +4384,16 @@
     };
   }
 
-  async function waitForFeed(maxMs = 15000) {
+  async function waitForFeed(maxMs = 15000, deadline = Infinity) {
     const start = Date.now();
-    while (Date.now() - start < maxMs) {
+    const effectiveDeadline = Math.min(
+      start + Math.max(0, Number(maxMs) || 0),
+      Number.isFinite(deadline) ? deadline : Infinity
+    );
+    while (Date.now() < effectiveDeadline) {
       const feed = getFeedPanel();
       if (feed && getResultItems(feed).length > 0) return feed;
-      await sleep(300);
+      await sleep(Math.min(300, Math.max(0, effectiveDeadline - Date.now())));
     }
     throw new Error("Không tìm thấy danh sách kết quả trên Google Maps");
   }
@@ -4256,7 +4408,10 @@
       globalSeen,
       cellLat,
       cellLng,
-      searchUrl
+      searchUrl,
+      previousFeedSignature,
+      requireFeedChange,
+      previousFeedInstanceId
     } = data;
     isAborted = false;
     if (totalCells > 0) _lastKnownTotalCells = totalCells;
@@ -4269,7 +4424,17 @@
       `Khu vực ${cellIndex + 1}/${totalCells} · ${label} · Đang chờ Google Maps tải danh sách…`
     );
 
-    const feed = await waitForCellFeedReady(searchUrl, cellLat, cellLng, cellIndex, 28000, totalCells);
+    const feed = await waitForCellFeedReady(
+      searchUrl,
+      cellLat,
+      cellLng,
+      cellIndex,
+      28000,
+      totalCells,
+      previousFeedSignature,
+      requireFeedChange,
+      previousFeedInstanceId
+    );
     const outcome = await scrollAndScrapePlaces(
       feed,
       searchParams,
@@ -4279,7 +4444,10 @@
       label,
       cellLat,
       cellLng,
-      searchUrl || ""
+      searchUrl || "",
+      previousFeedSignature,
+      requireFeedChange,
+      previousFeedInstanceId
     );
 
     return {
@@ -4330,6 +4498,122 @@
     return task;
   }
 
+  function getRecordCanonicalPlaceId(record) {
+    if (!record) return "";
+    for (const raw of [record.googlePlaceId, record.placeId]) {
+      const value = String(raw || "").trim();
+      if (/^(?:ChIJ|slug:)/i.test(value)) return value.toLowerCase();
+      const fromUrl = getCanonicalPlaceId(value);
+      if (fromUrl) return fromUrl.toLowerCase();
+    }
+    for (const url of [record.mapsUrl, record.href]) {
+      const value = getCanonicalPlaceId(url || "");
+      if (value) return value.toLowerCase();
+    }
+    return "";
+  }
+
+  function enrichCanonicalMatches(listData, place) {
+    const expected = getRecordCanonicalPlaceId(listData);
+    if (!expected) return true;
+    const expectedKind = expected.startsWith("chij") ? "chij" : "slug";
+    const actualUrls = [window.location.href, place?.mapsUrl || ""];
+    const actualUrlCanonicals = actualUrls
+      .map((url) => getCanonicalPlaceId(url || "").toLowerCase())
+      .filter(Boolean);
+    const sameKindCanonicals = actualUrlCanonicals.filter((value) =>
+      expectedKind === "chij" ? value.startsWith("chij") : value.startsWith("slug:")
+    );
+
+    if (sameKindCanonicals.length) {
+      return sameKindCanonicals.every((value) => value === expected);
+    }
+
+    const expectedSlugs = new Set(
+      [listData?.href, listData?.mapsUrl]
+        .map((url) => getPlaceSlug(url || "").replace(/\s+/g, " ").trim())
+        .filter(Boolean)
+    );
+    const actualSlugs = actualUrls
+      .map((url) => getPlaceSlug(url || "").replace(/\s+/g, " ").trim())
+      .filter(Boolean);
+    const directActual = [place?.googlePlaceId, place?.placeId]
+      .map((value) => String(value || "").trim().toLowerCase())
+      .find((value) => /^(?:chij|slug:)/.test(value));
+    if (!actualUrlCanonicals.length && !actualSlugs.length && directActual) {
+      const directKind = directActual.startsWith("chij") ? "chij" : "slug";
+      if (directKind === expectedKind) return directActual === expected;
+    }
+
+    const slugsMatch =
+      expectedSlugs.size > 0 &&
+      actualSlugs.length > 0 &&
+      actualSlugs.every((slug) => expectedSlugs.has(slug));
+    return slugsMatch && strictNameMatch(listData?.name, place?.name);
+  }
+
+  function cancelActiveEnrich(opId) {
+    if (!activeEnrichTask || !activeEnrichCancelMarker) return false;
+    if (opId && activeEnrichOpId !== opId) return false;
+    activeEnrichCancelMarker.cancelled = true;
+    return true;
+  }
+
+  function runEnrichPlaceMessage(data = {}) {
+    data = data || {};
+    const opId = String(data.opId || "").trim();
+    if (!opId) {
+      return Promise.resolve({ success: false, opId, error: "Thiếu opId cho thao tác bổ sung." });
+    }
+    if (activeEnrichTask && activeEnrichOpId === opId) return activeEnrichTask;
+
+    const previousTask = activeEnrichTask;
+    if (activeEnrichCancelMarker) activeEnrichCancelMarker.cancelled = true;
+    const cancelMarker = { cancelled: false };
+
+    const task = (async () => {
+      if (previousTask) await previousTask.catch(() => {});
+      if (cancelMarker.cancelled) {
+        return { success: false, opId, error: "Thao tác bổ sung đã bị hủy." };
+      }
+
+      const {
+        listData,
+        searchParams,
+        progressText,
+        percent,
+        fast = false,
+        thorough = false
+      } = data;
+      const profile = typeof getEnrichProfile === "function" ? getEnrichProfile(listData) : null;
+      const place = await enrichPlaceOnPage(listData, searchParams, progressText, percent, {
+        fast: thorough ? false : fast || profile?.fast,
+        quick: thorough ? false : profile?.quick,
+        needAddress: thorough ? true : profile?.needAddress !== false,
+        needPhone: thorough ? true : profile?.needPhone !== false
+      });
+
+      if (cancelMarker.cancelled) {
+        return { success: false, opId, error: "Thao tác bổ sung đã bị hủy." };
+      }
+      if (place && !enrichCanonicalMatches(listData, place)) {
+        return { success: false, opId, error: "Chi tiết Google Maps không khớp điểm bán yêu cầu." };
+      }
+      return { success: !!place, place, opId };
+    })().catch((err) => ({ success: false, opId, error: err.message }));
+
+    activeEnrichTask = task;
+    activeEnrichOpId = opId;
+    activeEnrichCancelMarker = cancelMarker;
+    task.finally(() => {
+      if (activeEnrichTask !== task) return;
+      activeEnrichTask = null;
+      activeEnrichOpId = "";
+      activeEnrichCancelMarker = null;
+    }).catch(() => {});
+    return task;
+  }
+
   window.__timDiemBanWake = function () {
     document.dispatchEvent(new CustomEvent("timdiemban-wake", { bubbles: true }));
   };
@@ -4342,6 +4626,10 @@
     if (message.action === "KEEPALIVE_TICK") {
       window.__timDiemBanWake();
       sendResponse({ ok: true });
+      return;
+    }
+    if (message.action === "GET_FEED_SIGNATURE") {
+      sendResponse({ success: true, signature: getFeedSignature(), instanceId: CONTENT_INSTANCE_ID });
       return;
     }
     if (message.action === "SCRAPE_ABORT") {
@@ -4377,24 +4665,20 @@
       return true;
     }
     if (message.action === "ENRICH_PLACE") {
-      const {
-        listData,
-        searchParams,
-        progressText,
-        percent,
-        fast = false,
-        thorough = false
-      } = message.data || {};
-      const profile = typeof getEnrichProfile === "function" ? getEnrichProfile(listData) : null;
-      enrichPlaceOnPage(listData, searchParams, progressText, percent, {
-        fast: thorough ? false : fast || profile?.fast,
-        quick: thorough ? false : profile?.quick,
-        needAddress: thorough ? true : profile?.needAddress !== false,
-        needPhone: thorough ? true : profile?.needPhone !== false
-      })
-        .then((place) => sendResponse({ success: !!place, place }))
-        .catch((err) => sendResponse({ success: false, error: err.message }));
+      const opId = String(message.data?.opId || "").trim();
+      runEnrichPlaceMessage(message.data)
+        .then(sendResponse)
+        .catch((err) => sendResponse({ success: false, opId, error: err.message }));
       return true;
+    }
+    if (message.action === "ENRICH_ABORT") {
+      const opId = String(message.data?.opId || "").trim();
+      if (!opId) {
+        sendResponse({ success: false, opId, error: "Thiếu opId cho thao tác hủy." });
+        return;
+      }
+      sendResponse({ success: true, opId, cancelled: cancelActiveEnrich(opId) });
+      return;
     }
     if (message.action === "ENRICH_ONE") {
       enrichOneFromList(message.data)
@@ -4418,6 +4702,7 @@
   window.__timDiemBanCleanup = function () {
     extAlive = false;
     isAborted = true;
+    if (activeEnrichCancelMarker) activeEnrichCancelMarker.cancelled = true;
     document.removeEventListener("visibilitychange", handleVisibilityChange);
     try {
       chrome.runtime.onMessage.removeListener(handleRuntimeMessage);

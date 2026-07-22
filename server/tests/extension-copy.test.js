@@ -7,6 +7,12 @@ const rootDir = path.join(__dirname, "..", "..");
 const read = (...parts) => fs.readFileSync(path.join(rootDir, ...parts), "utf8");
 const manifest = JSON.parse(read("extension", "manifest.json"));
 
+function readSetLiteral(source, name) {
+  const match = source.match(new RegExp(`const\\s+${name}\\s*=\\s*new Set\\((\\[[\\s\\S]*?\\])\\);`));
+  assert.ok(match, `không tìm thấy allowlist ${name}`);
+  return Function(`"use strict"; return (${match[1]});`)();
+}
+
 test("manifest mô tả đúng sản phẩm và có metadata phát hành đầy đủ", () => {
   assert.equal(manifest.manifest_version, 3);
   assert.equal(manifest.name, "Findmap – Tìm điểm bán");
@@ -120,4 +126,24 @@ test("thông báo kết nối không còn chỉ dẫn kỹ thuật hoặc gây h
       assert.equal(pattern.test(source), false, `${file} còn copy lỗi thời: ${pattern}`);
     }
   }
+});
+
+test("build release khóa đúng allowlist quyền và production hosts", () => {
+  const build = read("scripts", "build-extension-release.js");
+
+  assert.deepEqual(readSetLiteral(build, "allowedReleasePermissions"), [
+    "tabs",
+    "windows",
+    "storage",
+    "scripting",
+    "alarms"
+  ]);
+  assert.deepEqual(readSetLiteral(build, "allowedReleaseHosts"), [
+    "https://www.google.com/maps/*",
+    "https://findmap.vn/*",
+    "https://www.findmap.vn/*",
+    "https://app.findmap.vn/*"
+  ]);
+  assert.match(build, /!allowedReleasePermissions\.has\(permission\)/);
+  assert.match(build, /!allowedReleaseHosts\.has\(pattern\)/);
 });
