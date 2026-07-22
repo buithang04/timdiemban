@@ -28,6 +28,8 @@
     scrapeLog: document.getElementById("scrapeLog"),
     extHint: document.getElementById("extHint"),
     mapsFocusModal: document.getElementById("mapsFocusModal"),
+    mapsFocusModalTitle: document.getElementById("mapsFocusModalTitle"),
+    mapsFocusModalLead: document.getElementById("mapsFocusModalLead"),
     mapsFocusModalOk: document.getElementById("mapsFocusModalOk"),
     mapsFocusModalClose: document.getElementById("mapsFocusModalClose"),
     gpsDeniedModal: document.getElementById("gpsDeniedModal"),
@@ -73,7 +75,7 @@
   function updateMapsAutoFocusLabel() {
     if (!els.mapsAutoFocusLabel) return;
     els.mapsAutoFocusLabel.textContent =
-      "Chỉ đưa Google Maps lên trước khi không phản hồi trong 5 phút hoặc thao tác thất bại. Bình thường bạn có thể làm việc ở tab khác.";
+      "Maps luôn được đưa lên trước một lần khi bắt đầu lấy danh sách. Bật tùy chọn này để tự khôi phục Maps nếu không có dữ liệu mới trong 5 phút hoặc thao tác thất bại.";
   }
 
   function syncMapsAutoFocusCheckbox(enabled) {
@@ -639,12 +641,31 @@
     els.scrapeLog.scrollTop = els.scrapeLog.scrollHeight;
   }
 
-  function showMapsFocusModal() {
+  function showMapsFocusModal(status = {}) {
+    const listInterrupted = status.mapsTabHiddenDuringList === true;
+    if (els.mapsFocusModal) {
+      els.mapsFocusModal.dataset.mode = listInterrupted ? "list-hidden" : "recovery";
+    }
+    if (els.mapsFocusModalTitle) {
+      els.mapsFocusModalTitle.textContent = listInterrupted
+        ? "Hãy quay lại tab Google Maps"
+        : "Đang khôi phục tab Maps";
+    }
+    if (els.mapsFocusModalLead) {
+      els.mapsFocusModalLead.textContent = listInterrupted
+        ? "Findmap đang lấy danh sách URL của khu vực hiện tại. Khi Maps ở nền, bước này có thể bị gián đoạn; hãy quay lại tab Google Maps để hệ thống tiếp tục lấy đủ danh sách."
+        : "Tiến trình đang chậm hoặc kết quả về Findmap bị trễ. Hãy giữ tab Google Maps mở; Findmap sẽ thử kết nối lại ở nền. Nếu không có dữ liệu mới trong 5 phút hoặc thao tác nền thất bại, tiện ích mới tự đưa tab Maps lên trước để khôi phục.";
+    }
     els.mapsFocusModal?.classList.remove("hidden");
   }
 
   function hideMapsFocusModal() {
     els.mapsFocusModal?.classList.add("hidden");
+    if (els.mapsFocusModal) delete els.mapsFocusModal.dataset.mode;
+  }
+
+  function hideMapsListInterruptionModal() {
+    if (els.mapsFocusModal?.dataset.mode === "list-hidden") hideMapsFocusModal();
   }
 
   function getShownResultCount() {
@@ -653,6 +674,7 @@
 
   function shouldShowMapsIssueModal(status) {
     if (!status) return false;
+    if (status.mapsTabHiddenDuringList === true) return true;
     if (status.stalled) return true;
     const extCount = Number(status.mergedCount || 0);
     const shown = getShownResultCount();
@@ -677,7 +699,7 @@
     if (!searchRunning || !els.searchStatus) return;
     if (document.visibilityState === "hidden") {
       showSearchStatus(
-        "Tìm kiếm vẫn tiếp tục và kết quả đang được đồng bộ. Giữ tab Maps mở; Findmap chỉ đưa Maps lên trước nếu không phản hồi trong 5 phút hoặc thao tác nền thất bại.",
+        "Tìm kiếm vẫn tiếp tục và kết quả đang được đồng bộ. Khi Maps đang lấy danh sách URL, hãy giữ tab đó ở phía trước; giai đoạn đọc chi tiết vẫn có thể chạy khi bạn dùng tab khác.",
         "info"
       );
     }
@@ -994,7 +1016,7 @@
       setSearchRunning(true);
       if (status.mapsAutoFocus != null) syncMapsAutoFocusCheckbox(!!status.mapsAutoFocus);
       if (status.mapsAutoReopen != null) syncMapsAutoReopenCheckbox(!!status.mapsAutoReopen);
-      if (shouldShowMapsIssueModal(status)) showMapsFocusModal();
+      if (shouldShowMapsIssueModal(status)) showMapsFocusModal(status);
       else hideMapsFocusModal();
       maybeRequestSearchSync(status);
       if (isExtensionSearchAlive(status) || status.stalled) {
@@ -1245,7 +1267,7 @@
           const endPromise = waitForSearchEnd(searchParams.searchId);
           await startSearchExclusive(searchParams);
           const autoFocusHint = searchParams.mapsAutoFocus
-            ? "Bạn có thể làm việc ở tab khác; Maps chỉ được đưa lên trước nếu không phản hồi trong 5 phút."
+            ? "Khi lấy danh sách từng khu vực, hãy giữ Maps ở phía trước; khi đọc chi tiết URL bạn có thể dùng tab khác. Maps chỉ tự quay lại nếu không có dữ liệu mới trong 5 phút."
             : "Đang tắt tự khôi phục tab Maps khi tiến trình không phản hồi.";
           showSearchStatus(`${stepLabel} — ${autoFocusHint}`, "info");
 
@@ -1375,7 +1397,8 @@
       const { percent, text } = event.data.payload || {};
       if (text) updateSearchProgress(percent || 0, text);
       const maybeStatus = event.data.payload || {};
-      if (shouldShowMapsIssueModal(maybeStatus)) showMapsFocusModal();
+      if (maybeStatus.mapsTabHiddenDuringList === false) hideMapsListInterruptionModal();
+      else if (shouldShowMapsIssueModal(maybeStatus)) showMapsFocusModal(maybeStatus);
       return;
     }
 

@@ -167,7 +167,7 @@
                 </label>
                 <label class="wm-check-row" for="searchMapsAutoFocus">
                   <input type="checkbox" id="searchMapsAutoFocus" />
-                  <span id="searchMapsAutoFocusLabel">Chỉ đưa Maps lên trước khi không phản hồi trong 5 phút hoặc thao tác thất bại.</span>
+                  <span id="searchMapsAutoFocusLabel">Maps luôn được đưa lên trước một lần khi bắt đầu lấy danh sách. Tùy chọn này bật/tắt tự khôi phục sau 5 phút không có dữ liệu.</span>
                 </label>
                 <label class="wm-check-row" for="searchMapsAutoReopen">
                   <input type="checkbox" id="searchMapsAutoReopen" />
@@ -381,7 +381,7 @@
     <div class="maps-focus-modal-box">
       <button type="button" id="mapsFocusModalClose" class="maps-focus-close-btn" title="Đóng" aria-label="Đóng">✕</button>
       <h2 id="mapsFocusModalTitle">Đang khôi phục tab Maps</h2>
-      <p class="maps-focus-modal-lead">
+      <p id="mapsFocusModalLead" class="maps-focus-modal-lead">
         Tiến trình đang chậm hoặc kết quả về Findmap bị trễ. Hãy giữ tab Google Maps mở; Findmap sẽ thử kết nối lại ở nền.
         Nếu không có dữ liệu mới trong 5 phút hoặc thao tác nền thất bại, tiện ích mới tự đưa tab Maps lên trước để khôi phục.
       </p>

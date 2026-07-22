@@ -15,6 +15,10 @@ function section(start, end) {
   return content.slice(from, to);
 }
 
+function plain(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
 function makeFeed(urls) {
   const links = urls.map((href) => ({ href, getAttribute: () => href }));
   return {
@@ -22,6 +26,50 @@ function makeFeed(urls) {
     querySelectorAll: () => links
   };
 }
+
+test("visibilitychange báo hidden đúng pha list kèm lease và vẫn báo visible", () => {
+  const source = section("function handleVisibilityChange", "document.addEventListener");
+  const sent = [];
+  const dispatched = [];
+  const lease = { runId: "run-visible", cellGeneration: 6 };
+  const document = {
+    hidden: true,
+    dispatchEvent: (event) => dispatched.push(event.type)
+  };
+  const context = vm.createContext({
+    document,
+    scrapeInProgress: true,
+    activeCellTask: {},
+    activeCellLease: lease,
+    safeSend: (message) => sent.push(message),
+    CustomEvent: class CustomEvent {
+      constructor(type) {
+        this.type = type;
+      }
+    }
+  });
+  vm.runInContext(`${source}\nthis.handleVisibilityChange = handleVisibilityChange;`, context);
+
+  context.handleVisibilityChange();
+  assert.deepEqual(plain(sent), [
+    { action: "MAPS_TAB_HIDDEN", runId: "run-visible", cellGeneration: 6 }
+  ]);
+
+  document.hidden = false;
+  context.handleVisibilityChange();
+  assert.deepEqual(plain(sent[1]), {
+    action: "MAPS_TAB_VISIBLE",
+    runId: "run-visible",
+    cellGeneration: 6
+  });
+  assert.deepEqual(dispatched, ["timdiemban-wake", "timdiemban-wake"]);
+
+  sent.length = 0;
+  document.hidden = true;
+  context.activeCellTask = null;
+  context.handleVisibilityChange();
+  assert.deepEqual(sent, [], "hidden ngoài pha list không được phát cảnh báo");
+});
 
 test("feed fingerprint includes every canonical URL and ignores DOM order", () => {
   const source = section("function hashFeedUrls", "/** Chờ Maps tải đúng vùng");

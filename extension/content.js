@@ -1,6 +1,6 @@
 (function () {
   // Bump version mỗi lần sửa content — background sẽ reinject nếu Maps còn bản cũ
-  const CONTENT_VERSION = 70;
+  const CONTENT_VERSION = 71;
   if (window.__timDiemBanLoaded && window.__timDiemBanVersion === CONTENT_VERSION) return;
   if (typeof window.__timDiemBanCleanup === "function") {
     try {
@@ -160,8 +160,12 @@
   }
 
   function handleVisibilityChange() {
-    if (!document.hidden && scrapeInProgress) {
-      safeSend({ action: "MAPS_TAB_VISIBLE" });
+    if (document.hidden) {
+      if (activeCellTask && activeCellLease) {
+        safeSend({ action: "MAPS_TAB_HIDDEN", ...activeCellLease });
+      }
+    } else if (scrapeInProgress) {
+      safeSend({ action: "MAPS_TAB_VISIBLE", ...(activeCellLease || {}) });
     }
     document.dispatchEvent(new CustomEvent("timdiemban-wake", { bubbles: true }));
   }
@@ -214,7 +218,7 @@
         <div class="shield-text" id="timdiemban-shield-text">Đang chuẩn bị thu thập thông tin điểm bán…</div>
         <div class="shield-bar-wrap"><div class="shield-bar" id="timdiemban-shield-bar"></div></div>
         <div class="shield-percent" id="timdiemban-shield-percent">0%</div>
-        <div class="shield-warn" id="timdiemban-shield-warn">Findmap có thể tiếp tục làm việc khi tab này ở nền. Chỉ khi Google Maps không phản hồi trong 5 phút, tab mới được đưa lên trước để khôi phục.</div>
+        <div class="shield-warn" id="timdiemban-shield-warn">Trong lúc lấy danh sách URL, hãy giữ tab Google Maps ở phía trước. Khi chuyển sang đọc chi tiết từng URL, bạn có thể làm việc ở tab khác; nếu Google Maps không phản hồi trong 5 phút, tab mới được đưa lên để khôi phục.</div>
         <div class="shield-hint">Không đóng hoặc tải lại tab Google Maps cho đến khi Findmap báo hoàn tất.</div>
       </div>`;
     const block = (e) => { e.stopPropagation(); e.preventDefault(); };
@@ -227,7 +231,7 @@
 
   function formatShieldWarn(webLabel) {
     const target = webLabel || "Findmap";
-    return `Kết quả đang được đồng bộ về ${target}. Bạn có thể làm việc ở tab khác; Maps chỉ được đưa lên trước khi không phản hồi trong 5 phút.`;
+    return `Kết quả đang đồng bộ về ${target}. Hãy giữ Maps ở phía trước khi lấy danh sách URL; ở giai đoạn đọc chi tiết, bạn có thể dùng tab khác. Maps chỉ tự quay lại khi không có dữ liệu mới trong 5 phút.`;
   }
 
   function resolveWebLabel(webUrl) {

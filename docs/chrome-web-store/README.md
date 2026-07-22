@@ -25,8 +25,9 @@ nếu còn quyền `debugger`.
 
 - Cài ZIP bằng `chrome://extensions` ở Developer mode.
 - Đăng nhập Findmap, chạy một lượt tìm kiếm ngắn và một lượt nhiều khu vực.
-- Chạy tìm kiếm; xác nhận tab Maps chuyên dụng mở ở nền và không giành focus khi vẫn có dữ liệu mới.
-- Chuyển sang tab khác; xác nhận thao tác cuộn, đổi URL và đọc chi tiết trên Maps vẫn tiếp tục ở nền.
+- Chạy tìm kiếm; xác nhận tab Maps chuyên dụng được đưa lên trước đúng một lần khi bắt đầu lấy danh sách URL của mỗi khu vực hoặc khi retry lỗi; chunk tiếp tục cùng khu vực không giành lại focus.
+- Chuyển sang tab khác trong lúc lấy danh sách; xác nhận Findmap hiện cảnh báo và không kéo Maps trở lại liên tục. Quay lại Maps để tiếp tục lấy đủ danh sách.
+- Chuyển sang tab khác trong giai đoạn đọc chi tiết URL; xác nhận thao tác đổi URL và đọc thông tin vẫn tiếp tục ở nền.
 - Mô phỏng Maps không phản hồi; xác nhận tab không được đưa lên trước trong 5 phút đầu và chỉ focus một lần để khôi phục sau ngưỡng này hoặc khi thao tác thực sự thất bại.
 - Trong lúc quét, bấm "service worker" > Terminate/Stop nếu Chrome cung cấp, sau đó chờ tối đa 30–60 giây và xác nhận phiên tự tiếp tục.
 - Khởi động lại Chrome trong lúc quét với tùy chọn tự mở lại Maps đang bật và xác nhận checkpoint được khôi phục.
@@ -35,8 +36,10 @@ nếu còn quyền `debugger`.
 ## 4. Lưu ý duyệt chợ
 
 Manifest V3 không hỗ trợ service worker chạy vĩnh viễn và không bảo đảm tab nền luôn render.
-Findmap ưu tiên chạy Maps ở nền, dùng alarm, storage checkpoint và event của tab để phục hồi;
-chỉ đưa Maps lên trước tạm thời khi không có dữ liệu mới trong 5 phút hoặc thao tác nền thất bại.
+Findmap đưa Maps lên trước một lần khi bắt đầu lấy danh sách URL của mỗi khu vực hoặc khi retry lỗi, sau đó
+không giành lại focus nếu người dùng đổi tab. Alarm, storage checkpoint và event của tab dùng để
+phục hồi; ngoài lần bắt đầu pha list, Maps chỉ tự quay lại khi không có dữ liệu mới trong 5 phút
+hoặc thao tác nền thất bại.
 Pha cuộn dài được chia thành các chunk dưới 5 phút, lưu URL đã gom vào checkpoint rồi tiếp tục
 cùng ô. Trong đúng thời gian thao tác do người dùng khởi chạy, background gửi wake message có giới
 hạn để timer của tab ẩn tiếp tục tiến; pulse dừng ngay khi chunk/URL hoàn tất và không chạy khi rảnh.
