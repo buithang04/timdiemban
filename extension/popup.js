@@ -6,6 +6,9 @@
   const link = document.getElementById("openWebLink");
   const hint = document.getElementById("openWebHint");
   const status = document.getElementById("statusLine");
+  const backgroundMode = document.querySelector(".background-mode");
+  const backgroundModeText = document.getElementById("backgroundModeText");
+  const enableBackgroundMode = document.getElementById("enableBackgroundMode");
 
   function normalizeOrigin(value) {
     const candidate = String(value || "").trim().replace(/\/$/, "");
@@ -29,7 +32,47 @@
     status.classList.toggle("is-warning", warning);
   }
 
+  async function hasBackgroundMode() {
+    try {
+      return await chrome.permissions.contains({ permissions: ["debugger"] });
+    } catch {
+      return false;
+    }
+  }
+
+  function renderBackgroundMode(enabled, error = "") {
+    backgroundMode?.classList.toggle("is-enabled", enabled);
+    if (backgroundModeText) {
+      backgroundModeText.textContent = enabled
+        ? "Đã bật. Google Maps có thể tiếp tục xử lý ổn định khi nằm ở tab nền."
+        : error || "Cho phép Findmap giữ Google Maps hoạt động khi bạn chuyển sang tab khác.";
+    }
+    if (enableBackgroundMode) {
+      enableBackgroundMode.disabled = enabled;
+      enableBackgroundMode.textContent = enabled ? "Đã bật quét nền ổn định" : "Bật chế độ này";
+    }
+  }
+
+  async function refreshBackgroundMode() {
+    renderBackgroundMode(await hasBackgroundMode());
+  }
+
   setPreferred(configuredOrigin);
+  refreshBackgroundMode();
+
+  enableBackgroundMode?.addEventListener("click", async () => {
+    enableBackgroundMode.disabled = true;
+    enableBackgroundMode.textContent = "Đang xin quyền…";
+    try {
+      const granted = await chrome.permissions.request({ permissions: ["debugger"] });
+      renderBackgroundMode(granted, granted ? "" : "Bạn chưa cấp quyền. Findmap vẫn hoạt động nhưng sẽ đưa tab Maps lên trước.");
+      if (granted) {
+        chrome.runtime.sendMessage({ action: "BACKGROUND_MODE_CHANGED", data: { enabled: true } }).catch(() => {});
+      }
+    } catch {
+      renderBackgroundMode(false, "Không bật được quyền quét nền. Hãy thử lại sau.");
+    }
+  });
 
   chrome.runtime.sendMessage({ action: "GET_WEB_ORIGINS" }, (response) => {
     if (chrome.runtime.lastError || !response) return;

@@ -48,3 +48,13 @@ NEWS_ORIGIN=http://localhost:3001
 Prod: đặt cả hai về domain thật (cùng host hoặc subdomain). Chạy `node scripts/sync-app-config.js`.
 
 Không hardcode `localhost:3001` trong HTML — link CMS/login lấy từ config / `/api/config/origins`.
+
+## Đóng gói Chrome Extension
+
+```bash
+cd server
+npm run build:extension
+```
+
+ZIP phát hành nằm trong `dist/`. Checklist, privacy policy và permission justification ở
+`docs/chrome-web-store/`.

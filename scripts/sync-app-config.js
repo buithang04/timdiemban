@@ -52,11 +52,11 @@ function collectWebUrlPatterns(...origins) {
     }
     try {
       const host = new URL(base).hostname;
-      // Cùng root domain .findmap.vn → luôn cho phép subdomain (đổi app.* vẫn chạy)
+      // Chỉ khai báo các host Findmap thực sự dùng để đáp ứng least privilege.
       if (/(^|\.)findmap\.vn$/i.test(host)) {
         patterns.add("https://app.findmap.vn/*");
-        patterns.add("https://*.findmap.vn/*");
         patterns.add("https://findmap.vn/*");
+        patterns.add("https://www.findmap.vn/*");
       }
     } catch {}
   }
@@ -64,7 +64,6 @@ function collectWebUrlPatterns(...origins) {
   patterns.add("https://findmap.vn/*");
   patterns.add("https://www.findmap.vn/*");
   patterns.add("https://app.findmap.vn/*");
-  patterns.add("https://*.findmap.vn/*");
   patterns.add("https://findmap.app.chatplus.io.vn/*");
   // Dev local luôn được phép
   patterns.add("http://localhost:3000/*");
@@ -174,7 +173,6 @@ function syncManifest() {
     "https://findmap.vn/*",
     "https://www.findmap.vn/*",
     "https://app.findmap.vn/*",
-    "https://*.findmap.vn/*",
     "http://localhost/*",
     "http://127.0.0.1/*"
   ];
@@ -188,12 +186,11 @@ function syncManifest() {
 
   manifest.host_permissions = [
     "https://www.google.com/maps/*",
-    ...bridgeMatches,
-    "http://*/*",
-    "https://*/*"
+    ...bridgeMatches
   ];
   manifest.host_permissions = [...new Set(manifest.host_permissions)];
-  delete manifest.optional_host_permissions;
+  manifest.optional_permissions = [...new Set([...(manifest.optional_permissions || []), "debugger"])]
+    .filter((permission) => !(manifest.permissions || []).includes(permission));
 
   const bridge = manifest.content_scripts.find((s) => (s.js || []).includes("web-bridge.js"));
   if (bridge) {

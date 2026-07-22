@@ -22,7 +22,7 @@ function plain(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
-function loadBoostHelpers({ attachError } = {}) {
+function loadBoostHelpers({ attachError, permissionGranted = true } = {}) {
   const state = {
     attachCalls: [],
     commands: [],
@@ -32,6 +32,10 @@ function loadBoostHelpers({ attachError } = {}) {
     onDetach: null
   };
   const chrome = {
+    permissions: {
+      contains: async ({ permissions }) =>
+        permissionGranted && Array.isArray(permissions) && permissions.includes("debugger")
+    },
     debugger: {
       attach: async (target, version) => {
         state.attachCalls.push([target, version]);
@@ -76,11 +80,18 @@ this.maybeReleaseMapsBoost = maybeReleaseMapsBoost;`,
   return { context, state };
 }
 
-test("manifest khai báo quyền debugger cho chế độ quét nền", () => {
+test("manifest khai báo debugger là quyền tùy chọn cho chế độ quét nền", () => {
   assert.ok(
-    manifest.permissions.includes("debugger"),
-    "thiếu quyền debugger — chế độ quét nền không hoạt động"
+    manifest.optional_permissions.includes("debugger"),
+    "debugger phải là quyền tùy chọn để không cảnh báo quá mức khi cài đặt"
   );
+  assert.equal(manifest.permissions.includes("debugger"), false);
+});
+
+test("chưa cấp quyền debugger thì dùng fallback và không thử attach", async () => {
+  const { context, state } = loadBoostHelpers({ permissionGranted: false });
+  assert.equal(await context.enableMapsBoost(7), false);
+  assert.equal(state.attachCalls.length, 0);
 });
 
 test("bật chế độ quét nền: gắn debugger, giả lập focus và ép render khung hình", async () => {

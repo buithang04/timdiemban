@@ -5,7 +5,6 @@
 const EXTRA_WEB_ORIGINS_KEY = "timdiemban_extra_web_origins";
 const PREFERRED_WEB_ORIGIN_KEY = "timdiemban_preferred_web_origin";
 const BRIDGE_SCRIPT_ID = "timdiemban-web-bridge";
-const BROAD_ORIGINS = ["http://*/*", "https://*/*"];
 
 function normalizeOrigin(urlOrOrigin) {
   try {
@@ -15,11 +14,6 @@ function normalizeOrigin(urlOrOrigin) {
   } catch {
     return "";
   }
-}
-
-function originPattern(origin) {
-  const o = normalizeOrigin(origin);
-  return o ? `${o}/*` : "";
 }
 
 function isMapsOrChromeUrl(url) {
@@ -62,45 +56,6 @@ async function getPreferredWebOrigin() {
     return normalizeOrigin(data[PREFERRED_WEB_ORIGIN_KEY]) || getAppOrigin();
   } catch {
     return getAppOrigin();
-  }
-}
-
-async function hasBroadHostAccess() {
-  try {
-    return await chrome.permissions.contains({ origins: BROAD_ORIGINS });
-  } catch {
-    return true;
-  }
-}
-
-async function hasOriginPermission(origin) {
-  const pattern = originPattern(origin);
-  if (!pattern) return false;
-  try {
-    if (await chrome.permissions.contains({ origins: BROAD_ORIGINS })) return true;
-    return await chrome.permissions.contains({ origins: [pattern] });
-  } catch {
-    return true;
-  }
-}
-
-async function requestOriginPermission(origin) {
-  if (await hasOriginPermission(origin)) return true;
-  const pattern = originPattern(origin);
-  if (!pattern) return false;
-  try {
-    return await chrome.permissions.request({ origins: [pattern] });
-  } catch {
-    return false;
-  }
-}
-
-async function requestBroadHostAccess() {
-  if (await hasBroadHostAccess()) return true;
-  try {
-    return await chrome.permissions.request({ origins: BROAD_ORIGINS });
-  } catch {
-    return false;
   }
 }
 
@@ -169,13 +124,6 @@ async function ensureBridgeOnTab(tab) {
   };
 }
 
-async function grantBroadAndResync() {
-  const ok = await requestBroadHostAccess();
-  if (!ok) return { ok: false, error: "Tiện ích chưa được cấp quyền truy cập trang này." };
-  await cleanupStaleRegisteredScripts();
-  return { ok: true, broad: true };
-}
-
 async function syncRegisteredBridgeScripts() {
   await cleanupStaleRegisteredScripts();
 }
@@ -197,7 +145,6 @@ async function inspectActiveTab() {
     title: tab.title || "",
     isFindmap,
     permitted: true,
-    broad: await hasBroadHostAccess(),
     preferred: await getPreferredWebOrigin(),
     extra: await getExtraWebOrigins(),
     silent: true

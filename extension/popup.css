@@ -84,6 +84,63 @@ h1 {
   background: #fffbeb;
 }
 
+.background-mode {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid #d9e2ef;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.background-mode h2 {
+  margin: 0;
+  color: #172033;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.background-mode p {
+  margin: 5px 0 0;
+  color: #526078;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.background-mode.is-enabled {
+  border-color: #b7dfc5;
+  background: #f3fbf5;
+}
+
+.permission-button {
+  width: 100%;
+  margin-top: 10px;
+  padding: 9px 12px;
+  border: 1px solid #b8c8dd;
+  border-radius: 8px;
+  color: #1d4ed8;
+  background: #f8fbff;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.permission-button:hover:not(:disabled) {
+  background: #eef5ff;
+}
+
+.permission-button:focus-visible {
+  outline: 3px solid rgba(37, 99, 235, 0.25);
+  outline-offset: 2px;
+}
+
+.permission-button:disabled {
+  border-color: #b7dfc5;
+  color: #166534;
+  background: transparent;
+  cursor: default;
+}
+
 .open-link {
   display: block;
   width: 100%;

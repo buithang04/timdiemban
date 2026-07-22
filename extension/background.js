@@ -1,4 +1,12 @@
-importScripts("app-config.js", "web-config.js", "site-bridge.js", "run-lease.js", "place-fields.js", "grid.js");
+importScripts(
+  "app-config.js",
+  "web-config.js",
+  "site-bridge.js",
+  "lifecycle.js",
+  "run-lease.js",
+  "place-fields.js",
+  "grid.js"
+);
 
 /** URL search Maps — cạnh ô cố định (m), chỉ đổi tâm @lat,lng */
 function buildMapsUrl(keyword, lat, lng, viewportM) {
@@ -58,7 +66,6 @@ let stallRecoveryBusy = false;
 let mapsReloadRecoverBusy = false;
 let mapsReloadTimer = null;
 let syncDebounceTimer = null;
-let keepAliveTimer = null;
 const MAPS_AUTO_FOCUS_ALARM = "timdiemban_maps_focus";
 let mapsCellWorkDepth = 0;
 let mapsTabInactiveSince = 0;
@@ -68,8 +75,16 @@ let mapsTabLossBusy = false;
 const CELL_SCRAPE_TIMEOUT_MS = 600000;
 
 const SCRAPE_CHECKPOINT_KEY = "scrapeCheckpoint";
+const RESCAN_CHECKPOINT_KEY = "rescanCheckpoint";
 const PENDING_SYNC_KEY = "pendingSearchSync";
+const DurableLifecycle = globalThis.TimDiemBanLifecycle;
+const DURABLE_WORK_ALARM = DurableLifecycle.WATCHDOG_ALARM;
+const DURABLE_WORK_PERIOD_MINUTES = DurableLifecycle.WATCHDOG_PERIOD_MINUTES;
 const WEB_DATA_TYPES = new Set(["item", "sync", "items_batch", "progress", "complete", "start"]);
+
+let serviceBootComplete = false;
+let serviceBootPromise = null;
+let durableRecoveryBusy = false;
 
 let persistSyncTimer = null;
 let persistCheckpointTimer = null;
@@ -83,6 +98,13 @@ let pushSyncBusy = false;
 let pushSyncQueued = null;
 let reconcilePending = false;
 let itemDeliveryCheckTimer = null;
+
+function toDurableSearchParams(params) {
+  if (!params || typeof params !== "object") return params;
+  const durable = { ...params };
+  delete durable.authToken;
+  return durable;
+}
 
 function scheduleItemDeliveryCheck() {
   if (itemDeliveryCheckTimer) return;
@@ -185,6 +207,15 @@ function isMapsBoostSupported() {
   return typeof chrome.debugger?.attach === "function";
 }
 
+async function hasMapsBoostPermission() {
+  if (!isMapsBoostSupported()) return false;
+  try {
+    return await chrome.permissions.contains({ permissions: ["debugger"] });
+  } catch {
+    return false;
+  }
+}
+
 async function sendBoostCommand(method, params) {
   if (!mapsBoost.attached || mapsBoost.tabId == null) return;
   await chrome.debugger.sendCommand({ tabId: mapsBoost.tabId }, method, params || {});
@@ -211,6 +242,7 @@ async function assertMapsBoostState() {
 
 async function enableMapsBoost(tabId) {
   if (!isMapsBoostSupported() || mapsBoost.unavailable || !Number.isInteger(tabId)) return false;
+  if (!(await hasMapsBoostPermission())) return false;
   if (mapsBoost.attached && mapsBoost.tabId === tabId) return true;
   if (Date.now() - mapsBoost.lastAttachFailAt < 10000) return false;
   if (mapsBoost.attached) await disableMapsBoost();
@@ -396,7 +428,6 @@ async function scrapeKeepAliveTick() {
 
   persistScrapeCheckpoint().catch(() => {});
   maybeRecoverStalledScrape().catch(() => {});
-  chrome.alarms.create("timdiemban_scrape", { delayInMinutes: 0.5 });
 }
 
 async function focusMapsTabForSearch() {
@@ -442,28 +473,62 @@ function stopMapsAutoFocus() {
   chrome.alarms.clear(MAPS_AUTO_FOCUS_ALARM);
 }
 
+async function ensureDurableWorkAlarm() {
+  try {
+    const current = await chrome.alarms.get(DURABLE_WORK_ALARM);
+    if (current?.periodInMinutes === DURABLE_WORK_PERIOD_MINUTES) return;
+  } catch {}
+  chrome.alarms.create(DURABLE_WORK_ALARM, {
+    delayInMinutes: DURABLE_WORK_PERIOD_MINUTES,
+    periodInMinutes: DURABLE_WORK_PERIOD_MINUTES
+  });
+}
+
+async function clearDurableWorkAlarmIfIdle() {
+  if (scrapeState.running || rescanState.running) return;
+  try {
+    const [scrapeCheckpoint, rescanCheckpoint] = await Promise.all([
+      getScrapeCheckpoint(),
+      getRescanCheckpoint()
+    ]);
+    if (
+      DurableLifecycle.isRecoverableScrapeCheckpoint(scrapeCheckpoint) ||
+      DurableLifecycle.isRecoverableRescanCheckpoint(rescanCheckpoint)
+    ) {
+      await ensureDurableWorkAlarm();
+      return;
+    }
+  } catch {}
+  chrome.alarms.clear(DURABLE_WORK_ALARM);
+}
+
 function startScrapeKeepAlive() {
-  stopScrapeKeepAlive();
-  scrapeKeepAliveTick();
-  keepAliveTimer = setInterval(scrapeKeepAliveTick, 500);
+  scrapeKeepAliveTick().catch(() => {});
+  ensureDurableWorkAlarm().catch(() => {});
   syncMapsAutoFocusAlarm();
 }
 
 function stopScrapeKeepAlive() {
-  if (keepAliveTimer) {
-    clearInterval(keepAliveTimer);
-    keepAliveTimer = null;
-  }
   stopMapsAutoFocus();
-  chrome.alarms.clear("timdiemban_scrape");
+  clearDurableWorkAlarmIfIdle().catch(() => {});
 }
 
 chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === "timdiemban_scrape" && scrapeState.running) {
-    scrapeKeepAliveTick();
+  if (alarm.name === DURABLE_WORK_ALARM) {
+    recoverDurableWork("watchdog_alarm")
+      .then(async () => {
+        if (scrapeState.running) await scrapeKeepAliveTick();
+        if (rescanState.running) await persistRescanCheckpoint();
+        await clearDurableWorkAlarmIfIdle();
+      })
+      .catch((err) => console.warn("durable watchdog:", err?.message || err));
   }
-  if (alarm.name === MAPS_AUTO_FOCUS_ALARM && scrapeState.running && isMapsAutoFocusEnabled()) {
-    focusMapsTabForSearch();
+  if (alarm.name === MAPS_AUTO_FOCUS_ALARM) {
+    ensureServiceReady("maps_auto_focus_alarm")
+      .then(() => {
+        if (scrapeState.running && isMapsAutoFocusEnabled()) return focusMapsTabForSearch();
+      })
+      .catch(() => {});
   }
 });
 
@@ -865,7 +930,7 @@ function schedulePersistSearchSync() {
       await chrome.storage.local.set({
         [PENDING_SYNC_KEY]: {
           results,
-          searchParams: currentSearch || scrapeState.searchParams,
+          searchParams: toDurableSearchParams(currentSearch || scrapeState.searchParams),
           mergedCount: results.length,
           at: Date.now()
         }
@@ -882,7 +947,7 @@ function scheduleLiveSearchBackup(includeCheckpoint = true) {
   persistCheckpointTimer = setTimeout(() => {
     persistCheckpointTimer = null;
     persistScrapeCheckpoint().catch(() => {});
-  }, 250);
+  }, 1000);
 }
 
 async function clearPendingSearchSync() {
@@ -1217,28 +1282,34 @@ async function persistScrapeCheckpoint() {
   if (!scrapeState.searchParams) return;
   const running = scrapeState.running || scrapeState.mergedPlaces.size > 0;
   if (!running) return;
+  const durableSearchParams = toDurableSearchParams(scrapeState.searchParams);
   try {
     await chrome.storage.local.set({
       [SCRAPE_CHECKPOINT_KEY]: {
+        version: DurableLifecycle.CHECKPOINT_VERSION,
         running: scrapeState.running,
         runId: scrapeState.runId,
         cellGeneration: scrapeState.cellGeneration,
         lastHeartbeat: Date.now(),
+        savedAt: Date.now(),
         lastProgressAt: lastScrapeProgressAt || Date.now(),
         gridIndex: scrapeState.gridIndex,
         totalCells: scrapeState.totalCells,
         completedCells: [...scrapeState.completedCells],
         phase: scrapeState.phase,
-        searchParams: scrapeState.searchParams,
+        searchParams: durableSearchParams,
         cellSizeKm: scrapeState.cellSizeKm,
         viewportM: scrapeState.viewportM,
         gridPoints: scrapeState.gridPoints,
         mergedPlaces: Array.from(scrapeState.mergedPlaces.values()),
+        retriedCells: [...(scrapeState._retriedCells || [])],
+        mapsReopenCount: Number(scrapeState._mapsReopenCount || 0),
+        mapsUserReloadCount: Number(scrapeState._mapsUserReloadCount || 0),
         webTabId: scrapeState.webTabId,
         mapsTabId: scrapeState.mapsTabId,
         mapsWindowId: scrapeState.mapsWindowId
       },
-      activeSearch: scrapeState.searchParams
+      activeSearch: durableSearchParams
     });
   } catch (err) {
     console.warn("persistScrapeCheckpoint:", err.message);
@@ -1261,6 +1332,9 @@ function restoreScrapeStateFromCheckpoint(cp) {
   scrapeState.phase = cp.phase || "grid";
   scrapeState.completedCells = new Set(cp.completedCells || []);
   scrapeState.mergedPlaces = placesToMap(cp.mergedPlaces || []);
+  scrapeState._retriedCells = new Set(cp.retriedCells || []);
+  scrapeState._mapsReopenCount = Number(cp.mapsReopenCount || 0);
+  scrapeState._mapsUserReloadCount = Number(cp.mapsUserReloadCount || 0);
   currentSearch = { ...cp.searchParams, gridCells: cp.totalCells };
   lastScrapeProgressAt = cp.lastProgressAt || cp.lastHeartbeat || Date.now();
   return true;
@@ -1337,9 +1411,9 @@ async function maybeRecoverStalledScrape() {
   }
 }
 
-async function tryResumeFromCheckpoint() {
+async function tryResumeFromCheckpoint({ allowReopen = false } = {}) {
   const cp = await getScrapeCheckpoint();
-  if (!cp?.running || scrapeState.running) return false;
+  if (!DurableLifecycle.isRecoverableScrapeCheckpoint(cp) || scrapeState.running) return false;
 
   restoreScrapeStateFromCheckpoint(cp);
   scrapeState.running = true;
@@ -1356,20 +1430,34 @@ async function tryResumeFromCheckpoint() {
   }
 
   if (!mapsAlive) {
+    const canReopen = allowReopen || isMapsAutoReopenEnabled(scrapeState.searchParams);
+    if (canReopen) {
+      const reopened = await reopenMapsTabForSearch();
+      if (reopened) return true;
+    }
     scrapeState.running = false;
     stopScrapeKeepAlive();
+    await ensureDurableWorkAlarm();
     return false;
   }
 
-  let next = cp.gridIndex || 0;
-  while (next < cp.totalCells && cp.completedCells?.includes(next)) next += 1;
+  const next = DurableLifecycle.nextPendingCell(cp);
   if (next >= cp.totalCells) {
+    if (scrapeState.mergedPlaces.size > 0) {
+      await handleScrapeComplete({
+        searchParams: scrapeState.searchParams,
+        partial: true,
+        partialReason: "Findmap đã khôi phục phiên quét sau khi các khu vực hoàn tất"
+      });
+      return true;
+    }
     scrapeState.running = false;
     stopScrapeKeepAlive();
     return false;
   }
 
   scrapeState.gridIndex = next;
+  await ensureMapsBoost(scrapeState.mapsTabId).catch(() => false);
   notifyPopup(`Tiếp tục tìm kiếm từ khu vực ${next + 1}/${cp.totalCells}…`);
   runGridCell(next).catch(async (err) => {
     if (scrapeState.running || scrapeState.mergedPlaces.size > 0) {
@@ -1606,7 +1694,7 @@ async function getSearchStatus() {
     lastHeartbeat: lastBeat,
     lastProgressAt: lastScrapeProgressAt || cp?.lastProgressAt || lastBeat,
     canCancel: running || checkpointBusy || mergedCount > 0,
-    canResume: !running && checkpointRunning && !!liveMapsTabId,
+    canResume: !running && DurableLifecycle.isRecoverableScrapeCheckpoint(cp),
     mapsAutoFocus: scrapeState.searchParams?.mapsAutoFocus === true || cp?.searchParams?.mapsAutoFocus === true,
     mapsAutoReopen:
       scrapeState.searchParams?.mapsAutoReopen === true || cp?.searchParams?.mapsAutoReopen === true
@@ -1657,6 +1745,7 @@ async function resetScrapeState() {
   // Await xóa checkpoint — tránh web nghĩ vẫn đang chạy rồi không sang từ khóa tiếp
   await clearScrapeCheckpoint().catch(() => {});
   maybeReleaseMapsBoost();
+  await clearDurableWorkAlarmIfIdle();
 }
 
 function isMapsAutoReopenEnabled(params) {
@@ -1737,6 +1826,7 @@ async function handleSearchMapsTabLost() {
   mapsTabLossBusy = true;
   scrapeState.mapsTabId = null;
   scrapeState.mapsWindowId = null;
+  await persistScrapeCheckpoint();
 
   try {
     const params = scrapeState.searchParams;
@@ -1774,6 +1864,107 @@ async function handleSearchMapsTabLost() {
   } finally {
     mapsTabLossBusy = false;
   }
+}
+
+async function persistRescanCheckpoint() {
+  if (!rescanState.running || !Array.isArray(rescanState.places) || !rescanState.places.length) return;
+  const now = Date.now();
+  const durableParams = { ...(rescanState.params || {}) };
+  delete durableParams.authToken;
+  delete durableParams.places;
+  try {
+    await chrome.storage.local.set({
+      [RESCAN_CHECKPOINT_KEY]: {
+        version: DurableLifecycle.CHECKPOINT_VERSION,
+        running: true,
+        savedAt: now,
+        lastHeartbeat: now,
+        webUrl: rescanState.webUrl,
+        done: rescanState.done,
+        total: rescanState.total,
+        placeIndex: rescanState.placeIndex,
+        places: rescanState.places,
+        params: durableParams,
+        searchParams: toDurableSearchParams(rescanState.searchParams),
+        mapsAutoReopen: isRescanAutoReopenEnabled(),
+        reopenCount: Number(rescanState._reopenCount || 0),
+        mapsTabId: rescanState.mapsTabId,
+        mapsWindowId: rescanState.mapsWindowId
+      }
+    });
+    await ensureDurableWorkAlarm();
+  } catch (err) {
+    console.warn("persistRescanCheckpoint:", err?.message || err);
+  }
+}
+
+async function getRescanCheckpoint() {
+  const data = await chrome.storage.local.get(RESCAN_CHECKPOINT_KEY);
+  return data[RESCAN_CHECKPOINT_KEY] || null;
+}
+
+async function clearRescanCheckpoint() {
+  try {
+    await chrome.storage.local.remove(RESCAN_CHECKPOINT_KEY);
+  } catch {}
+}
+
+function restoreRescanStateFromCheckpoint(checkpoint) {
+  if (!DurableLifecycle.isRecoverableRescanCheckpoint(checkpoint)) return false;
+  rescanState.running = true;
+  rescanState.webUrl = checkpoint.webUrl;
+  rescanState.done = Number(checkpoint.done || 0);
+  rescanState.total = Number(checkpoint.total || checkpoint.places.length);
+  rescanState.placeIndex = Number(checkpoint.placeIndex || 0);
+  rescanState.places = checkpoint.places;
+  rescanState.params = checkpoint.params || {};
+  rescanState.searchParams = checkpoint.searchParams || {};
+  rescanState.mapsAutoReopen = checkpoint.mapsAutoReopen === true;
+  rescanState._reopenCount = Number(checkpoint.reopenCount || 0);
+  rescanState.mapsTabId = checkpoint.mapsTabId ?? null;
+  rescanState.mapsWindowId = checkpoint.mapsWindowId ?? null;
+  return true;
+}
+
+async function tryResumeRescanFromCheckpoint({ allowReopen = false } = {}) {
+  if (scrapeState.running || rescanState.running) return false;
+  const checkpoint = await getRescanCheckpoint();
+  if (!restoreRescanStateFromCheckpoint(checkpoint)) return false;
+
+  await ensureDurableWorkAlarm();
+  let mapsAlive = false;
+  if (rescanState.mapsTabId) {
+    try {
+      await chrome.tabs.get(rescanState.mapsTabId);
+      mapsAlive = true;
+    } catch {
+      rescanState.mapsTabId = null;
+      rescanState.mapsWindowId = null;
+    }
+  }
+
+  if (!mapsAlive && (allowReopen || isRescanAutoReopenEnabled())) {
+    mapsAlive = await openRescanMapsTab();
+  }
+  if (!mapsAlive) {
+    rescanState.running = false;
+    await ensureDurableWorkAlarm();
+    return false;
+  }
+
+  await ensureMapsBoost(rescanState.mapsTabId).catch(() => false);
+  await sendToWebPage(rescanState.webUrl, "rescan_progress", {
+    done: rescanState.done,
+    total: rescanState.total,
+    percent: rescanState.total ? Math.round((rescanState.done / rescanState.total) * 100) : 0,
+    name: "",
+    info: "Findmap đã khôi phục phiên quét lại sau khi Chrome đánh thức tiện ích."
+  }).catch(() => {});
+
+  runRescanPlacesLoop()
+    .then(() => finishRescanNormal())
+    .catch((err) => abortRescan(err?.message || "Không khôi phục được quét lại", "RESCAN_RECOVER_FAILED"));
+  return true;
 }
 
 function resetRescanState() {
@@ -1816,7 +2007,9 @@ async function abortRescan(message, code = "TAB_MAPS_CLOSED") {
       partial: done > 0
     }).catch(() => {});
   }
+  await clearRescanCheckpoint();
   resetRescanState();
+  await clearDurableWorkAlarmIfIdle();
 }
 
 async function openRescanMapsTab() {
@@ -1832,7 +2025,9 @@ async function openRescanMapsTab() {
   if (!boosted) await activateTabAndWindow(tab.id);
   await waitTabComplete(tab.id);
   await sleep(800);
-  return ensureMapsContentReady(tab.id);
+  const ready = await ensureMapsContentReady(tab.id);
+  await persistRescanCheckpoint();
+  return ready;
 }
 
 async function handleRescanMapsTabLost() {
@@ -1842,6 +2037,7 @@ async function handleRescanMapsTabLost() {
   rescanState._handlingTabLoss = true;
   rescanState.mapsTabId = null;
   rescanState.mapsWindowId = null;
+  await persistRescanCheckpoint();
 
   try {
     if (isRescanAutoReopenEnabled()) {
@@ -1873,6 +2069,7 @@ async function handleRescanMapsTabLost() {
         return;
       }
       rescanState._awaitingReopen = true;
+      await persistRescanCheckpoint();
       await sendToWebPage(rescanState.webUrl, "rescan_progress", {
         done: rescanState.done,
         total: rescanState.total,
@@ -2569,7 +2766,7 @@ async function handleScrapeComplete(data) {
   const completePayload = {
     results: finalResults,
     searchParams: {
-      ...searchParams,
+      ...toDurableSearchParams(searchParams),
       gridCells: scrapeState.totalCells,
       uniqueResults: finalResults.length
     },
@@ -2631,7 +2828,7 @@ async function handleScrapeComplete(data) {
   return { success: true };
 }
 
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+function dispatchRuntimeMessage(message, sender, sendResponse) {
   if (message.action === "PING_BG") {
     const manifest = chrome.runtime.getManifest();
     sendResponse({ ok: true, version: manifest.version, name: manifest.name });
@@ -2676,22 +2873,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
-  if (message.action === "GRANT_BROAD_HOSTS") {
-    grantBroadAndResync()
-      .then(sendResponse)
-      .catch((err) => sendResponse({ ok: false, error: err.message || String(err) }));
-    return true;
-  }
-
   if (message.action === "GET_WEB_ORIGINS") {
-    Promise.all([getPreferredWebOrigin(), getExtraWebOrigins(), hasBroadHostAccess()])
-      .then(([preferred, extra, broad]) =>
+    Promise.all([getPreferredWebOrigin(), getExtraWebOrigins()])
+      .then(([preferred, extra]) =>
         sendResponse({
           ok: true,
           preferred,
           config: getAppOrigin(),
-          extra,
-          broad
+          extra
         })
       )
       .catch((err) => sendResponse({ ok: false, error: err.message }));
@@ -2758,7 +2947,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       syncMapsAutoFocusAlarm();
       persistScrapeCheckpoint().catch(() => {});
       chrome.storage.local
-        .set({ lastSearch: scrapeState.searchParams, activeSearch: scrapeState.searchParams })
+        .set({
+          lastSearch: toDurableSearchParams(scrapeState.searchParams),
+          activeSearch: toDurableSearchParams(scrapeState.searchParams)
+        })
         .catch(() => {});
     }
     if (enabled) focusMapsTabForSearch().catch(() => {});
@@ -2772,20 +2964,24 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       scrapeState.searchParams.mapsAutoReopen = enabled;
       persistScrapeCheckpoint().catch(() => {});
       chrome.storage.local
-        .set({ lastSearch: scrapeState.searchParams, activeSearch: scrapeState.searchParams })
+        .set({
+          lastSearch: toDurableSearchParams(scrapeState.searchParams),
+          activeSearch: toDurableSearchParams(scrapeState.searchParams)
+        })
         .catch(() => {});
     }
     if (rescanState.running) {
       rescanState.mapsAutoReopen = enabled;
       if (rescanState.params) rescanState.params.mapsAutoReopen = enabled;
       if (rescanState.searchParams) rescanState.searchParams.mapsAutoReopen = enabled;
+      persistRescanCheckpoint().catch(() => {});
     }
     sendResponse({ success: true, enabled });
     return true;
   }
 
   if (message.action === "RESUME_SEARCH") {
-    tryResumeFromCheckpoint()
+    tryResumeFromCheckpoint({ allowReopen: true })
       .then((ok) => sendResponse({ success: ok }))
       .catch((err) => sendResponse({ success: false, error: err.message }));
     return true;
@@ -2805,6 +3001,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       total: rescanState.total,
       mapsAutoReopen: isRescanAutoReopenEnabled()
     });
+    return true;
+  }
+
+  if (message.action === "BACKGROUND_MODE_CHANGED") {
+    const enabled = message.data?.enabled === true;
+    if (enabled) {
+      const tabId = scrapeState.mapsTabId || rescanState.mapsTabId;
+      if (tabId) ensureMapsBoost(tabId).catch(() => false);
+    } else {
+      disableMapsBoost().catch(() => {});
+    }
+    sendResponse({ success: true, enabled });
     return true;
   }
 
@@ -2907,14 +3115,45 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       });
     }
   }
+}
+
+const BOOT_INDEPENDENT_ACTIONS = new Set([
+  "PING_BG",
+  "CONNECT_WEB_SITE",
+  "INSPECT_ACTIVE_TAB",
+  "GET_WEB_ORIGINS",
+  "GET_SESSION",
+  "SAVE_SESSION",
+  "BACKGROUND_MODE_CHANGED"
+]);
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (serviceBootComplete || BOOT_INDEPENDENT_ACTIONS.has(message?.action)) {
+    return dispatchRuntimeMessage(message, sender, sendResponse);
+  }
+
+  ensureServiceReady(`runtime_message:${message?.action || "unknown"}`)
+    .then(() => {
+      const keepsChannelOpen = dispatchRuntimeMessage(message, sender, sendResponse);
+      // Các message tiến độ không có response riêng; ACK để đóng channel đã giữ mở lúc bootstrap.
+      if (keepsChannelOpen !== true) sendResponse({ ok: true });
+    })
+    .catch((err) => {
+      sendResponse({ success: false, error: err?.message || "Không khôi phục được service worker" });
+    });
+  return true;
 });
 
 async function handleStartSearch(params) {
   if (scrapeState.running) {
     throw new Error("Một lượt tìm kiếm đang chạy. Hãy bấm 'Dừng quét điểm bán' hoặc đợi hoàn tất.");
   }
+  if (rescanState.running) {
+    throw new Error("Đang quét lại dữ liệu. Hãy đợi quét lại hoàn tất trước khi tìm kiếm mới.");
+  }
 
   await ensureReadyForNewSearch();
+  await clearRescanCheckpoint();
   // Chắc chắn không còn tab Maps cũ trước khi mở tab mới
   await closeMapsTabSafely();
 
@@ -3000,7 +3239,9 @@ async function handleStartSearch(params) {
   scrapeState.webTabId = webTab.id;
   await chrome.tabs.update(webTab.id, { autoDiscardable: false }).catch(() => {});
 
-  await chrome.storage.local.set({ lastSearch: params, activeSearch: params });
+  const durableParams = toDurableSearchParams(params);
+  await chrome.storage.local.set({ lastSearch: durableParams, activeSearch: durableParams });
+  await persistScrapeCheckpoint();
 
   await sendToWebPage(
     params.webUrl,
@@ -3085,6 +3326,7 @@ async function handleStartRescan(params) {
     throw new Error("Không có điểm nào để quét lại.");
   }
 
+  await clearRescanCheckpoint();
   resetRescanState();
   rescanState.running = true;
   rescanState.webUrl = params.webUrl;
@@ -3096,6 +3338,7 @@ async function handleStartRescan(params) {
   rescanState.done = 0;
   rescanState.total = params.places.length;
   rescanState.placeIndex = 0;
+  await persistRescanCheckpoint();
 
   doRescan(params).catch((err) => {
     console.error("[Rescan] Lỗi:", err);
@@ -3175,6 +3418,7 @@ async function runRescanPlacesLoop() {
 
     rescanState.placeIndex = idx + 1;
     rescanState.done = idx + 1;
+    await persistRescanCheckpoint();
 
     await sendToWebPage(webUrl, "rescan_progress", {
       done: rescanState.done,
@@ -3198,7 +3442,9 @@ async function finishRescanNormal() {
   }
   rescanState.running = false;
   await sendToWebPage(webUrl, "rescan_complete", { done, total }).catch(() => {});
+  await clearRescanCheckpoint();
   resetRescanState();
+  await clearDurableWorkAlarmIfIdle();
 }
 
 async function doRescan(params) {
@@ -3237,7 +3483,59 @@ function buildRescanHref(place) {
   return "";
 }
 
-tryResumeFromCheckpoint().catch(() => {});
+async function recoverDurableWork(reason = "service_wake") {
+  if (durableRecoveryBusy || scrapeState.running || rescanState.running) return false;
+  durableRecoveryBusy = true;
+  try {
+    const scrapeCheckpoint = await getScrapeCheckpoint();
+    if (DurableLifecycle.isRecoverableScrapeCheckpoint(scrapeCheckpoint)) {
+      const resumed = await tryResumeFromCheckpoint();
+      if (resumed) bgLog(`Đã khôi phục phiên tìm kiếm (${reason}).`);
+      else await ensureDurableWorkAlarm();
+      return resumed;
+    }
+
+    const rescanCheckpoint = await getRescanCheckpoint();
+    if (DurableLifecycle.isRecoverableRescanCheckpoint(rescanCheckpoint)) {
+      const resumed = await tryResumeRescanFromCheckpoint();
+      if (resumed) console.log(`TimDiemBan: đã khôi phục phiên quét lại (${reason}).`);
+      else await ensureDurableWorkAlarm();
+      return resumed;
+    }
+    await clearDurableWorkAlarmIfIdle();
+    return false;
+  } finally {
+    durableRecoveryBusy = false;
+  }
+}
+
+function ensureServiceReady(reason = "service_boot") {
+  if (serviceBootComplete) return Promise.resolve(false);
+  if (serviceBootPromise) return serviceBootPromise;
+
+  serviceBootPromise = recoverDurableWork(reason)
+    .then((recovered) => {
+      serviceBootComplete = true;
+      return recovered;
+    })
+    .catch((err) => {
+      serviceBootComplete = false;
+      throw err;
+    })
+    .finally(() => {
+      serviceBootPromise = null;
+    });
+  return serviceBootPromise;
+}
+
+ensureServiceReady("worker_loaded").catch((err) => {
+  console.warn("service bootstrap:", err?.message || err);
+});
 chrome.runtime.onStartup.addListener(() => {
-  tryResumeFromCheckpoint().catch(() => {});
+  serviceBootComplete = false;
+  ensureServiceReady("browser_startup").catch(() => {});
+});
+chrome.runtime.onInstalled.addListener(() => {
+  serviceBootComplete = false;
+  ensureServiceReady("extension_installed_or_updated").catch(() => {});
 });

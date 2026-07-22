@@ -2,16 +2,18 @@
   "manifest_version": 3,
   "name": "Findmap – Tìm điểm bán",
   "short_name": "Findmap",
-  "version": "0.0.1",
+  "version": "1.0.0",
+  "minimum_chrome_version": "120",
   "description": "Tiện ích Findmap lấy tên, số điện thoại, địa chỉ và vị trí điểm bán từ Google Maps, rồi đồng bộ kết quả về Findmap.",
   "homepage_url": "https://findmap.vn",
   "permissions": [
-    "activeTab",
     "tabs",
     "windows",
     "storage",
     "scripting",
-    "alarms",
+    "alarms"
+  ],
+  "optional_permissions": [
     "debugger"
   ],
   "host_permissions": [
@@ -19,11 +21,8 @@
     "https://findmap.vn/*",
     "https://www.findmap.vn/*",
     "https://app.findmap.vn/*",
-    "https://*.findmap.vn/*",
     "http://localhost/*",
-    "http://127.0.0.1/*",
-    "http://*/*",
-    "https://*/*"
+    "http://127.0.0.1/*"
   ],
   "action": {
     "default_popup": "popup.html",
@@ -50,7 +49,6 @@
         "https://findmap.vn/*",
         "https://www.findmap.vn/*",
         "https://app.findmap.vn/*",
-        "https://*.findmap.vn/*",
         "http://localhost/*",
         "http://127.0.0.1/*"
       ],

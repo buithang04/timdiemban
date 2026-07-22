@@ -93,7 +93,9 @@
     try {
       if (!els.mapsAutoReopen) return;
       const saved = localStorage.getItem(MAPS_AUTO_REOPEN_KEY);
-      els.mapsAutoReopen.checked = saved === "1";
+      // Tự khôi phục là mặc định an toàn cho các lượt quét kéo dài.
+      els.mapsAutoReopen.checked = saved == null ? true : saved === "1";
+      if (saved == null) localStorage.setItem(MAPS_AUTO_REOPEN_KEY, "1");
     } catch {}
     updateMapsAutoReopenLabel();
   }
