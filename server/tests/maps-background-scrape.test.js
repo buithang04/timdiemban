@@ -789,8 +789,9 @@ test("ô chưa tới cuối không bị đánh dấu xong hoặc chuyển sang �
 test("mỗi ô phải cuộn lấy URL rồi mở tuần tự từng URL trước khi sang ô kế tiếp", () => {
   const collect = contentSection("async function scrollAndScrapePlaces", "async function waitForFeed");
   const handleList = section("async function handleCellListComplete", "async function completeCellAfterEnrich");
-  const completeCell = section("async function completeCellAfterEnrich", "async function runEnrichPhase");
-  const enrich = section("async function runEnrichPhase", "async function closeMapsTabSafely");
+  const completeCell = section("async function completeCellAfterEnrich", "function continueGridAfterEnrich");
+  const continueGrid = section("function continueGridAfterEnrich", "function runEnrichPhase");
+  const enrich = section("function runEnrichPhase()", "async function closeMapsTabSafely");
   const enrichUrls = section("async function enrichPlacesInCell", "function pushLiveItemsToWeb");
   const contentEnrich = contentSection("function runEnrichPlaceMessage", "window.__timDiemBanWake");
 
@@ -803,13 +804,20 @@ test("mỗi ô phải cuộn lấy URL rồi mở tuần tự từng URL trướ
   assert.doesNotMatch(handleList, /completedCells\.add|runGridCell\(/);
 
   const markDoneAt = completeCell.indexOf("scrapeState.completedCells.add(cellIndex)");
-  const nextCellAt = completeCell.indexOf("await runGridCell(nextIndex)");
-  assert.ok(markDoneAt >= 0 && nextCellAt > markDoneAt);
+  const returnNextAt = completeCell.indexOf("return nextIndex");
+  assert.ok(markDoneAt >= 0 && returnNextAt > markDoneAt);
+  assert.doesNotMatch(completeCell, /runGridCell\(/);
+  assert.match(continueGrid, /runGridCell\(nextIndex\)/);
+  assert.match(
+    enrich,
+    /enrichRunPromise = null;\s*continueGridAfterEnrich\(nextIndex\)/,
+    "phải nhả single-flight promise trước khi chạy ô kế tiếp"
+  );
 
   assert.match(enrich, /Number\(place\._enrichCellIndex\) === Number\(cellIndex\)/);
   assert.match(
     enrich,
-    /cellPlaces\.filter\([\s\S]*!scrapeState\.enrichedPlaceKeys\.has\(getEnrichCheckpointKey\(place\)\)/
+    /cellPlaces\.filter\([\s\S]*const key = getEnrichCheckpointKey\(place\)[\s\S]*!scrapeState\.enrichedPlaceKeys\.has\(key\)[\s\S]*!scrapeState\.failedEnrichKeys\.has\(key\)/
   );
   assert.doesNotMatch(enrich, /placeNeedsEnrich/);
   assert.match(enrichUrls, /await enrichPlaceByUrl\(place, params, progressText, pct, attempt\)/);
@@ -819,7 +827,7 @@ test("mỗi ô phải cuộn lấy URL rồi mở tuần tự từng URL trướ
   assert.match(contentEnrich, /fast: thorough \? false/);
   assert.match(contentEnrich, /needAddress: thorough \? true/);
   assert.match(contentEnrich, /needPhone: thorough \? true/);
-  assert.match(enrich, /await completeCellAfterEnrich\(cellIndex\)/);
+  assert.match(enrich, /return completeCellAfterEnrich\(cellIndex\)/);
   assert.match(enrich, /scrapeState\.enrichedPlaceKeys/);
   assert.match(background, /enrichedPlaceKeys: \[\.\.\.scrapeState\.enrichedPlaceKeys\]/);
   assert.match(background, /scrapeState\.phase === "enrich"/);
@@ -839,22 +847,73 @@ test("trang chi tiết production đọc role=button giờ, bài đánh giá và
 });
 
 test("hàng đợi pha 2 chỉ nhận URL chi tiết Google Maps", () => {
-  const source = section("function getPlaceDetailUrl", "function preserveEnrichMetadata");
-  const context = vm.createContext({ URL });
-  vm.runInContext(`${source}\nthis.getPlaceDetailUrl = getPlaceDetailUrl;`, context);
+  const source = section("function normalizePlaceDetailUrl", "function preserveEnrichMetadata");
+  const getCanonicalPlaceId = (raw) => {
+    const decoded = decodeURIComponent(String(raw || ""));
+    return (
+      decoded.match(/!(?:1s|19s)(ChIJ[a-zA-Z0-9_-]+)/)?.[1] ||
+      decoded.match(/[?&]query_place_id=(ChIJ[a-zA-Z0-9_-]+)/)?.[1] ||
+      ""
+    );
+  };
+  const context = vm.createContext({
+    URL,
+    getCanonicalPlaceId,
+    getDedupeKey: (place) => `fb:${place?.name || ""}`
+  });
+  vm.runInContext(
+    `${source}\nthis.api = { getPlaceDetailUrl, getStableEnrichKey };`,
+    context
+  );
 
   assert.equal(
-    context.getPlaceDetailUrl({
+    context.api.getPlaceDetailUrl({
       href: "https://www.google.com/maps/place/Quan+Tra/@21.02,105.81/data=!4m2!3m1!1sabc#details"
     }),
     "https://www.google.com/maps/place/Quan+Tra/@21.02,105.81/data=!4m2!3m1!1sabc"
   );
   assert.equal(
-    context.getPlaceDetailUrl({ href: "/maps/place/Quan+Tra/@21.02,105.81/data=!4m2" }),
+    context.api.getPlaceDetailUrl({ href: "/maps/place/Quan+Tra/@21.02,105.81/data=!4m2" }),
     "https://www.google.com/maps/place/Quan+Tra/@21.02,105.81/data=!4m2"
   );
-  assert.equal(context.getPlaceDetailUrl({ href: "https://www.google.com/maps/search/tra+da" }), "");
-  assert.equal(context.getPlaceDetailUrl({ href: "https://example.com/maps/place/test" }), "");
+  assert.equal(
+    context.api.getPlaceDetailUrl({
+      href: "https://www.google.com/maps/search/tra+da",
+      mapsUrl: "https://www.google.com/maps/place/Quan+Tra/@21.02,105.81/data=!4m2?entry=ttu#details"
+    }),
+    "https://www.google.com/maps/place/Quan+Tra/@21.02,105.81/data=!4m2?entry=ttu"
+  );
+  assert.equal(context.api.getPlaceDetailUrl({ href: "https://example.com/maps/place/test" }), "");
+
+  const firstKey = context.api.getStableEnrichKey({
+    name: "Trùng tên",
+    href: "https://www.google.com/maps/place/Diem+A/@21.02,105.81/data=!4m2?entry=ttu#details"
+  });
+  const sameKey = context.api.getStableEnrichKey({
+    name: "Trùng tên",
+    mapsUrl: "https://www.google.com/maps/place/Diem+A/@21.02,105.81/data=!4m2?hl=vi"
+  });
+  const secondKey = context.api.getStableEnrichKey({
+    name: "Trùng tên",
+    href: "https://www.google.com/maps/place/Diem+B/@21.03,105.82/data=!4m2"
+  });
+  assert.equal(firstKey, sameKey, "query/hash không được làm đổi enrich key");
+  assert.notEqual(firstKey, secondKey, "hai URL khác nhau không được va chạm key vì trùng tên");
+
+  const chijFromData = context.api.getStableEnrichKey({
+    href:
+      "https://www.google.com/maps/place/Ten-cu/@21.02,105.81/data=!4m5!3m4!1sChIJAbCd_123!8m2!3d21.02!4d105.81"
+  });
+  const sameChijFromOtherVariant = context.api.getStableEnrichKey({
+    mapsUrl:
+      "https://www.google.com/maps/place/Ten-hoan-toan-khac/@20.99,105.77/data=!4m5!3m4!19sChIJAbCd_123!8m2!3d20.99!4d105.77?entry=ttu"
+  });
+  assert.equal(chijFromData, "cid:chijabcd_123");
+  assert.equal(
+    chijFromData,
+    sameChijFromOtherVariant,
+    "cùng ChIJ phải dùng chung enrich key dù pathname và tọa độ URL khác nhau"
+  );
 });
 
 test("checkpoint kiểu cũ được quay lại ô 1 để không bỏ pha click chi tiết", () => {
@@ -901,6 +960,75 @@ test("checkpoint kiểu cũ được quay lại ô 1 để không bỏ pha click
   assert.match(restore, /hasPerCellEnrich \? cp\.gridIndex \|\| 0 : 0/);
   assert.match(restore, /hasPerCellEnrich \? cp\.completedCells \|\| \[\] : \[\]/);
   assert.match(restore, /DurableLifecycle\.nextPendingCell\(\{[\s\S]*scrapeState\.gridIndex/);
+});
+
+test("resume checkpoint ô cuối rỗng kết thúc và dọn checkpoint thay vì lặp recovery", async () => {
+  const source = section(
+    "async function tryResumeFromCheckpoint",
+    "async function finalizeFromCheckpoint"
+  );
+  const lifecycle = require("../../extension/lifecycle.js");
+  const calls = [];
+  const checkpoint = {
+    running: true,
+    savedAt: Date.now(),
+    searchParams: { searchId: "empty-terminal" },
+    mapsTabId: 17,
+    gridIndex: 0,
+    totalCells: 1,
+    gridPoints: [{}],
+    completedCells: [0],
+    mergedPlaces: [],
+    phase: "grid"
+  };
+  const scrapeState = {
+    running: false,
+    mapsTabId: null,
+    totalCells: 0,
+    mergedPlaces: new Map()
+  };
+  const context = vm.createContext({
+    DurableLifecycle: lifecycle,
+    scrapeState,
+    pointsFinalized: false,
+    getScrapeCheckpoint: async () => checkpoint,
+    restoreScrapeStateFromCheckpoint: (saved) => {
+      calls.push("restore");
+      scrapeState.mapsTabId = saved.mapsTabId;
+      scrapeState.totalCells = saved.totalCells;
+      scrapeState.phase = saved.phase;
+      scrapeState.completedCells = new Set(saved.completedCells);
+      scrapeState.mergedPlaces = new Map();
+      return true;
+    },
+    startScrapeKeepAlive: () => calls.push("keepalive:start"),
+    stopScrapeKeepAlive: () => calls.push("keepalive:stop"),
+    nextPendingCellFromScrapeState: () => 1,
+    closeMapsTabSafely: async () => calls.push("tab:close"),
+    resetScrapeState: async () => calls.push("state:reset"),
+    chrome: {
+      tabs: {
+        get: async (tabId) => {
+          calls.push(`tab:get:${tabId}`);
+          return { id: tabId };
+        }
+      }
+    }
+  });
+  vm.runInContext(`${source}\nthis.tryResumeFromCheckpoint = tryResumeFromCheckpoint;`, context);
+
+  const resumed = await context.tryResumeFromCheckpoint();
+
+  assert.equal(resumed, true, "checkpoint terminal đã được xử lý, không còn chờ recovery sau");
+  assert.equal(scrapeState.running, false);
+  assert.deepEqual(calls, [
+    "restore",
+    "keepalive:start",
+    "tab:get:17",
+    "keepalive:stop",
+    "tab:close",
+    "state:reset"
+  ]);
 });
 
 test("feed instance cũ được đọc trước khi đổi vùng và chỉ bắt buộc đổi ở ô mới", () => {
@@ -950,12 +1078,56 @@ test("watchdog vô hiệu hóa lease cũ trước khi abort và retry", () => {
   assert.ok(retryAt > abortAt, "watchdog chỉ tạo retry sau khi abort request cũ");
 });
 
+test("content Maps phiên bản cũ bị từ chối cả ở lần PING cuối", async () => {
+  const source = section("async function ensureMapsContentReady", "async function sendMapsMessage");
+
+  async function runCase(version) {
+    let pingCount = 0;
+    const calls = [];
+    const chrome = {
+      tabs: {
+        sendMessage: async (_tabId, message) => {
+          assert.equal(message.action, "PING");
+          pingCount += 1;
+          return { ok: true, v: version };
+        },
+        reload: async (tabId) => calls.push(["reload", tabId])
+      },
+      scripting: {
+        executeScript: async (options) => calls.push(["inject", options.target.tabId])
+      }
+    };
+    const context = vm.createContext({
+      REQUIRED_CONTENT_VERSION: 72,
+      chrome,
+      markMapsControlledActivity: () => {},
+      waitTabComplete: async () => {},
+      sleep: async () => {}
+    });
+    vm.runInContext(`${source}\nthis.ensureMapsContentReady = ensureMapsContentReady;`, context);
+
+    const ready = await context.ensureMapsContentReady(17);
+    return { ready, pingCount, calls };
+  }
+
+  const outdated = await runCase(71);
+  assert.equal(outdated.ready, false);
+  assert.ok(outdated.pingCount > 1, "phải đi tới fallback cuối sau các lần thử khởi tạo lại");
+  assert.deepEqual(outdated.calls[0], ["reload", 17]);
+
+  const current = await runCase(72);
+  assert.equal(current.ready, true);
+  assert.equal(current.pingCount, 1);
+  assert.deepEqual(current.calls, []);
+});
+
 test("pha enrich background là single-flight", async () => {
   const source = section("function runEnrichPhase()", "async function runEnrichPhaseInternal()");
   const pending = [];
   let runs = 0;
   const context = vm.createContext({
     enrichRunPromise: null,
+    continueGridAfterEnrich: () => {},
     runEnrichPhaseInternal: () => {
       runs += 1;
       return new Promise((resolve) => pending.push(resolve));
@@ -979,6 +1151,93 @@ test("pha enrich background là single-flight", async () => {
   await next;
 });
 
+test("pha enrich hai ô nhả promise cũ trước khi bắt đầu ô kế tiếp", async () => {
+  const completeCell = section("async function completeCellAfterEnrich", "function continueGridAfterEnrich");
+  const orchestration = section("function continueGridAfterEnrich", "async function closeMapsTabSafely");
+  const enrichedCells = [];
+  const activeAtGridStart = [];
+  let finishSearch;
+  const searchFinished = new Promise((resolve) => {
+    finishSearch = resolve;
+  });
+  const scrapeState = {
+    running: true,
+    mapsTabId: 91,
+    searchParams: { webUrl: "https://findmap.vn" },
+    gridIndex: 0,
+    totalCells: 2,
+    completedCells: new Set(),
+    enrichedPlaceKeys: new Set(),
+    failedEnrichKeys: new Set(),
+    enrichTotal: 0,
+    _cellRetryCounts: {},
+    _cellRecoveryCounts: {},
+    _cellContinueFlags: {}
+  };
+  const places = [
+    { name: "Ô 1", _enrichKey: "url:cell-1", _enrichCellIndex: 0 },
+    { name: "Ô 2", _enrichKey: "url:cell-2", _enrichCellIndex: 1 }
+  ];
+  const sandbox = {
+    scrapeState,
+    enrichRunPromise: null,
+    pointsFinalized: false,
+    getFinalResultsList: () => places,
+    getEnrichCheckpointKey: (place) => place._enrichKey,
+    calcProgressPercent: () => 50,
+    notifyProgress: () => {},
+    scheduleSyncSnapshot: () => {},
+    clearPendingCellPlaces: () => {},
+    persistScrapeCheckpoint: async () => {},
+    sendMapsMessage: async () => {},
+    beginOperationTransition: () => Symbol("transition"),
+    endOperationTransition: () => {},
+    closeMapsTabSafely: async () => {},
+    resetScrapeState: async () => {},
+    chrome: { runtime: { sendMessage: () => {} } },
+    console,
+    abortSearch: async (_code, message) => {
+      throw new Error(`Không được abort: ${message}`);
+    },
+    enrichPlacesInCell: async (cellPlaces, cellIndex) => {
+      enrichedCells.push(cellIndex);
+      for (const place of cellPlaces) scrapeState.enrichedPlaceKeys.add(place._enrichKey);
+      return cellPlaces.length;
+    },
+    handleScrapeComplete: async () => {
+      sandbox.pointsFinalized = true;
+      scrapeState.running = false;
+      finishSearch();
+    }
+  };
+  const context = vm.createContext(sandbox);
+  vm.runInContext(
+    `${completeCell}\n${orchestration}\nthis.api = {\n` +
+      `  runEnrichPhase,\n` +
+      `  activePromise: () => enrichRunPromise\n` +
+      `};`,
+    context
+  );
+  sandbox.runGridCell = async (nextIndex) => {
+    activeAtGridStart.push(context.api.activePromise());
+    scrapeState.gridIndex = nextIndex;
+    await context.api.runEnrichPhase();
+  };
+
+  const first = context.api.runEnrichPhase();
+  await Promise.race([
+    searchFinished,
+    new Promise((_, reject) => setTimeout(() => reject(new Error("deadlock enrich nhiều ô")), 250))
+  ]);
+  await first;
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(enrichedCells, [0, 1]);
+  assert.deepEqual([...scrapeState.completedCells], [0, 1]);
+  assert.deepEqual(activeAtGridStart, [null], "promise ô cũ phải được nhả trước khi dispatch ô mới");
+  assert.equal(context.api.activePromise(), null);
+});
+
 test("enrich dùng opId, hủy đúng thao tác và bỏ response sai opId", () => {
   const backgroundEnrich = section(
     "async function cancelActiveEnrichOperation",
@@ -991,14 +1250,159 @@ test("enrich dùng opId, hủy đúng thao tác và bỏ response sai opId", () 
   );
 
   assert.match(backgroundEnrich, /ENRICH_ABORT[\s\S]*data:\s*\{\s*opId\s*\}/);
+  assert.match(backgroundEnrich, /response\?\.settled\s*===\s*true/);
+  assert.match(backgroundEnrich, /reloadMapsAfterUnsettledEnrich\(tabId\)/);
+  assert.ok(
+    backgroundEnrich.indexOf("await cancelActiveEnrichOperation()") <
+      backgroundEnrich.indexOf("await navigateMapsTab({ url: href })"),
+    "phải xác nhận op cũ settled hoặc reload xong trước khi điều hướng URL mới"
+  );
   assert.match(backgroundEnrich, /ENRICH_PLACE[\s\S]*thorough:\s*true,[\s\S]*opId/);
   assert.match(backgroundEnrich, /result\?\.opId\s*!==\s*opId\s*\|\|\s*result\?\.success\s*!==\s*true/);
   assert.match(contentEnrich, /activeEnrichTask\s*&&\s*activeEnrichOpId\s*===\s*opId/);
   assert.match(contentEnrich, /activeEnrichOpId\s*!==\s*opId/);
   assert.match(contentHandler, /ENRICH_ABORT[\s\S]*cancelActiveEnrich\(opId\)/);
+  assert.match(contentHandler, /success:\s*settled,[\s\S]*settled,/);
 });
 
-test("URL enrich thiếu hoặc lỗi được đánh dấu xong rồi tiếp tục URL sau", async () => {
+test("abort enrich chưa settled luôn reload Maps trước URL tiếp theo", async () => {
+  const source = section("const ENRICH_ABORT_TIMEOUT_MS", "async function markEnrichFailure");
+
+  async function runCase(sendMessage, timeoutMs = 20) {
+    const calls = [];
+    const scrapeState = {
+      mapsTabId: 7,
+      _activeEnrichOpId: "op-old",
+      _expectMapsNavigation: false
+    };
+    const context = vm.createContext({
+      scrapeState,
+      chrome: {
+        tabs: {
+          sendMessage: async (...args) => {
+            calls.push(["abort", ...args]);
+            return sendMessage();
+          },
+          reload: async (tabId) => calls.push(["reload", tabId])
+        }
+      },
+      markMapsControlledActivity: (ms) => calls.push(["mark", ms]),
+      waitTabComplete: async (tabId, ms) => calls.push(["wait", tabId, ms]),
+      ensureMapsContentReady: async (tabId) => {
+        calls.push(["ready", tabId]);
+        return true;
+      },
+      sleep: async (ms) => calls.push(["sleep", ms]),
+      bgLog: (line) => calls.push(["log", line]),
+      beginMapsCellWork: () => Symbol("cell"),
+      endMapsCellWork: () => {},
+      getPlaceDetailUrl: () => "",
+      crypto: { randomUUID: () => "uuid" },
+      setTimeout,
+      clearTimeout
+    });
+    vm.runInContext(
+      `${source}\nthis.cancelActiveEnrichOperation = cancelActiveEnrichOperation;`,
+      context
+    );
+
+    await context.cancelActiveEnrichOperation({ timeoutMs });
+    return { calls, scrapeState };
+  }
+
+  const settled = await runCase(() => ({ success: true, opId: "op-old", settled: true }));
+  assert.deepEqual(
+    settled.calls.map(([name]) => name),
+    ["abort"],
+    "response settled không được reload"
+  );
+  assert.equal(settled.scrapeState._activeEnrichOpId, "");
+
+  for (const [label, sendMessage, timeoutMs] of [
+    ["unsettled", () => ({ success: true, opId: "op-old", settled: false }), 20],
+    ["message fail", () => Promise.reject(new Error("port closed")), 20],
+    ["timeout", () => new Promise(() => {}), 5]
+  ]) {
+    const recovered = await runCase(sendMessage, timeoutMs);
+    const callNames = recovered.calls.map(([name]) => name);
+    assert.deepEqual(
+      callNames.filter((name) => ["reload", "wait", "ready"].includes(name)),
+      ["reload", "wait", "ready"],
+      `${label}: phải reload, chờ complete và khởi tạo content theo đúng thứ tự`
+    );
+    assert.equal(recovered.scrapeState._expectMapsNavigation, false);
+    assert.equal(recovered.scrapeState._activeEnrichOpId, "");
+  }
+});
+
+test("ENRICH_PLACE chưa settled dựng reload barrier trước URL kế tiếp", async () => {
+  const source = section("async function enrichPlaceByUrl", "async function markEnrichFailure");
+  const calls = [];
+  let uuid = 0;
+  let sendCount = 0;
+  const scrapeState = {
+    runId: "restart-run",
+    gridIndex: 0,
+    mapsTabId: 17,
+    _activeEnrichOpId: ""
+  };
+  const context = vm.createContext({
+    scrapeState,
+    getPlaceDetailUrl: (place) => place.href,
+    crypto: { randomUUID: () => `uuid-${++uuid}` },
+    beginMapsCellWork: () => Symbol("cell-work"),
+    endMapsCellWork: () => calls.push("cell:end"),
+    cancelActiveEnrichOperation: async () => calls.push("enrich:cancel-old"),
+    navigateMapsTab: async ({ url }) => calls.push(`navigate:${url}`),
+    sleep: async () => {},
+    sendMapsMessageWithTimeout: async (_action, data) => {
+      sendCount += 1;
+      calls.push(`send:${data.listData.href}`);
+      if (sendCount === 1) {
+        return { success: false, settled: false, opId: data.opId };
+      }
+      return {
+        success: true,
+        settled: true,
+        opId: data.opId,
+        place: { ...data.listData, phone: "0900000000" }
+      };
+    },
+    reloadMapsAfterUnsettledEnrich: async (tabId) => calls.push(`reload:${tabId}`)
+  });
+  vm.runInContext(`${source}\nthis.enrichPlaceByUrl = enrichPlaceByUrl;`, context);
+
+  let firstError = null;
+  try {
+    await context.enrichPlaceByUrl(
+      { href: "https://www.google.com/maps/place/first" },
+      {},
+      "first",
+      50,
+      1
+    );
+  } catch (err) {
+    firstError = err;
+  }
+  const second = await context.enrichPlaceByUrl(
+    { href: "https://www.google.com/maps/place/second" },
+    {},
+    "second",
+    60,
+    1
+  );
+
+  const firstSendAt = calls.indexOf("send:https://www.google.com/maps/place/first");
+  const reloadAt = calls.indexOf("reload:17");
+  const secondNavigateAt = calls.indexOf("navigate:https://www.google.com/maps/place/second");
+  assert.ok(firstSendAt >= 0 && reloadAt > firstSendAt, "response unsettled phải kích hoạt reload");
+  assert.ok(reloadAt < secondNavigateAt, "URL sau chỉ được điều hướng khi reload barrier đã xong");
+  assert.equal(second.phone, "0900000000");
+  assert.equal(scrapeState._activeEnrichOpId, "");
+  if (firstError) assert.match(firstError.message, /chưa dừng|tải lại/i);
+});
+
+test("URL enrich thiếu hoặc lỗi chỉ ghi failed, không ghi enriched", async () => {
   const source = section("async function markEnrichFailure", "function pushLiveItemsToWeb");
   const completed = [];
   const sent = [];
@@ -1019,6 +1423,7 @@ test("URL enrich thiếu hoặc lỗi được đánh dấu xong rồi tiếp t�
     notifyProgress: () => {},
     calcProgressPercent: () => 50,
     sleep: async () => {},
+    persistEnrichAttemptProgress: async () => {},
     preserveEnrichMetadata: (place) => place,
     enrichPlaceByUrl: async (place) => {
       attempts.set(place.name, (attempts.get(place.name) || 0) + 1);
@@ -1049,10 +1454,89 @@ test("URL enrich thiếu hoặc lỗi được đánh dấu xong rồi tiếp t�
 
   assert.equal(done, 3);
   assert.deepEqual([...scrapeState.failedEnrichKeys], ["Thiếu URL", "Lỗi"]);
-  assert.deepEqual(completed, ["Thiếu URL", "Lỗi", "Tốt"]);
+  assert.deepEqual([...scrapeState.enrichedPlaceKeys], ["Tốt"]);
+  assert.deepEqual(completed, ["Tốt"]);
   assert.deepEqual(sent, ["Tốt"]);
   assert.equal(attempts.get("Lỗi"), 2);
   assert.equal(attempts.get("Tốt"), 1);
+});
+
+test("resume enrich coi failed key là terminal và giữ đúng processed checkpoint", async () => {
+  const restore = section("function restoreScrapeStateFromCheckpoint", "function nextPendingCellFromScrapeState");
+  const run = section("async function runEnrichPhaseInternal", "async function closeMapsTabSafely");
+  const enrichedCalls = [];
+  let completedCell = null;
+  const scrapeState = {
+    running: false,
+    mapsTabId: null,
+    searchParams: null,
+    gridIndex: 0,
+    totalCells: 0,
+    completedCells: new Set(),
+    enrichedPlaceKeys: new Set(),
+    failedEnrichKeys: new Set(),
+    mergedPlaces: new Map(),
+    pendingCellPlaces: new Map(),
+    _cellRetryCounts: {},
+    _cellRecoveryCounts: {},
+    _cellContinueFlags: {}
+  };
+  const placesToMap = (items) => new Map(items.map((place) => [place._enrichKey, place]));
+  const context = vm.createContext({
+    scrapeState,
+    PER_CELL_ENRICH_FLOW_VERSION: 2,
+    CELL_FLOW_VERSION: 3,
+    placesToMap,
+    activeMapsCellListToken: null,
+    currentSearch: null,
+    lastScrapeProgressAt: 0,
+    getFinalResultsList: () => [...scrapeState.mergedPlaces.values()],
+    getEnrichCheckpointKey: (place) => place._enrichKey,
+    persistScrapeCheckpoint: async () => {},
+    calcProgressPercent: () => 70,
+    notifyProgress: () => {},
+    sendMapsMessage: async () => {},
+    enrichPlacesInCell: async (places, cellIndex, _params, processed, total) => {
+      enrichedCalls.push({ keys: places.map((place) => place._enrichKey), cellIndex, processed, total });
+      return total;
+    },
+    completeCellAfterEnrich: async (cellIndex) => {
+      completedCell = cellIndex;
+      return null;
+    },
+    handleScrapeComplete: async () => {}
+  });
+  vm.runInContext(
+    `${restore}\n${run}\nthis.api = { restoreScrapeStateFromCheckpoint, runEnrichPhaseInternal };`,
+    context
+  );
+
+  const restored = context.api.restoreScrapeStateFromCheckpoint({
+    cellFlowVersion: 3,
+    searchParams: { searchId: "resume-failed", webUrl: "https://findmap.vn" },
+    mapsTabId: 17,
+    gridIndex: 0,
+    totalCells: 1,
+    phase: "enrich",
+    enrichTotal: 3,
+    completedCells: [],
+    enrichedPlaceKeys: ["cid:done"],
+    failedEnrichKeys: ["cid:failed"],
+    mergedPlaces: [
+      { name: "Đã xong", _enrichKey: "cid:done", _enrichCellIndex: 0 },
+      { name: "Lỗi terminal", _enrichKey: "cid:failed", _enrichCellIndex: 0 },
+      { name: "Còn lại", _enrichKey: "cid:pending", _enrichCellIndex: 0 }
+    ]
+  });
+  scrapeState.running = true;
+  await context.api.runEnrichPhaseInternal();
+
+  assert.equal(restored, true);
+  assert.deepEqual(enrichedCalls, [
+    { keys: ["cid:pending"], cellIndex: 0, processed: 2, total: 3 }
+  ]);
+  assert.equal(completedCell, 0);
+  assert.deepEqual([...scrapeState.failedEnrichKeys], ["cid:failed"]);
 });
 
 test("reload Maps chỉ khôi phục, không abort bằng mã reload cũ", () => {

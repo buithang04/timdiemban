@@ -1897,9 +1897,23 @@ async function tryResumeFromCheckpoint({ allowReopen = false } = {}) {
   }
 
   const next = nextPendingCellFromScrapeState();
-  if (scrapeState.phase === "enrich" || next >= scrapeState.totalCells) {
+  if (scrapeState.phase === "enrich") {
+    // Service worker có thể ngủ trong khi content script cũ vẫn thao tác DOM.
+    // Reload là isolation barrier trước khi tiếp tục hàng đợi URL từ checkpoint.
+    await reloadMapsAfterUnsettledEnrich(scrapeState.mapsTabId);
+    notifyPopup("Đã khôi phục danh sách. Findmap tiếp tục click các điểm chưa xử lý…");
+    runEnrichPhase().catch(async (err) => {
+      if (scrapeState.running && !pointsFinalized) {
+        await abortSearch("ENRICH_RECOVER_FAILED", err?.message || String(err), {
+          chargePartial: true
+        });
+      }
+    });
+    return true;
+  }
+
+  if (next >= scrapeState.totalCells) {
     if (scrapeState.mergedPlaces.size > 0) {
-      notifyPopup("Đã khôi phục danh sách. Findmap tiếp tục click các điểm chưa xử lý…");
       runEnrichPhase().catch(async (err) => {
         if (scrapeState.running && !pointsFinalized) {
           await abortSearch("ENRICH_RECOVER_FAILED", err?.message || String(err), {
@@ -1909,9 +1923,12 @@ async function tryResumeFromCheckpoint({ allowReopen = false } = {}) {
       });
       return true;
     }
+    // Worker có thể dừng sau khi đã persist ô cuối rỗng nhưng trước reset.
     scrapeState.running = false;
     stopScrapeKeepAlive();
-    return false;
+    await closeMapsTabSafely();
+    await resetScrapeState();
+    return true;
   }
 
   scrapeState.gridIndex = next;
@@ -2891,7 +2908,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   scheduleMapsReloadRecovery();
 });
 
-const REQUIRED_CONTENT_VERSION = 71;
+const REQUIRED_CONTENT_VERSION = 73;
 
 async function ensureMapsContentReady(tabId) {
   for (let attempt = 0; attempt < 8; attempt++) {
@@ -2930,7 +2947,7 @@ async function ensureMapsContentReady(tabId) {
   }
   try {
     const pong = await chrome.tabs.sendMessage(tabId, { action: "PING" });
-    return !!pong?.ok;
+    return !!pong?.ok && Number(pong.v || 0) >= REQUIRED_CONTENT_VERSION;
   } catch {
     return false;
   }
@@ -3270,7 +3287,7 @@ async function runGridCell(cellIndex) {
 
   const stampedPlaces = (result?.places || []).map((p) => ({
     ...p,
-    _enrichKey: p._enrichKey || getDedupeKey(p),
+    _enrichKey: p._enrichKey || getStableEnrichKey(p),
     _enrichCellIndex: cellIndex,
     _enrichCellLat: cell.lat,
     _enrichCellLng: cell.lng,
@@ -3299,12 +3316,8 @@ async function runGridCell(cellIndex) {
   });
 }
 
-function getEnrichCheckpointKey(place) {
-  return String(place?._enrichKey || getDedupeKey(place || {}));
-}
-
-function getPlaceDetailUrl(place) {
-  const raw = String(place?.href || place?.mapsUrl || "").trim();
+function normalizePlaceDetailUrl(raw) {
+  raw = String(raw || "").trim();
   if (!raw) return "";
   try {
     const url = new URL(raw, "https://www.google.com");
@@ -3317,6 +3330,49 @@ function getPlaceDetailUrl(place) {
   }
 }
 
+function getPlaceDetailUrl(place) {
+  for (const raw of [place?.href, place?.mapsUrl]) {
+    const detailUrl = normalizePlaceDetailUrl(raw);
+    if (detailUrl) return detailUrl;
+  }
+  return "";
+}
+
+function getCanonicalEnrichPlaceId(place) {
+  let fallback = "";
+  for (const raw of [place?.googlePlaceId, place?.placeId, place?.href, place?.mapsUrl]) {
+    const value = String(raw || "").trim();
+    if (!value) continue;
+    const canonical = /^ChIJ[a-zA-Z0-9_-]+$/i.test(value)
+      ? value
+      : getCanonicalPlaceId(value);
+    if (!canonical) continue;
+    const normalized = String(canonical).toLowerCase();
+    if (normalized.startsWith("chij")) return normalized;
+    if (!fallback) fallback = normalized;
+  }
+  return fallback;
+}
+
+function getStableEnrichKey(place) {
+  const canonicalId = getCanonicalEnrichPlaceId(place);
+  if (canonicalId) return `cid:${canonicalId}`;
+
+  const detailUrl = getPlaceDetailUrl(place);
+  if (detailUrl) {
+    try {
+      const url = new URL(detailUrl);
+      const pathname = url.pathname.replace(/\/+$/, "") || "/";
+      return `url:${url.origin}${pathname}`;
+    } catch {}
+  }
+  return String(getDedupeKey(place || {}));
+}
+
+function getEnrichCheckpointKey(place) {
+  return String(place?._enrichKey || getStableEnrichKey(place));
+}
+
 function preserveEnrichMetadata(enriched, source) {
   if (!enriched) return enriched;
   enriched._enrichKey = getEnrichCheckpointKey(source);
@@ -3327,8 +3383,7 @@ function preserveEnrichMetadata(enriched, source) {
   return enriched;
 }
 
-async function markEnrichAttemptComplete(place, cellIndex, processed, totalEnrich) {
-  scrapeState.enrichedPlaceKeys.add(getEnrichCheckpointKey(place));
+async function persistEnrichAttemptProgress(cellIndex, processed, totalEnrich) {
   scheduleLiveSearchBackup(true);
   const ratio = totalEnrich > 0 ? Math.min(processed / totalEnrich, 1) : 1;
   const pct = calcProgressPercent(cellIndex, scrapeState.totalCells, 0.5 + ratio * 0.48);
@@ -3339,24 +3394,77 @@ async function markEnrichAttemptComplete(place, cellIndex, processed, totalEnric
   await persistScrapeCheckpoint();
 }
 
-async function cancelActiveEnrichOperation() {
+async function markEnrichAttemptComplete(place, cellIndex, processed, totalEnrich) {
+  const key = getEnrichCheckpointKey(place);
+  scrapeState.enrichedPlaceKeys.add(key);
+  scrapeState.failedEnrichKeys.delete(key);
+  await persistEnrichAttemptProgress(cellIndex, processed, totalEnrich);
+}
+
+const ENRICH_ABORT_TIMEOUT_MS = 12000;
+
+async function reloadMapsAfterUnsettledEnrich(tabId) {
+  scrapeState._expectMapsNavigation = true;
+  markMapsControlledActivity(60000);
+  try {
+    await chrome.tabs.reload(tabId);
+    await waitTabComplete(tabId, 30000);
+    await sleep(900);
+    const ready = await ensureMapsContentReady(tabId);
+    if (!ready) {
+      throw new Error("Không thể khởi tạo lại Google Maps sau khi thao tác chi tiết cũ chưa dừng.");
+    }
+  } finally {
+    scrapeState._expectMapsNavigation = false;
+  }
+}
+
+async function cancelActiveEnrichOperation({ timeoutMs = ENRICH_ABORT_TIMEOUT_MS } = {}) {
   const opId = String(scrapeState._activeEnrichOpId || "");
-  if (!opId || !scrapeState.mapsTabId) return;
-  await chrome.tabs
-    .sendMessage(scrapeState.mapsTabId, { action: "ENRICH_ABORT", data: { opId } })
-    .catch(() => {});
+  const tabId = scrapeState.mapsTabId;
+  if (!opId || !tabId) return true;
+
+  let timer = null;
+  let response = null;
+  try {
+    response = await Promise.race([
+      chrome.tabs.sendMessage(tabId, { action: "ENRICH_ABORT", data: { opId } }),
+      new Promise((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error("Google Maps không xác nhận thao tác chi tiết cũ đã dừng.")),
+          timeoutMs
+        );
+      })
+    ]);
+  } catch (err) {
+    bgLog(`Không xác nhận được ENRICH_ABORT ${opId}: ${err.message}`);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+
+  const settled =
+    response?.success === true &&
+    response?.opId === opId &&
+    response?.settled === true;
+  if (!settled) {
+    bgLog(`ENRICH_ABORT ${opId} chưa settled; tải lại Maps trước URL tiếp theo.`);
+    await reloadMapsAfterUnsettledEnrich(tabId);
+  }
   if (scrapeState._activeEnrichOpId === opId) scrapeState._activeEnrichOpId = "";
+  return true;
 }
 
 async function enrichPlaceByUrl(place, params, progressText, pct, attempt) {
   const href = getPlaceDetailUrl(place);
   if (!href) return null;
   const opId = `${scrapeState.runId}:${scrapeState.gridIndex}:${attempt}:${crypto.randomUUID()}`;
+  let operationStarted = false;
 
   const cellWorkToken = beginMapsCellWork();
   try {
     await cancelActiveEnrichOperation();
     scrapeState._activeEnrichOpId = opId;
+    operationStarted = true;
     await navigateMapsTab({ url: href });
     await sleep(650);
 
@@ -3373,12 +3481,18 @@ async function enrichPlaceByUrl(place, params, progressText, pct, attempt) {
       50000
     );
 
+    if (result?.opId === opId && result?.settled === false) {
+      await reloadMapsAfterUnsettledEnrich(scrapeState.mapsTabId);
+      if (scrapeState._activeEnrichOpId === opId) scrapeState._activeEnrichOpId = "";
+      operationStarted = false;
+      throw new Error("Thao tác chi tiết cũ chưa dừng; Google Maps đã được tải lại an toàn.");
+    }
     if (result?.opId !== opId || result?.success !== true) return null;
     return result.place || null;
   } catch (err) {
-    await chrome.tabs
-      .sendMessage(scrapeState.mapsTabId, { action: "ENRICH_ABORT", data: { opId } })
-      .catch(() => {});
+    if (operationStarted && scrapeState._activeEnrichOpId === opId) {
+      await cancelActiveEnrichOperation();
+    }
     throw err;
   } finally {
     if (scrapeState._activeEnrichOpId === opId) scrapeState._activeEnrichOpId = "";
@@ -3395,7 +3509,7 @@ async function markEnrichFailure(place, cellIndex, processed, totalEnrich, error
   notifyPopup(
     `Không đọc được chi tiết của ${place.name || "một điểm bán"}; Findmap giữ dữ liệu danh sách và tiếp tục.`
   );
-  await markEnrichAttemptComplete(place, cellIndex, processed, totalEnrich);
+  await persistEnrichAttemptProgress(cellIndex, processed, totalEnrich);
 }
 
 async function enrichPlacesInCell(cellPlaces, cellIndex, params, processed, totalEnrich) {
@@ -3403,7 +3517,13 @@ async function enrichPlacesInCell(cellPlaces, cellIndex, params, processed, tota
 
   for (const place of cellPlaces) {
     if (!scrapeState.running) break;
-    if (scrapeState.enrichedPlaceKeys.has(getEnrichCheckpointKey(place))) continue;
+    const key = getEnrichCheckpointKey(place);
+    if (
+      scrapeState.enrichedPlaceKeys.has(key) ||
+      scrapeState.failedEnrichKeys.has(key)
+    ) {
+      continue;
+    }
 
     done += 1;
     const href = getPlaceDetailUrl(place);
@@ -3551,8 +3671,7 @@ async function completeCellAfterEnrich(cellIndex) {
   const nextIndex = cellIndex + 1;
   if (nextIndex < scrapeState.totalCells) {
     scrapeState.gridIndex = nextIndex;
-    await runGridCell(nextIndex);
-    return;
+    return nextIndex;
   }
 
   if (total === 0) {
@@ -3568,7 +3687,7 @@ async function completeCellAfterEnrich(cellIndex) {
     } finally {
       endOperationTransition(transitionToken);
     }
-    return;
+    return null;
   }
 
   notifyProgress(95, `Đang hoàn tất ${total} điểm bán…`);
@@ -3576,15 +3695,35 @@ async function completeCellAfterEnrich(cellIndex) {
     await sendMapsMessage("SCRAPE_FINISH", {});
   } catch {}
   await handleScrapeComplete({ searchParams: scrapeState.searchParams });
+  return null;
+}
+
+function continueGridAfterEnrich(nextIndex) {
+  if (!Number.isInteger(nextIndex) || !scrapeState.running || pointsFinalized) return;
+  runGridCell(nextIndex)
+    .catch(async (err) => {
+      if (scrapeState.running && !pointsFinalized) {
+        await abortSearch("SCRAPE_FAILED", err?.message || String(err));
+      }
+    })
+    .catch((err) => console.warn("runGridCell after enrich:", err?.message || err));
 }
 
 function runEnrichPhase() {
   if (enrichRunPromise) return enrichRunPromise;
   const task = runEnrichPhaseInternal();
   enrichRunPromise = task;
-  task.finally(() => {
-    if (enrichRunPromise === task) enrichRunPromise = null;
-  }).catch(() => {});
+  task
+    .then(
+      (nextIndex) => {
+        if (enrichRunPromise === task) enrichRunPromise = null;
+        continueGridAfterEnrich(nextIndex);
+      },
+      () => {
+        if (enrichRunPromise === task) enrichRunPromise = null;
+      }
+    )
+    .catch(() => {});
   return task;
 }
 
@@ -3602,14 +3741,18 @@ async function runEnrichPhaseInternal() {
   const cellPlaces = list.filter(
     (place) => Number(place._enrichCellIndex) === Number(cellIndex)
   );
-  const toEnrich = cellPlaces.filter(
-    (place) => !scrapeState.enrichedPlaceKeys.has(getEnrichCheckpointKey(place))
-  );
+  const toEnrich = cellPlaces.filter((place) => {
+    const key = getEnrichCheckpointKey(place);
+    return (
+      !scrapeState.enrichedPlaceKeys.has(key) &&
+      !scrapeState.failedEnrichKeys.has(key)
+    );
+  });
   if (!scrapeState.enrichTotal) {
-    scrapeState.enrichTotal = toEnrich.length;
+    scrapeState.enrichTotal = cellPlaces.length;
     await persistScrapeCheckpoint();
   }
-  const totalEnrich = Math.max(scrapeState.enrichTotal, toEnrich.length);
+  const totalEnrich = Math.max(scrapeState.enrichTotal, cellPlaces.length);
   scrapeState.enrichTotal = totalEnrich;
   let processed = Math.max(0, totalEnrich - toEnrich.length);
 
@@ -3638,7 +3781,7 @@ async function runEnrichPhaseInternal() {
   }
 
   if (!scrapeState.running) return;
-  await completeCellAfterEnrich(cellIndex);
+  return completeCellAfterEnrich(cellIndex);
 }
 
 async function closeMapsTabSafely() {

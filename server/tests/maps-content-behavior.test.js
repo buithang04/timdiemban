@@ -71,6 +71,570 @@ test("visibilitychange báo hidden đúng pha list kèm lease và vẫn báo vis
   assert.deepEqual(sent, [], "hidden ngoài pha list không được phát cảnh báo");
 });
 
+test("getFeedPanel chọn result feed khi trang có nhiều role=feed", () => {
+  const source = section("function sendItem", "/** Text trong button contact Maps");
+  const placeLink = { href: "https://www.google.com/maps/place/Correct" };
+  const makeRoleFeed = (links) => ({
+    querySelector: (selector) =>
+      selector.includes("/maps/place") ? links[0] || null : null,
+    querySelectorAll: (selector) =>
+      selector.includes("/maps/place") ? links : []
+  });
+  const reviewFeed = makeRoleFeed([]);
+  const resultFeed = makeRoleFeed([placeLink]);
+  const main = {
+    querySelector: (selector) =>
+      selector === 'div[role="feed"]' ? reviewFeed : null,
+    querySelectorAll: (selector) =>
+      selector.includes("/maps/place") ? [placeLink] : []
+  };
+  const document = {
+    querySelector: (selector) => {
+      if (selector === 'div[role="feed"]') return reviewFeed;
+      if (selector === '[role="main"]') return main;
+      return null;
+    },
+    querySelectorAll: (selector) =>
+      selector.includes('[role="feed"]') ? [reviewFeed, resultFeed] : []
+  };
+  const context = vm.createContext({
+    document,
+    location: { pathname: "/maps/search/coffee" },
+    window: { location: { pathname: "/maps/search/coffee" } },
+    getResultItems: (feed) => feed.querySelectorAll("a[href*='/maps/place']")
+  });
+  vm.runInContext(`${source}\nthis.getFeedPanel = getFeedPanel;`, context);
+
+  assert.equal(
+    context.getFeedPanel(),
+    resultFeed,
+    "review feed đứng trước không được che result feed có URL địa điểm"
+  );
+});
+
+test("findDetailPaneH1 không dùng H1 ẩn hoặc stale ngoài viewport", () => {
+  const source = section("function findDetailPaneFromH1", "function tabLabelText");
+  const makeH1 = (text, rect) => ({
+    textContent: text,
+    isConnected: true,
+    hidden: false,
+    closest: () => null,
+    getAttribute: () => "",
+    getBoundingClientRect: () => rect
+  });
+  const stale = makeH1("Địa điểm cũ", {
+    width: 280,
+    height: 40,
+    top: -500,
+    bottom: -460,
+    left: 0,
+    right: 280
+  });
+  const current = makeH1("Địa điểm hiện tại", {
+    width: 280,
+    height: 40,
+    top: 40,
+    bottom: 80,
+    left: 20,
+    right: 300
+  });
+  const document = {
+    h1s: [stale, current],
+    querySelectorAll(selector) {
+      return selector === "h1" ? this.h1s : [];
+    },
+    querySelector: () => null
+  };
+  const context = vm.createContext({
+    document,
+    window: {
+      innerHeight: 800,
+      innerWidth: 1200,
+      getComputedStyle: () => ({ display: "block", visibility: "visible", opacity: "1" })
+    },
+    cleanPlaceName: (value) => String(value || "").trim(),
+    isSponsoredPlace: () => false
+  });
+  vm.runInContext(`${source}\nthis.findDetailPaneH1 = findDetailPaneH1;`, context);
+
+  assert.equal(context.findDetailPaneH1(), current);
+  document.h1s = [stale];
+  assert.equal(context.findDetailPaneH1(), null, "không được fallback về H1 cũ đang ẩn");
+});
+
+test("end marker phải đúng nội dung và nằm sau kết quả cuối", () => {
+  const source = section("const END_LIST_PATTERNS", "function isFeedLoading");
+  const context = vm.createContext({
+    Node: { DOCUMENT_POSITION_PRECEDING: 2 },
+    isFeedLoading: () => false,
+    getResultItems: (feed) => feed.items
+  });
+  vm.runInContext(`${source}\nthis.hasEndMarker = hasEndMarker;`, context);
+
+  const makeNode = ({ text = "", role = "", legacy = false } = {}) => {
+    const legacyText = { textContent: text };
+    return {
+      textContent: text,
+      parentElement: null,
+      getAttribute: (name) => (name === "role" ? role : name === "aria-label" ? "" : ""),
+      matches: (selector) => selector === '[role="article"]' && role === "article",
+      closest: () => null,
+      querySelector: (selector) => (legacy && selector === "span.HlvSq" ? legacyText : null),
+      querySelectorAll: () => [],
+      compareDocumentPosition: () => 0
+    };
+  };
+  const makeFeedWithMarker = ({ text, role = "", legacy = false, markerFirst = false }) => {
+    const article = makeNode({ role: "article" });
+    const marker = makeNode({ text, role, legacy });
+    const fillers = Array.from({ length: 6 }, () => makeNode({ text: "filler" }));
+    const children = markerFirst
+      ? [marker, ...fillers, article]
+      : [article, ...fillers, marker];
+    const feed = {
+      children,
+      items: [article],
+      querySelectorAll: (selector) => {
+        if (selector === '[role="status"]' && role === "status") return [marker];
+        if (selector.includes("fontBodyMedium") && legacy) return [marker];
+        return [];
+      }
+    };
+    for (const child of children) child.parentElement = feed;
+    return feed;
+  };
+  const makeWrappedFeed = ({ wrapperAtTail, markerAfterArticle }) => {
+    const article = makeNode({ role: "article" });
+    const marker = makeNode({ text: "Bạn đã xem hết danh sách", role: "status" });
+    const wrapper = makeNode({ text: "Bạn đã xem hết danh sách" });
+    const fillers = Array.from({ length: 6 }, () => makeNode({ text: "filler" }));
+    article.parentElement = wrapper;
+    marker.parentElement = wrapper;
+    marker.compareDocumentPosition = (other) =>
+      other === article && markerAfterArticle ? context.Node.DOCUMENT_POSITION_PRECEDING : 0;
+    const children = wrapperAtTail ? [...fillers, wrapper] : [wrapper, ...fillers];
+    const feed = {
+      children,
+      items: [article],
+      querySelectorAll: (selector) => (selector === '[role="status"]' ? [marker] : [])
+    };
+    for (const child of children) child.parentElement = feed;
+    return feed;
+  };
+
+  assert.equal(
+    context.hasEndMarker(
+      makeFeedWithMarker({ text: "Mở cửa hôm nay", legacy: true })
+    ),
+    false,
+    "class HlvSq với text thường không được kết thúc danh sách"
+  );
+  assert.equal(
+    context.hasEndMarker(
+      makeFeedWithMarker({ text: "Bạn đã xem hết danh sách", legacy: true, markerFirst: true })
+    ),
+    false,
+    "marker hợp lệ nhưng nằm trước kết quả cuối không được chấp nhận"
+  );
+  assert.equal(
+    context.hasEndMarker(
+      makeFeedWithMarker({ text: "Bạn đã xem hết danh sách", role: "status" })
+    ),
+    true,
+    "semantic role + text hợp lệ ở cuối feed phải được nhận"
+  );
+  assert.equal(
+    context.hasEndMarker(
+      makeFeedWithMarker({ text: "No more results" })
+    ),
+    true,
+    "tail text hợp lệ không phụ thuộc class Maps phải được nhận"
+  );
+  assert.equal(
+    context.hasEndMarker(makeWrappedFeed({ wrapperAtTail: true, markerAfterArticle: true })),
+    true,
+    "article cuối và marker trong cùng wrapper ở tail phải dùng document order"
+  );
+  assert.equal(
+    context.hasEndMarker(makeWrappedFeed({ wrapperAtTail: false, markerAfterArticle: true })),
+    false,
+    "cùng wrapper đúng document order nhưng wrapper không ở tail vẫn phải bị từ chối"
+  );
+  assert.equal(
+    context.hasEndMarker(makeWrappedFeed({ wrapperAtTail: true, markerAfterArticle: false })),
+    false,
+    "marker đứng trước article trong cùng wrapper không được kết thúc danh sách"
+  );
+});
+
+test("end marker semantic không cần text hiển thị", () => {
+  const source = section("function readRatingAndReviews", "function isFeedLoading");
+  const context = vm.createContext({
+    Node: { DOCUMENT_POSITION_PRECEDING: 2 },
+    isFeedLoading: () => false,
+    getResultItems: (feed) => feed.items
+  });
+  vm.runInContext(`${source}\nthis.hasEndMarker = hasEndMarker;`, context);
+
+  const makeSemanticFeed = (attribute, value) => {
+    const article = {
+      textContent: "Địa điểm",
+      parentElement: null,
+      matches: (selector) => selector === '[role="article"]',
+      querySelectorAll: () => [],
+      querySelector: () => null
+    };
+    const attrs = { [attribute]: value };
+    const marker = {
+      textContent: "",
+      parentElement: null,
+      getAttribute: (name) => attrs[name] || "",
+      hasAttribute: (name) => Object.prototype.hasOwnProperty.call(attrs, name),
+      matches: () => false,
+      closest: () => null,
+      querySelector: () => null,
+      querySelectorAll: () => [],
+      compareDocumentPosition: (other) =>
+        other === article ? context.Node.DOCUMENT_POSITION_PRECEDING : 0
+    };
+    const fillers = Array.from({ length: 5 }, () => ({
+      textContent: "filler",
+      parentElement: null,
+      matches: () => false,
+      querySelectorAll: () => []
+    }));
+    const children = [article, ...fillers, marker];
+    const feed = {
+      children,
+      items: [article],
+      querySelectorAll: (selector) => {
+        if (attribute === "data-end-of-list" && selector === "[data-end-of-list]") return [marker];
+        if (attribute === "data-testid" && selector.includes("data-testid")) return [marker];
+        if (attribute === "data-item-id" && selector.includes("data-item-id")) return [marker];
+        return [];
+      }
+    };
+    for (const child of children) child.parentElement = feed;
+    return feed;
+  };
+
+  for (const [attribute, value] of [
+    ["data-end-of-list", "true"],
+    ["data-testid", "end-of-list"],
+    ["data-item-id", "end_of_list"]
+  ]) {
+    assert.equal(
+      context.hasEndMarker(makeSemanticFeed(attribute, value)),
+      true,
+      `${attribute} semantic ở cuối feed phải đủ xác nhận end marker`
+    );
+  }
+});
+
+test("address ưu tiên data-item-id và vẫn nhận copy-address aria", () => {
+  const decode = section("function safeDecodeURIComponent", "function tbLog");
+  const addressMeta = section("const ADDRESS_LABEL_PREFIXES", "function isMapsUiLabel");
+  const addressParser = section("function parseAddressFromContactButton", "function isInFeedOrList");
+  const context = vm.createContext({
+    isOverviewContactButton: () => true,
+    cleanAddressText: (value) => String(value || "").trim(),
+    cleanLabel: (value, prefixes) => {
+      let out = String(value || "");
+      for (const prefix of prefixes) out = out.replace(prefix, "");
+      return out.trim();
+    },
+    readIo6YTeFromButton: () => "",
+    queryAddressBodyText: () => "",
+    pickBestAddress: (...values) => values.find(Boolean) || ""
+  });
+  vm.runInContext(
+    `${decode}\n${addressMeta}\n${addressParser}\n` +
+      "this.parseAddressFromContactButton = parseAddressFromContactButton;",
+    context
+  );
+  const makeButton = ({ itemId = "", ariaLabel = "" }) => ({
+    getAttribute: (name) =>
+      name === "data-item-id" ? itemId : name === "aria-label" ? ariaLabel : "",
+    querySelector: () => null,
+    querySelectorAll: () => []
+  });
+
+  assert.equal(
+    context.parseAddressFromContactButton(
+      makeButton({
+        itemId: "address:12%20Đường%20Data",
+        ariaLabel: "Địa chỉ: 99 Đường Aria"
+      })
+    ),
+    "12 Đường Data",
+    "data-item-id chính xác phải thắng aria-label"
+  );
+  assert.equal(
+    context.parseAddressFromContactButton(
+      makeButton({ ariaLabel: "Sao chép địa chỉ: 45 Phố Huế, Hà Nội" })
+    ),
+    "45 Phố Huế, Hà Nội",
+    "aria-only copy-address phải là fallback hợp lệ"
+  );
+});
+
+test("rating bỏ qua aria Sao chép và tiếp tục tới giá trị rating thật", () => {
+  const source = section("function readRatingAndReviews", "const END_LIST_PATTERNS");
+  const copyAddress = {
+    textContent: "",
+    getAttribute: (name) =>
+      name === "aria-label" ? "Sao chép địa chỉ: 12 Đường A" : ""
+  };
+  const actualRating = {
+    textContent: "4,7",
+    getAttribute: () => ""
+  };
+  const root = {
+    querySelector(selector) {
+      if (selector.startsWith('[role="img"]')) return null;
+      if (selector.startsWith('[aria-label*="sao"')) return copyAddress;
+      if (selector === 'span[aria-hidden="true"]') return actualRating;
+      return null;
+    },
+    querySelectorAll(selector) {
+      if (selector.includes('aria-label*="sao"')) return [copyAddress];
+      if (selector === 'span[aria-hidden="true"]') return [actualRating];
+      return [];
+    }
+  };
+  const context = vm.createContext({
+    findDetailPaneH1: () => null,
+    findRatingAndReviews: () => ({ rating: "", reviews: "" }),
+    parseRatingText: (value) => {
+      const match = String(value || "").trim().replace(",", ".").match(/^(\d(?:\.\d)?)/);
+      return match ? match[1] : "";
+    },
+    parseReviewCountText: () => "",
+    isDetailNavTab: () => false,
+    document: root
+  });
+  vm.runInContext(`${source}\nthis.readRatingAndReviews = readRatingAndReviews;`, context);
+
+  assert.equal(context.readRatingAndReviews(root).rating, "4.7");
+});
+
+test("tên list item ưu tiên aria-label của place link trước class Google", () => {
+  const source = section("function extractListItemData", "async function waitForDetailPanel");
+  const link = {
+    href: "https://www.google.com/maps/place/Ten+Dung",
+    textContent: "Tên link",
+    getAttribute: (name) => (name === "aria-label" ? "Tên đúng từ aria" : "")
+  };
+  const wrongClassTitle = { textContent: "Tên sai từ fontHeadline" };
+  const item = {
+    textContent: "",
+    querySelector: (selector) => {
+      if (selector === "a[href*='/maps/place']") return link;
+      if (selector.includes("fontHeadline")) return wrongClassTitle;
+      return null;
+    }
+  };
+  const context = vm.createContext({
+    PF: null,
+    isSponsoredItem: () => false,
+    cleanPlaceName: (value) => String(value || "").trim(),
+    isSponsoredPlace: () => false,
+    getPlaceId: () => "place-id",
+    readRatingFromListItem: () => ({ rating: "", reviews: "" }),
+    parseListMeta: () => ({ category: "", address: "", listDistanceKm: null }),
+    hasReliableAddress: () => false,
+    stripNameFromAddress: (value) => value,
+    isMergedNameMetaText: () => false,
+    isGarbageAddressText: () => false,
+    extractCoordsFromUrl: () => null,
+    getGooglePlaceId: () => "place-id",
+    pickBestPhoneCandidate: () => "",
+    cleanAddressText: (value) => String(value || ""),
+    getPlacePageUrl: () => "",
+    buildPlaceMapsUrl: () => ""
+  });
+  vm.runInContext(`${source}\nthis.extractListItemData = extractListItemData;`, context);
+
+  assert.equal(context.extractListItemData(item).name, "Tên đúng từ aria");
+});
+
+test("content không còn shortcut debug Ctrl+Shift+D hoặc toggle shield", () => {
+  const shortcutStart = content.indexOf("function isDevToolsShortcut");
+  const shortcutEnd = content.indexOf("function handleVisibilityChange", shortcutStart);
+  const shortcuts =
+    shortcutStart >= 0 && shortcutEnd > shortcutStart
+      ? content.slice(shortcutStart, shortcutEnd)
+      : "";
+  assert.doesNotMatch(content, /toggleShieldPeek/);
+  assert.doesNotMatch(content, /Ctrl\+Shift\+D/i);
+  assert.doesNotMatch(shortcuts, /["']D["']/);
+});
+
+test("data-item-id malformed percent giữ raw thay vì làm vỡ trích xuất", () => {
+  const decode = section("function safeDecodeURIComponent", "function tbLog");
+  const address = section("function parseAddressFromContactButton", "function isInFeedOrList");
+  const phone = section("function extractPhoneFromText", "function getOverviewContactSignature");
+  const extractAll = section("function extractAllFromDetailPane", "function isOnResultList");
+  const context = vm.createContext({
+    PF: null,
+    ADDRESS_LABEL_PREFIXES: [],
+    PHONE_LABEL_PREFIXES: [],
+    isAddressContactButton: () => true,
+    isOverviewContactButton: () => true,
+    extractAddressFromAriaLabel: () => "",
+    cleanAddressText: (value) => String(value || "").trim(),
+    cleanLabel: () => "",
+    readIo6YTeFromButton: () => "",
+    queryAddressBodyText: () => "",
+    pickBestAddress: (...values) => values.find(Boolean) || "",
+    normalizePhone: (value) => String(value || "").replace(/\D/g, ""),
+    formatPhoneVN: (value) => value,
+    getPhoneContactMeta: (el) => ({ itemId: el.getAttribute("data-item-id") || "" }),
+    extractPhoneFromAriaLabel: () => "",
+    isHoursSubPanelOpen: () => false,
+    isOverviewTabActive: () => true,
+    findDetailPaneH1: () => null,
+    getDetailPane: () => null,
+    readAddressFromContactButtons: () => "",
+    readPhoneFromContactButtons: () => "",
+    readWebsite: () => "",
+    isInSearchFeed: () => false,
+    normalizeWebsiteUrl: () => "",
+    readRatingAndReviews: () => ({ rating: "", reviews: "" })
+  });
+  vm.runInContext(
+    `${decode}\n${address}\n${phone}\n${extractAll}\n` +
+      "this.parseAddressFromContactButton = parseAddressFromContactButton;" +
+      "this.parsePhoneFromContactButton = parsePhoneFromContactButton;" +
+      "this.extractAllFromDetailPane = extractAllFromDetailPane;",
+    context
+  );
+
+  const makeContact = (itemId) => ({
+    textContent: "",
+    getAttribute: (name) => (name === "data-item-id" ? itemId : ""),
+    querySelector: () => null
+  });
+  assert.equal(
+    context.parseAddressFromContactButton(makeContact("address:12% Đường A")),
+    "12% Đường A"
+  );
+  assert.equal(
+    context.parsePhoneFromContactButton(makeContact("phone:tel:0901234567%")),
+    "0901234567"
+  );
+
+  const fallbackPhone = makeContact("phone:tel:0901234567%");
+  const pane = { querySelectorAll: () => [fallbackPhone] };
+  assert.equal(context.extractAllFromDetailPane(pane).phone, "0901234567%");
+});
+
+test("field selectors ưu tiên semantic và không xóa DOM Google Maps", () => {
+  const contacts = section("const PHONE_CONTACT_SELECTOR", "function getPhoneContactMeta");
+  const phone = section("function parsePhoneFromContactButton", "function getOverviewContactSignature");
+  const hours = section("function readHoursFromOverviewButton", "function isSafeExpandButton");
+  const website = section("function readWebsite", "async function waitForWebsite");
+  const rating = section("function readRatingAndReviews", "const END_LIST_PATTERNS");
+  const cleanup = section("function cleanupStaleDom", "async function prepareForNextListClick");
+
+  assert.match(contacts, /ADDRESS_CONTACT_SELECTOR[\s\S]*\[data-item-id=\"address\"\]/);
+  assert.doesNotMatch(contacts, /button\[data-item-id=\"address\"\]/);
+  assert.ok(phone.indexOf('getAttribute("data-item-id")') < phone.indexOf("readIo6YTeFromButton"));
+  assert.ok(hours.indexOf('getAttribute("aria-label")') < hours.indexOf('.ZDu9vd'));
+  assert.ok(website.indexOf('a[data-item-id="authority"]') < website.indexOf("Io6YTe"));
+  assert.ok(rating.indexOf('[role="img"]') < rating.indexOf('fontBody'));
+  assert.doesNotMatch(cleanup, /\.remove\s*\(/);
+  assert.doesNotMatch(cleanup, /m6QErb/);
+});
+
+test("enrich cũ nhận cancel signal và op mới không khởi động khi chờ timeout", async () => {
+  const source = section("const ENRICH_PREVIOUS_TASK_WAIT_MS", "window.__timDiemBanWake");
+  let resolveOld;
+  let oldCancelMarker = null;
+  let newEnrichCalls = 0;
+  const oldPending = new Promise((resolve) => {
+    resolveOld = resolve;
+  });
+  const timeoutCalls = [];
+  const context = vm.createContext({
+    activeEnrichTask: null,
+    activeEnrichOpId: "",
+    activeEnrichCancelMarker: null,
+    setTimeout: (callback, ms) => {
+      timeoutCalls.push(ms);
+      callback();
+      return 1;
+    },
+    clearTimeout: () => {},
+    getEnrichProfile: () => ({ fast: true, quick: true }),
+    enrichPlaceOnPage: async (listData, _searchParams, _text, _percent, options) => {
+      if (listData.name === "old") {
+        oldCancelMarker = options.cancelMarker;
+        return oldPending;
+      }
+      newEnrichCalls++;
+      return { name: listData.name };
+    },
+    enrichCanonicalMatches: () => true
+  });
+  vm.runInContext(
+    `${source}\nthis.runEnrichPlaceMessage = runEnrichPlaceMessage;`,
+    context
+  );
+
+  const oldTask = context.runEnrichPlaceMessage({
+    opId: "old-op",
+    listData: { name: "old" },
+    searchParams: {}
+  });
+  await Promise.resolve();
+
+  const nextResult = await context.runEnrichPlaceMessage({
+    opId: "new-op",
+    listData: { name: "new" },
+    searchParams: {}
+  });
+
+  assert.equal(oldCancelMarker.cancelled, true);
+  assert.deepEqual(plain(nextResult), {
+    success: false,
+    settled: false,
+    opId: "new-op",
+    error: "Thao tác bổ sung trước chưa dừng; chưa bắt đầu thao tác mới."
+  });
+  assert.deepEqual(timeoutCalls, [8000]);
+  assert.equal(newEnrichCalls, 0, "op mới không được gọi khi op cũ chưa settled");
+
+  resolveOld({ name: "old" });
+  await oldTask;
+  const retryResult = await context.runEnrichPlaceMessage({
+    opId: "new-op",
+    listData: { name: "new" },
+    searchParams: {}
+  });
+  assert.deepEqual(plain(retryResult), {
+    success: true,
+    place: { name: "new" },
+    opId: "new-op"
+  });
+  assert.equal(newEnrichCalls, 1);
+
+  const extract = section("async function extractPlaceDetails", "function mergePlaceData");
+  const enrich = section("async function enrichPlaceOnPage", "/** Mở chi tiết bằng click");
+  const abortHandler = section(
+    'if (message.action === "ENRICH_ABORT")',
+    'if (message.action === "ENRICH_ONE")'
+  );
+  assert.match(extract, /cancelMarker/);
+  assert.match(extract, /throwIfEnrichCancelled\(cancelMarker\)/);
+  assert.match(enrich, /cancelMarker/);
+  assert.match(enrich, /throwIfEnrichCancelled\(cancelMarker\)/);
+  assert.match(abortHandler, /waitForPreviousEnrichTask\(taskToSettle\)/);
+  assert.match(abortHandler, /success:\s*settled/);
+  assert.match(abortHandler, /settled:\s*false/);
+  assert.match(abortHandler, /return true/);
+});
+
 test("feed fingerprint includes every canonical URL and ignores DOM order", () => {
   const source = section("function hashFeedUrls", "/** Chờ Maps tải đúng vùng");
   const context = vm.createContext({

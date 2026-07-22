@@ -1,6 +1,6 @@
 (function () {
   // Bump version mỗi lần sửa content — background sẽ reinject nếu Maps còn bản cũ
-  const CONTENT_VERSION = 71;
+  const CONTENT_VERSION = 73;
   if (window.__timDiemBanLoaded && window.__timDiemBanVersion === CONTENT_VERSION) return;
   if (typeof window.__timDiemBanCleanup === "function") {
     try {
@@ -118,10 +118,19 @@
   let activeEnrichCancelMarker = null;
   let shieldEl = null;
   let blockKeysHandler = null;
-  let shieldPeek = false;
   let shieldWebLabel = "";
   const shieldLogLines = [];
   const SHIELD_LOG_MAX = 14;
+
+  // Google đôi khi phát ra data-item-id chứa phần trăm không hợp lệ; giữ raw thay vì làm hỏng cả lượt quét.
+  function safeDecodeURIComponent(value) {
+    const raw = String(value ?? "");
+    try {
+      return decodeURIComponent(raw);
+    } catch {
+      return raw;
+    }
+  }
 
   function tbLog(msg, level = "log") {
     const text = String(msg || "");
@@ -138,23 +147,9 @@
     /* log chỉ ghi Console — không hiển thị trên overlay */
   }
 
-  function toggleShieldPeek() {
-    shieldPeek = !shieldPeek;
-    if (!shieldEl) return;
-    if (shieldPeek) {
-      shieldEl.style.opacity = "0.08";
-      shieldEl.style.pointerEvents = "none";
-      tbLog("Đã ẩn bảng tiến độ. Nhấn Ctrl+Shift+D để hiện lại.");
-    } else {
-      shieldEl.style.opacity = "";
-      shieldEl.style.pointerEvents = "all";
-      tbLog("Đã hiện lại bảng tiến độ.");
-    }
-  }
-
-  function isDevToolsShortcut(e) {
+  function isAllowedBrowserShortcut(e) {
     if (e.key === "F12") return true;
-    if (e.ctrlKey && e.shiftKey && ["I", "J", "C", "K", "D"].includes(e.key.toUpperCase())) return true;
+    if (e.ctrlKey && e.shiftKey && ["I", "J", "C", "K"].includes(e.key.toUpperCase())) return true;
     if (e.metaKey && e.altKey && e.key.toLowerCase() === "i") return true;
     return false;
   }
@@ -253,18 +248,11 @@
   function showShield(text, percent, meta) {
     createShield();
     if (meta) setShieldMeta(meta);
-    shieldPeek = false;
     shieldLogLines.length = 0;
     scrapeInProgress = true;
     updateShield(text, percent);
     blockKeysHandler = (e) => {
-      if (isDevToolsShortcut(e)) {
-        if (e.ctrlKey && e.shiftKey && e.key.toUpperCase() === "D") {
-          e.preventDefault();
-          toggleShieldPeek();
-        }
-        return;
-      }
+      if (isAllowedBrowserShortcut(e)) return;
       e.preventDefault();
     };
     document.addEventListener("keydown", blockKeysHandler, true);
@@ -297,7 +285,6 @@
 
   function hideShield() {
     scrapeInProgress = false;
-    shieldPeek = false;
     shieldLogLines.length = 0;
     if (blockKeysHandler) {
       document.removeEventListener("keydown", blockKeysHandler, true);
@@ -339,12 +326,32 @@
   }
 
   function getFeedPanel() {
-    let feed = document.querySelector('div[role="feed"]');
-    if (feed) return feed;
+    const feeds = Array.from(document.querySelectorAll('[role="feed"]'));
+    for (const feed of feeds) {
+      if (getResultItems(feed).length > 0) return feed;
+    }
+
+    for (const feed of feeds) {
+      const label = [
+        feed.getAttribute("aria-label") || "",
+        feed.getAttribute("data-item-id") || "",
+        feed.getAttribute("id") || ""
+      ]
+        .join(" ")
+        .toLowerCase();
+      if (/(?:kết quả|địa điểm|results?|places?)/i.test(label) && !/(?:đánh giá|reviews?)/i.test(label)) {
+        return feed;
+      }
+    }
+
     const main = document.querySelector('[role="main"]');
-    feed = main?.querySelector('div[role="feed"]');
-    if (feed) return feed;
-    if (main?.querySelectorAll("a[href*='/maps/place']").length) return main;
+    if (
+      /\/maps\/search\//i.test(String(globalThis.location?.pathname || "")) &&
+      main &&
+      getResultItems(main).length > 0
+    ) {
+      return main;
+    }
     return null;
   }
 
@@ -411,12 +418,20 @@
     '[aria-label^="call phone" i]'
   ].join(", ");
 
+  const ADDRESS_CONTACT_SELECTOR = [
+    '[data-item-id="address"]',
+    '[data-item-id^="address"]',
+    '[aria-label^="địa chỉ:" i]',
+    '[aria-label^="address:" i]',
+    '[aria-label^="sao chép địa chỉ" i]',
+    '[aria-label^="copy address" i]'
+  ].join(", ");
+
   const OVERVIEW_CONTACT_SELECTOR = [
-    'button[data-item-id="address"]',
-    'button[data-item-id^="address"]',
+    ADDRESS_CONTACT_SELECTOR,
     PHONE_CONTACT_SELECTOR,
-    'a[data-item-id="authority"]',
-    'a[data-item-id^="authority"]',
+    '[data-item-id="authority"]',
+    '[data-item-id^="authority"]',
     'a[aria-label*="Trang web"]',
     'a[aria-label*="Website"]'
   ].join(", ");
@@ -510,7 +525,7 @@
     const id = (btn.getAttribute("data-item-id") || "").toLowerCase();
     if (id === "address" || id.startsWith("address")) return true;
     const label = (btn.getAttribute("aria-label") || "").trim();
-    return /^(địa chỉ|address)\s*:/i.test(label);
+    return ADDRESS_LABEL_PREFIXES.some((prefix) => prefix.test(label));
   }
 
   function isMapsUiLabel(text) {
@@ -603,11 +618,16 @@
     return best;
   }
 
-  /** Chỉ đọc địa chỉ từ button[data-item-id="address"] — ưu tiên aria-label */
+  /** Đọc địa chỉ từ data-item-id trước, rồi mới dùng aria/text semantic. */
   function parseAddressFromContactButton(btn) {
     if (!btn || !isAddressContactButton(btn) || !isOverviewContactButton(btn)) return "";
 
-    // Ưu tiên cao nhất: aria-label="Địa chỉ: XYZ" — bóc phần sau prefix
+    const itemId = btn.getAttribute("data-item-id") || "";
+    const itemAddr = itemId.match(/address:(.+)$/i);
+    if (itemAddr) {
+      return cleanAddressText(safeDecodeURIComponent(itemAddr[1]).trim());
+    }
+
     const fromAriaLabel = extractAddressFromAriaLabel(btn);
     if (fromAriaLabel && fromAriaLabel.length > 5) {
       return cleanAddressText(fromAriaLabel);
@@ -618,12 +638,6 @@
     const fromBody = cleanAddressText(queryAddressBodyText(btn));
     const best = pickBestAddress(fromAria, fromIo, fromBody);
     if (best) return best;
-
-    const itemId = btn.getAttribute("data-item-id") || "";
-    const itemAddr = itemId.match(/address:(.+)$/i);
-    if (itemAddr) {
-      return cleanAddressText(decodeURIComponent(itemAddr[1]).trim());
-    }
     return "";
   }
 
@@ -635,8 +649,7 @@
   function collectAddressCandidates() {
     const candidates = [];
     const seen = new Set();
-    const selectors =
-      'button.CsEnBe[data-item-id="address"], button[data-item-id="address"], button[data-item-id^="address"], button[aria-label^="Địa chỉ:"], button[aria-label^="Address:"]';
+    const selectors = ADDRESS_CONTACT_SELECTOR;
 
     const roots = [findOverviewContactRoot(), getDetailPane()].filter(Boolean);
     const triedRoots = new Set();
@@ -723,6 +736,18 @@
     const fromMeta = PF?.extractPhoneFromContactMeta?.(getPhoneContactMeta(btn)) || "";
     if (normalizePhone(fromMeta).length >= 9) return fromMeta;
 
+    const itemId = btn.getAttribute("data-item-id") || "";
+    const telInId = itemId.match(/phone:tel:([^;]+)/i);
+    if (telInId) {
+      const fromId = pickBestPhoneCandidate(safeDecodeURIComponent(telInId[1]).trim());
+      if (normalizePhone(fromId).length >= 9) return fromId;
+    }
+    const href = btn.getAttribute("href") || "";
+    if (/^tel:/i.test(href)) {
+      const fromHref = pickBestPhoneCandidate(href.replace(/^tel:/i, "").split(/[;?]/, 1)[0]);
+      if (normalizePhone(fromHref).length >= 9) return fromHref;
+    }
+
     // Ưu tiên cao nhất: aria-label="Số điện thoại: 0123456789" — bóc phần sau prefix
     const fromAriaLabel = extractPhoneFromAriaLabel(btn);
     if (normalizePhone(fromAriaLabel).length >= 9) {
@@ -738,18 +763,6 @@
 
     const fromIo = pickBestPhoneCandidate(readIo6YTeFromButton(btn));
     if (normalizePhone(fromIo).length >= 9) return fromIo;
-
-    const itemId = btn.getAttribute("data-item-id") || "";
-    const telInId = itemId.match(/phone:tel:([^;]+)/i);
-    if (telInId) {
-      const fromId = pickBestPhoneCandidate(decodeURIComponent(telInId[1]).trim());
-      if (normalizePhone(fromId).length >= 9) return fromId;
-    }
-    const href = btn.getAttribute("href") || "";
-    if (/^tel:/i.test(href)) {
-      const fromHref = pickBestPhoneCandidate(href.replace(/^tel:/i, "").split(/[;?]/, 1)[0]);
-      if (normalizePhone(fromHref).length >= 9) return fromHref;
-    }
     return "";
   }
 
@@ -894,13 +907,7 @@
   }
 
   async function revealAddressIntoView(pane) {
-    const selectors = [
-      'button.CsEnBe[data-item-id="address"]',
-      'button[data-item-id="address"]',
-      'button[data-item-id^="address"]',
-      'button[aria-label^="Địa chỉ:"]',
-      'button[aria-label^="Address:"]'
-    ];
+    const selectors = [ADDRESS_CONTACT_SELECTOR];
     const roots = [pane || findOverviewContactRoot() || getDetailPane()].filter(Boolean);
     const seen = new Set();
     for (const root of roots) {
@@ -1077,24 +1084,28 @@
   }
 
   function findDetailPaneH1() {
-    // Ưu tiên h1 đang VISIBLE (rect > 0) — tránh lấy nhầm h1 cũ từ DOM tràn
+    // Maps giữ pane cũ trong DOM; chỉ chấp nhận H1 thật sự giao với viewport hiện tại.
     const allH1 = document.querySelectorAll("h1");
-    let fallbackH1 = null;
     for (const h1 of allH1) {
       if (h1.closest('[role="feed"]')) continue;
+      if (h1.isConnected === false || h1.hidden || h1.closest('[aria-hidden="true"]')) continue;
+      const style = window.getComputedStyle?.(h1);
+      if (style && (style.display === "none" || style.visibility === "hidden" || style.opacity === "0")) {
+        continue;
+      }
       const text = cleanPlaceName(h1.textContent?.trim() || "");
       if (!text || text.length === 0 || isSponsoredPlace(text)) continue;
       const rect = h1.getBoundingClientRect();
-      if (rect.width > 0 && rect.height > 0 && rect.top < window.innerHeight) {
+      if (
+        rect.width > 0 &&
+        rect.height > 0 &&
+        rect.bottom > 0 &&
+        rect.right > 0 &&
+        rect.top < window.innerHeight &&
+        rect.left < window.innerWidth
+      ) {
         return h1;
       }
-      if (!fallbackH1) fallbackH1 = h1;
-    }
-    if (fallbackH1) return fallbackH1;
-    const styled = document.querySelector('h1[class*="fontHeadline"], h1.fontHeadlineLarge');
-    if (styled) {
-      const text = cleanPlaceName(styled.textContent?.trim() || "");
-      if (text && !isSponsoredPlace(text)) return styled;
     }
     return null;
   }
@@ -1263,7 +1274,7 @@
     const sel =
       kind === "phone"
         ? PHONE_CONTACT_SELECTOR
-        : 'button[data-item-id="address"], button[data-item-id^="address"]';
+        : ADDRESS_CONTACT_SELECTOR;
     for (const el of pane.querySelectorAll(sel)) {
       if (!isOverviewContactButton(el)) continue;
       if (kind !== "phone" || isPhoneContactButton(el)) return true;
@@ -1498,8 +1509,9 @@
     }
     if (!ohBtn) return "";
     const statusText =
-      ohBtn.querySelector(".ZDu9vd")?.textContent ||
       ohBtn.getAttribute("aria-label") ||
+      ohBtn.querySelector('[data-item-id^="oh"], [id*="hour" i], [aria-label^="Giờ"], [aria-label^="Hours"]')?.textContent ||
+      ohBtn.querySelector(".ZDu9vd")?.textContent ||
       queryBodyText(ohBtn);
     const hours = PF?.normalizeMapsHoursText
       ? PF.normalizeMapsHoursText(statusText)
@@ -1658,7 +1670,6 @@
   function readWebsite(scope) {
     const root = scope || getDetailPane() || document;
     const selectors = [
-      'a.CsEnBe[data-item-id="authority"]',
       'a[data-item-id="authority"]',
       'a[data-item-id^="authority"]',
       'button[data-item-id="authority"]',
@@ -1681,7 +1692,10 @@
         const labeled = normalizeWebsiteUrl(fromLabel);
         if (labeled) return labeled;
 
-        const io = el.querySelector(".Io6YTe, [class*='Io6YTe'], [class*='fontBody']") || el;
+        const io =
+          el.querySelector(
+            '[data-item-id], [id*="website" i], [aria-label*="trang web" i], [aria-label*="website" i]'
+          ) || el.querySelector(".Io6YTe, [class*='Io6YTe'], [class*='fontBody']") || el;
         const text = (io?.textContent || el.textContent || "").trim();
         const fromText = normalizeWebsiteUrl(text);
         if (fromText) return fromText;
@@ -1699,10 +1713,11 @@
     return "";
   }
 
-  async function waitForWebsite(maxMs = 1600, scope = null) {
+  async function waitForWebsite(maxMs = 1600, scope = null, cancelMarker = null) {
     const start = Date.now();
     let best = "";
     while (Date.now() - start < maxMs) {
+      throwIfEnrichCancelled(cancelMarker);
       const pane = scope || findOverviewContactRoot() || getDetailPane();
       best = readWebsite(pane) || best;
       if (best) return best;
@@ -1710,12 +1725,13 @@
       try {
         const root = findOverviewContactRoot() || pane;
         const link =
-          root?.querySelector('a[data-item-id="authority"], a[aria-label*="Trang web"], a[aria-label*="Website"]') ||
+          root?.querySelector('[data-item-id="authority"], [aria-label*="Trang web"], [aria-label*="Website"]') ||
           null;
         link?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
       } catch {}
       await sleep(140);
     }
+    throwIfEnrichCancelled(cancelMarker);
     return best || readWebsite(getDetailPane());
   }
 
@@ -1725,10 +1741,25 @@
     if (fromH1.rating) return fromH1;
 
     const root = scope || document;
-    const ratingEl =
-      root.querySelector('span[aria-hidden="true"]') ||
-      root.querySelector('[class*="fontBody"] span');
-    const rating = parseRatingText(ratingEl?.textContent) || "";
+    let rating = "";
+    const ratingSelectors = [
+      '[role="img"][aria-label*="sao" i], [role="img"][aria-label*="star" i]',
+      '[aria-label*="sao" i], [aria-label*="star" i]',
+      'span[aria-hidden="true"]',
+      '[class*="fontBody"] span'
+    ];
+    const seenRatingNodes = new Set();
+    for (const selector of ratingSelectors) {
+      for (const candidate of root.querySelectorAll(selector)) {
+        if (seenRatingNodes.has(candidate)) continue;
+        seenRatingNodes.add(candidate);
+        const aria = candidate.getAttribute?.("aria-label") || "";
+        if (/^(?:sao chép|copy)\b/i.test(aria.trim())) continue;
+        rating = parseRatingText(aria || candidate.textContent) || "";
+        if (rating) break;
+      }
+      if (rating) break;
+    }
 
     let reviews = "";
     const reviewBtn = root.querySelector(
@@ -1771,46 +1802,106 @@
     return END_LIST_PATTERNS.some((p) => p.test(t));
   }
 
+  function isEndMarkerNearFeedEnd(feed, marker) {
+    const children = Array.from(feed?.children || []);
+    let directChild = marker;
+    while (directChild?.parentElement && directChild.parentElement !== feed) {
+      directChild = directChild.parentElement;
+    }
+    const directIndex = children.indexOf(directChild);
+    const resultItems = getResultItems(feed);
+    if (resultItems.length && directIndex >= 0) {
+      const lastResult = resultItems[resultItems.length - 1];
+      let lastResultDirect = lastResult;
+      while (lastResultDirect?.parentElement && lastResultDirect.parentElement !== feed) {
+        lastResultDirect = lastResultDirect.parentElement;
+      }
+      const lastResultIndex = children.indexOf(lastResultDirect);
+      if (lastResultIndex >= 0 && directIndex < lastResultIndex) return false;
+      if (
+        lastResultIndex >= 0 &&
+        directIndex === lastResultIndex &&
+        (typeof marker?.compareDocumentPosition !== "function" ||
+          !(marker.compareDocumentPosition(lastResult) &
+            (globalThis.Node?.DOCUMENT_POSITION_PRECEDING || 2)))
+      ) {
+        return false;
+      }
+    }
+    if (directIndex >= 0 && directIndex >= children.length - 5) return true;
+    return false;
+  }
+
   function hasEndMarker(feed) {
     if (!feed) return false;
     // KHÔNG check khi feed đang loading — chờ load xong trước
     if (isFeedLoading(feed)) return false;
 
-    // CHỈ detect bằng cấu trúc chính xác: p.fontBodyMedium > span > span.HlvSq
-    // Phải là phần tử CON TRỰC TIẾP cuối cùng của feed (hoặc gần cuối)
-    const allP = feed.querySelectorAll("p.fontBodyMedium");
-    if (!allP.length) return false;
-
-    for (const p of allP) {
-      const hlvSq = p.querySelector("span.HlvSq");
-      if (!hlvSq) continue;
-      const text = (hlvSq.textContent || "").trim();
-      if (text.length < 4) continue;
-
-      // Kiểm tra thẻ p nằm ở phần CUỐI feed (không phải ở giữa)
-      // Dùng so sánh DOM order: p phải là 1 trong 5 children cuối
-      const children = Array.from(feed.children);
-      const pIndex = children.indexOf(p.closest(`:scope > *`) || p);
-      // Nếu p không phải con trực tiếp, tìm ancestor trực tiếp
-      let directChild = p;
-      while (directChild.parentElement && directChild.parentElement !== feed) {
-        directChild = directChild.parentElement;
+    const candidates = [];
+    const seen = new Set();
+    const semanticSelectors = [
+      "[data-end-of-list]",
+      '[data-testid*="end-of-list" i]',
+      '[data-item-id*="end_of_list" i]',
+      '[data-item-id*="end-of-list" i]',
+      '[id*="end_of_list" i]',
+      '[id*="end-of-list" i]',
+      '[role="status"]',
+      '[aria-label*="end of the list" i]',
+      '[aria-label*="hết danh sách" i]'
+    ];
+    for (const selector of semanticSelectors) {
+      for (const node of feed.querySelectorAll(selector)) {
+        if (seen.has(node)) continue;
+        seen.add(node);
+        candidates.push(node);
       }
-      const directIndex = children.indexOf(directChild);
-      if (directIndex >= 0 && directIndex >= children.length - 5) {
-        return true;
+    }
+    // Một số Maps builds không gắn role/data cho marker; chỉ quét 5 node cuối,
+    // tránh bắt chữ "hết danh sách" nằm trong nội dung một card ở giữa feed.
+    const tailChildren = Array.from(feed.children || []).slice(-5);
+    for (const child of tailChildren) {
+      if (child.matches?.('[role="article"]')) continue;
+      if (String(child.textContent || "").trim().length <= 180) {
+        if (!seen.has(child)) {
+          seen.add(child);
+          candidates.push(child);
+        }
       }
+      for (const node of child.querySelectorAll?.('[role="status"], [aria-label], [data-item-id], [id], p, span') || []) {
+        if (seen.has(node) || node.closest?.('[role="article"]')) continue;
+        if (String(node.textContent || node.getAttribute?.("aria-label") || "").trim().length > 180) continue;
+        seen.add(node);
+        candidates.push(node);
+      }
+    }
+    // Class của Maps chỉ là fallback; nội dung vẫn phải khớp end-marker đã biết.
+    for (const node of feed.querySelectorAll('p.fontBodyMedium, p[class*="fontBodyMedium"]')) {
+      if (seen.has(node)) continue;
+      seen.add(node);
+      candidates.push(node);
+    }
 
-      // Fallback: so sánh với số result item — p phải nằm SAU tất cả
-      const resultItems = getResultItems(feed);
-      if (resultItems.length === 0) continue;
-      const lastResultItem = resultItems[resultItems.length - 1];
-      // Dùng compareDocumentPosition thay vì getBoundingClientRect (không bị ảnh hưởng bởi scroll)
-      const pos = p.compareDocumentPosition(lastResultItem);
-      if (pos & Node.DOCUMENT_POSITION_PRECEDING) {
-        // lastResultItem nằm TRƯỚC p → p ở sau → end marker hợp lệ
-        return true;
-      }
+    for (const candidate of candidates) {
+      const legacyText = candidate.querySelector?.("span.HlvSq")?.textContent || "";
+      const texts = [
+        candidate.getAttribute?.("aria-label") || "",
+        candidate.getAttribute?.("data-end-of-list") || "",
+        candidate.getAttribute?.("data-testid") || "",
+        candidate.getAttribute?.("data-item-id") || "",
+        candidate.getAttribute?.("id") || "",
+        legacyText,
+        candidate.textContent || ""
+      ];
+      const normalizedTexts = texts.map((text) => String(text || "").replace(/[_-]+/g, " "));
+      const explicitEndFlag =
+        candidate.hasAttribute?.("data-end-of-list") &&
+        !/^(?:false|0|off)$/i.test(candidate.getAttribute("data-end-of-list") || "");
+      const semanticAttributeEnd = normalizedTexts.some((text) =>
+        /\b(?:end of (?:the )?list|no more results|hết danh sách)\b/i.test(text)
+      );
+      if (!explicitEndFlag && !semanticAttributeEnd && !normalizedTexts.some(textHasEndMarker)) continue;
+      if (isEndMarkerNearFeedEnd(feed, candidate)) return true;
     }
 
     return false;
@@ -2334,7 +2425,7 @@
 
         if (!out.phone) {
           const phoneM = id.match(/phone:tel:([^;]+)/i);
-          if (phoneM) out.phone = decodeURIComponent(phoneM[1]);
+          if (phoneM) out.phone = safeDecodeURIComponent(phoneM[1]);
           if (href.startsWith("tel:") && !out.phone) {
             out.phone = href.replace(/^tel:/i, "").trim();
           }
@@ -2374,32 +2465,9 @@
     return itemCount === 0 && !!findDetailPaneH1();
   }
 
-  // Dọn DOM cũ để giảm bloat — xóa các detail pane không còn visible
+  // Hook giữ lại để không đổi flow, nhưng tuyệt đối không xóa DOM do Google Maps sở hữu.
   function cleanupStaleDom() {
-    try {
-      const feed = getFeedPanel();
-      const main = document.querySelector('[role="main"]');
-      if (!main) return;
-      const currentH1 = findDetailPaneH1();
-      const currentPane = currentH1 ? findDetailPaneFromH1(currentH1) : null;
-
-      // Tìm và ẩn các sibling panel cũ (Google Maps giữ lại DOM từ các place đã xem)
-      let cleaned = 0;
-      for (const el of main.querySelectorAll('[class*="m6QErb"]')) {
-        if (el === feed || el === currentPane) continue;
-        if (feed && feed.contains(el)) continue;
-        if (currentPane && currentPane.contains(el)) continue;
-        if (el.contains(feed) || (currentPane && el.contains(currentPane))) continue;
-        const rect = el.getBoundingClientRect();
-        if (rect.width === 0 && rect.height === 0 && el.querySelector('button[data-item-id^="address"]')) {
-          el.remove();
-          cleaned++;
-        }
-      }
-      if (cleaned > 0) {
-        tbLog("Đã làm mới vùng thông tin chi tiết.");
-      }
-    } catch {}
+    // Google Maps owns these panes; removing host nodes can corrupt SPA navigation state.
   }
 
   async function prepareForNextListClick(options = {}) {
@@ -2567,7 +2635,8 @@
   }
 
   async function extractContactQuick(options = {}) {
-    const { needPhone = true, needAddress = true, maxMs = 2800 } = options;
+    const { needPhone = true, needAddress = true, maxMs = 2800, cancelMarker = null } = options;
+    throwIfEnrichCancelled(cancelMarker);
     await ensureDetailOverviewReady(true);
     let phone = "";
     let address = "";
@@ -2577,6 +2646,7 @@
     const start = Date.now();
 
     while (Date.now() - start < maxMs) {
+      throwIfEnrichCancelled(cancelMarker);
       if (isHoursSubPanelOpen()) await exitHoursSubPanelIfNeeded();
       const pane = getDetailPane();
 
@@ -2623,6 +2693,7 @@
       await sleep(75);
     }
 
+    throwIfEnrichCancelled(cancelMarker);
     const pane = getDetailPane();
     if (needPhone && normalizePhone(phone).length < 9) {
       await revealPhoneButton(pane);
@@ -2661,8 +2732,11 @@
       detailRetry = T.detailRetry,
       needAddress = true,
       needPhone = true,
-      needWebsite = false
+      needWebsite = false,
+      cancelMarker = null
     } = options;
+
+    throwIfEnrichCancelled(cancelMarker);
 
     const pane = getDetailPane();
     let snap = readOverviewSnapshot(pane);
@@ -2694,6 +2768,7 @@
     const pollMs = fast ? 80 : 160;
 
     while (Date.now() - start < maxMs) {
+      throwIfEnrichCancelled(cancelMarker);
       await exitHoursSubPanelIfNeeded();
       const activePane = getDetailPane();
       snap = readOverviewSnapshot(activePane);
@@ -2721,6 +2796,7 @@
     }
 
     for (let i = 0; i < detailRetry && needPhone && normalizePhone(phone).length < 9; i++) {
+      throwIfEnrichCancelled(cancelMarker);
       await sleep(fast ? 150 : 280);
       phone = pickBestPhone(
         phone,
@@ -2731,6 +2807,7 @@
 
     if (needAddress) {
       for (let i = 0; i < (fast ? 6 : 8) && !addressLooksComplete(address); i++) {
+        throwIfEnrichCancelled(cancelMarker);
         await sleep(fast ? 140 : 220);
         const retry = pickBestAddress(
           address,
@@ -2743,9 +2820,10 @@
     }
 
     if (needWebsite && !website) {
-      website = await waitForWebsite(fast ? 700 : 1200);
+      website = await waitForWebsite(fast ? 700 : 1200, null, cancelMarker);
     }
 
+    throwIfEnrichCancelled(cancelMarker);
     return { phone, address, website };
   }
 
@@ -3054,16 +3132,14 @@
     if (isSponsoredItem(item)) return null;
     const link = item.querySelector("a[href*='/maps/place']");
     if (!link) return null;
-    let name = "";
-    const titleEl =
-      item.querySelector('a[href*="/maps/place"] [class*="fontHeadline"]') ||
-      item.querySelector('[class*="fontHeadline"]');
-    if (titleEl?.textContent?.trim()) {
-      name = cleanPlaceName(titleEl.textContent.trim());
-    }
+    let name = cleanPlaceName(link.getAttribute("aria-label") || "");
     if (!name) {
-      name = cleanPlaceName(link.getAttribute("aria-label") || link.textContent?.trim() || "");
+      const titleEl =
+        item.querySelector('a[href*="/maps/place"] [class*="fontHeadline"]') ||
+        item.querySelector('[class*="fontHeadline"]');
+      if (titleEl?.textContent?.trim()) name = cleanPlaceName(titleEl.textContent.trim());
     }
+    if (!name) name = cleanPlaceName(link.textContent?.trim() || "");
     if (!name || isSponsoredPlace(name)) return null;
     const href = link.href || "";
     const placeId = getPlaceId(href);
@@ -3121,9 +3197,10 @@
     };
   }
 
-  async function waitForDetailPanel(listData) {
+  async function waitForDetailPanel(listData, cancelMarker = null) {
     const start = Date.now();
     while (Date.now() - start < T.detail) {
+      throwIfEnrichCancelled(cancelMarker);
       const h1 = findDetailPaneH1();
       if (h1) {
         if (!listData?.name || verifyDetailMatchesList(listData)) {
@@ -3143,9 +3220,11 @@
       quick = false,
       needAddress = true,
       needPhone = true,
-      needWebsite = true
+      needWebsite = true,
+      cancelMarker = null
     } = options;
-    if (listData?.name && !(await waitForDetailPanel(listData))) {
+    throwIfEnrichCancelled(cancelMarker);
+    if (listData?.name && !(await waitForDetailPanel(listData, cancelMarker))) {
       throw new Error(`Thông tin chi tiết chưa khớp với điểm bán ${listData.name}.`);
     }
 
@@ -3156,8 +3235,10 @@
     const useQuick = !!quick;
 
     await ensureDetailOverviewReady(useQuick, listData);
+    throwIfEnrichCancelled(cancelMarker);
     if (!useQuick && !isOverviewTabActive()) {
       await ensureDetailOverviewReady(false, listData);
+      throwIfEnrichCancelled(cancelMarker);
     }
     if (isHoursSubPanelOpen()) await exitHoursSubPanelIfNeeded();
 
@@ -3183,7 +3264,8 @@
         const contact = await extractContactQuick({
           needPhone: needPhone,
           needAddress: needAddress && !addressLooksComplete(address),
-          maxMs: missingPhone ? (missingAddr ? 5200 : 2800) : missingAddr ? 5000 : 1200
+          maxMs: missingPhone ? (missingAddr ? 5200 : 2800) : missingAddr ? 5000 : 1200,
+          cancelMarker
         });
         if (needPhone) phone = pickBestPhone(phone, contact.phone);
         if (needAddress) {
@@ -3197,7 +3279,8 @@
           detailRetry: T.detailRetry,
           needAddress: missingAddr,
           needPhone: missingPhone,
-          needWebsite
+          needWebsite,
+          cancelMarker
         });
         if (missingPhone) phone = contact.phone || phone;
         if (needAddress) {
@@ -3247,10 +3330,15 @@
     }
 
     if (needWebsite && !website) {
-      website = await waitForWebsite(fast || useQuick ? 900 : 1800, getDetailPane());
+      website = await waitForWebsite(
+        fast || useQuick ? 900 : 1800,
+        getDetailPane(),
+        cancelMarker
+      );
       if (!website) website = readWebsite(getDetailPane()) || snap.website;
     }
 
+    throwIfEnrichCancelled(cancelMarker);
     const hours = readHoursFromOverviewButton(pane);
     const pageUrl = window.location.href;
     const coords = hasCoords
@@ -3258,6 +3346,7 @@
       : useQuick
         ? { lat: listData.lat, lng: listData.lng, exact: false }
         : await waitForPlaceCoords(listData, searchParams, fast ? 500 : enrich ? 1800 : T.coordWait);
+    throwIfEnrichCancelled(cancelMarker);
     const listedPlaceId = String(listData?.googlePlaceId || "").trim();
     const googlePlaceId =
       (/^ChIJ/i.test(listedPlaceId) ? listedPlaceId : "") ||
@@ -3521,7 +3610,14 @@
   let _lastKnownTotalCells = 1;
 
   async function enrichPlaceOnPage(listData, searchParams, progressText, percent, options = {}) {
-    const { fast = false, quick = false, needAddress = true, needPhone = true } = options;
+    const {
+      fast = false,
+      quick = false,
+      needAddress = true,
+      needPhone = true,
+      cancelMarker = null
+    } = options;
+    throwIfEnrichCancelled(cancelMarker);
     if (!shieldEl) {
       showShield(progressText || `Bổ sung: ${listData?.name || ""}`, percent ?? 55);
     } else {
@@ -3530,18 +3626,20 @@
     tbLog(`Đang bổ sung thông tin: ${listData?.name || "Không rõ tên"}`);
 
     if (!fast) {
-      const panelReady = await waitForDetailPanel(listData);
+      const panelReady = await waitForDetailPanel(listData, cancelMarker);
       if (!panelReady) {
         tbLog(`Chưa tải được thông tin chi tiết: ${listData?.name || "Không rõ tên"}`, "warn");
         await sleep(700);
       }
     } else {
       for (let i = 0; i < 8; i++) {
+        throwIfEnrichCancelled(cancelMarker);
         if (findDetailPaneH1()) break;
         await sleep(100);
       }
     }
     await ensureDetailOverviewReady(quick || fast);
+    throwIfEnrichCancelled(cancelMarker);
 
     const details = await extractPlaceDetails(listData, searchParams, {
       enrich: true,
@@ -3549,8 +3647,10 @@
       quick: quick || fast,
       needAddress,
       needPhone,
-      needWebsite: true
+      needWebsite: true,
+      cancelMarker
     });
+    throwIfEnrichCancelled(cancelMarker);
     const merged = finalizeEnrichedRecord(
       buildDetailRecord(listData, details, searchParams, searchParams.lat, searchParams.lng),
       listData,
@@ -4606,6 +4706,36 @@
     return slugsMatch && strictNameMatch(listData?.name, place?.name);
   }
 
+  const ENRICH_PREVIOUS_TASK_WAIT_MS = 8000;
+
+  function isEnrichCancelled(cancelMarker) {
+    return cancelMarker?.cancelled === true;
+  }
+
+  function throwIfEnrichCancelled(cancelMarker) {
+    if (isEnrichCancelled(cancelMarker)) {
+      throw new Error("Thao tác bổ sung đã bị hủy.");
+    }
+  }
+
+  async function waitForPreviousEnrichTask(previousTask) {
+    if (!previousTask) return true;
+    let timer = null;
+    try {
+      return await Promise.race([
+        Promise.resolve(previousTask).then(
+          () => true,
+          () => true
+        ),
+        new Promise((resolve) => {
+          timer = setTimeout(() => resolve(false), ENRICH_PREVIOUS_TASK_WAIT_MS);
+        })
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
   function cancelActiveEnrich(opId) {
     if (!activeEnrichTask || !activeEnrichCancelMarker) return false;
     if (opId && activeEnrichOpId !== opId) return false;
@@ -4622,14 +4752,31 @@
     if (activeEnrichTask && activeEnrichOpId === opId) return activeEnrichTask;
 
     const previousTask = activeEnrichTask;
-    if (activeEnrichCancelMarker) activeEnrichCancelMarker.cancelled = true;
+    if (previousTask) {
+      if (activeEnrichCancelMarker) activeEnrichCancelMarker.cancelled = true;
+      return (async () => {
+        const settled = await waitForPreviousEnrichTask(previousTask);
+        if (!settled) {
+          return {
+            success: false,
+            settled: false,
+            opId,
+            error: "Thao tác bổ sung trước chưa dừng; chưa bắt đầu thao tác mới."
+          };
+        }
+        if (activeEnrichTask === previousTask) {
+          activeEnrichTask = null;
+          activeEnrichOpId = "";
+          activeEnrichCancelMarker = null;
+        }
+        return runEnrichPlaceMessage(data);
+      })().catch((err) => ({ success: false, opId, error: err.message }));
+    }
+
     const cancelMarker = { cancelled: false };
 
     const task = (async () => {
-      if (previousTask) await previousTask.catch(() => {});
-      if (cancelMarker.cancelled) {
-        return { success: false, opId, error: "Thao tác bổ sung đã bị hủy." };
-      }
+      throwIfEnrichCancelled(cancelMarker);
 
       const {
         listData,
@@ -4644,12 +4791,11 @@
         fast: thorough ? false : fast || profile?.fast,
         quick: thorough ? false : profile?.quick,
         needAddress: thorough ? true : profile?.needAddress !== false,
-        needPhone: thorough ? true : profile?.needPhone !== false
+        needPhone: thorough ? true : profile?.needPhone !== false,
+        cancelMarker
       });
 
-      if (cancelMarker.cancelled) {
-        return { success: false, opId, error: "Thao tác bổ sung đã bị hủy." };
-      }
+      throwIfEnrichCancelled(cancelMarker);
       if (place && !enrichCanonicalMatches(listData, place)) {
         return { success: false, opId, error: "Chi tiết Google Maps không khớp điểm bán yêu cầu." };
       }
@@ -4731,8 +4877,26 @@
         sendResponse({ success: false, opId, error: "Thiếu opId cho thao tác hủy." });
         return;
       }
-      sendResponse({ success: true, opId, cancelled: cancelActiveEnrich(opId) });
-      return;
+      const taskToSettle = activeEnrichTask;
+      const cancelled = cancelActiveEnrich(opId);
+      if (!cancelled || !taskToSettle) {
+        sendResponse({ success: false, settled: false, opId, cancelled: false });
+        return;
+      }
+      waitForPreviousEnrichTask(taskToSettle)
+        .then((settled) => {
+          sendResponse({
+            success: settled,
+            settled,
+            opId,
+            cancelled: true,
+            ...(settled ? {} : { error: "Thao tác bổ sung chưa dừng trong thời gian chờ." })
+          });
+        })
+        .catch((err) =>
+          sendResponse({ success: false, settled: false, opId, cancelled: true, error: err.message })
+        );
+      return true;
     }
     if (message.action === "ENRICH_ONE") {
       enrichOneFromList(message.data)
