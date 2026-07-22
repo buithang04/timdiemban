@@ -227,7 +227,7 @@ function getCanonicalPlaceId(url) {
   if (!url) return "";
   try {
     const decoded = decodeURIComponent(url);
-    const chij = decoded.match(/!1s(ChIJ[a-zA-Z0-9_-]+)/);
+    const chij = decoded.match(/!(?:1s|19s)(ChIJ[a-zA-Z0-9_-]+)/);
     if (chij) return chij[1];
     const chijQ = decoded.match(/[?&]query_place_id=(ChIJ[a-zA-Z0-9_-]+)/);
     if (chijQ) return chijQ[1];

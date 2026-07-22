@@ -167,11 +167,11 @@
                 </label>
                 <label class="wm-check-row" for="searchMapsAutoFocus">
                   <input type="checkbox" id="searchMapsAutoFocus" />
-                  <span id="searchMapsAutoFocusLabel">Nên bật: tự giữ tab Maps ở phía trước để Chrome không tạm dừng lượt quét.</span>
+                  <span id="searchMapsAutoFocusLabel">Chỉ đưa Maps lên trước khi không phản hồi trong 5 phút hoặc thao tác thất bại.</span>
                 </label>
                 <label class="wm-check-row" for="searchMapsAutoReopen">
                   <input type="checkbox" id="searchMapsAutoReopen" />
-                  <span id="searchMapsAutoReopenLabel">Nếu tab Maps bị đóng, tự mở lại và chuyển sang tab đó để tiếp tục. Quá giới hạn sẽ dừng và giữ kết quả đã có.</span>
+                  <span id="searchMapsAutoReopenLabel">Nếu tab Maps bị đóng, tự mở lại ở nền để tiếp tục. Quá giới hạn sẽ dừng và giữ kết quả đã có.</span>
                 </label>
               </div>
             </div>
@@ -380,10 +380,10 @@
   <div id="mapsFocusModal" class="maps-focus-modal hidden" role="dialog" aria-labelledby="mapsFocusModalTitle" aria-modal="true">
     <div class="maps-focus-modal-box">
       <button type="button" id="mapsFocusModalClose" class="maps-focus-close-btn" title="Đóng" aria-label="Đóng">✕</button>
-      <h2 id="mapsFocusModalTitle">Tab Maps cần được đưa lên trước</h2>
+      <h2 id="mapsFocusModalTitle">Đang khôi phục tab Maps</h2>
       <p class="maps-focus-modal-lead">
-        Tiến trình đang chậm hoặc kết quả về Findmap bị trễ. Hãy <strong>chuyển sang tab Google Maps</strong> và giữ tab đó mở để tiếp tục ổn định.
-        Bạn có thể bật <strong>Tự đưa tab Maps lên trước</strong> trong Cấu hình quét.
+        Tiến trình đang chậm hoặc kết quả về Findmap bị trễ. Hãy giữ tab Google Maps mở; Findmap sẽ thử kết nối lại ở nền.
+        Nếu không có dữ liệu mới trong 5 phút hoặc thao tác nền thất bại, tiện ích mới tự đưa tab Maps lên trước để khôi phục.
       </p>
       <button type="button" id="mapsFocusModalOk" class="btn btn-primary maps-focus-modal-btn">Đã hiểu</button>
     </div>

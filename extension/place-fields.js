@@ -179,6 +179,48 @@
     return normalizePhone(phone).length >= 9 ? formatPhoneVN(phone) : "";
   }
 
+  function normalizeMapsHoursText(text) {
+    return String(text || "")
+      .replace(/[\uE000-\uF8FF]/g, " ")
+      .replace(/\s+/g, " ")
+      .replace(/^(?:Giờ hoạt động|Giờ|Hours?)\s*:?\s*/i, "")
+      .replace(/\s+(?:Hiện giờ (?:mở|đóng) cửa trong tuần|See (?:open|closed) hours for the week)\s*$/i, "")
+      .trim();
+  }
+
+  function parseMapsRatingReviewLabels(labels) {
+    let rating = "";
+    let reviews = "";
+    for (const raw of labels || []) {
+      const label = String(raw || "").replace(/\s+/g, " ").trim();
+      if (!label) continue;
+
+      if (!rating) {
+        const ratingMatch = label.match(/(\d[.,]\d)\s*(?:sao|stars?)/i);
+        if (ratingMatch) rating = ratingMatch[1].replace(",", ".");
+      }
+
+      if (!reviews) {
+        const reviewMatch = label.match(
+          /([\d.,]+)\s*([kK])?\s*(?:(?:bài\s+)?đánh giá|reviews?|nhận xét)/i
+        );
+        if (reviewMatch) {
+          if (reviewMatch[2]) {
+            const count = parseFloat(reviewMatch[1].replace(",", "."));
+            if (!isNaN(count)) reviews = String(Math.round(count * 1000));
+          } else if (/^\d{1,3}(?:[.,]\d{3})+$/.test(reviewMatch[1])) {
+            reviews = reviewMatch[1].replace(/[.,]/g, "");
+          } else {
+            reviews = reviewMatch[1].replace(/[,\s]/g, "");
+          }
+        }
+      }
+
+      if (rating && reviews) break;
+    }
+    return { rating, reviews };
+  }
+
   /** Không kết luận "không có SĐT" khi vùng liên hệ vẫn đang render. */
   function shouldKeepWaitingForPhone(state = {}) {
     if (state.needPhone === false || normalizePhone(state.phone).length >= 9) return false;
@@ -428,6 +470,8 @@
     extractPhoneFromContactMeta,
     isPhoneContactMeta,
     extractPhoneFromListText,
+    normalizeMapsHoursText,
+    parseMapsRatingReviewLabels,
     shouldKeepWaitingForPhone,
     isMapsUiLabel,
     isMapsUiChromeText,

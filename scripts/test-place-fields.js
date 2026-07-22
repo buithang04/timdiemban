@@ -511,6 +511,38 @@ test("lấy SĐT trực tiếp từ card danh sách", () => {
 test("card chỉ có giờ mở cửa không sinh SĐT giả", () => {
   eq(PF.extractPhoneFromListText("Mở cửa 07:00 · Đóng cửa 22:00"), "");
 });
+test("Cheong Hak Gol: giữ đầy đủ trạng thái giờ mở cửa từ role=button", () => {
+  eq(
+    PF.normalizeMapsHoursText(" Đang mở cửa · Đóng cửa vào 22:00 "),
+    "Đang mở cửa · Đóng cửa vào 22:00"
+  );
+});
+test("Nhà Hàng Xì Trum: bỏ nhãn accessibility thừa ở dòng giờ", () => {
+  eq(
+    PF.normalizeMapsHoursText(
+      "Giờ Đang mở cửa · Đóng cửa vào 23:30 Hiện giờ mở cửa trong tuần"
+    ),
+    "Đang mở cửa · Đóng cửa vào 23:30"
+  );
+});
+test("Cheong Hak Gol: đọc rating và nhãn 'bài đánh giá' production", () => {
+  const rr = PF.parseMapsRatingReviewLabels(["4,7 sao", "428 bài đánh giá"]);
+  eq(rr.rating, "4.7");
+  eq(rr.reviews, "428");
+});
+test("rating/review tiếng Anh và số K vẫn được chuẩn hóa", () => {
+  const rr = PF.parseMapsRatingReviewLabels(["4.6 stars", "1.2K reviews"]);
+  eq(rr.rating, "4.6");
+  eq(rr.reviews, "1200");
+});
+test("URL production !19s trả đúng Google Place ID ChIJ", () => {
+  eq(
+    getCanonicalPlaceId(
+      "https://www.google.com/maps/place/Cheong+Hak+Gol/data=!4m7!3m6!1s0x3135adfa3467c801:0x2a83c89eaae1c56f!8m2!3d21.003146!4d105.8148112!16s%2Fg%2F11h55z4ztr!19sChIJAchnNPqtNTERb8Xhqp7Igyo"
+    ),
+    "ChIJAchnNPqtNTERb8Xhqp7Igyo"
+  );
+});
 test("còn chờ khi address vừa render 500ms", () => {
   ok(PF.shouldKeepWaitingForPhone({
     needPhone: true,
@@ -572,6 +604,10 @@ test("content wiring có list fallback, tel selector và stable wait", () => {
   ok(content.includes("PF.extractPhoneFromListText(item.textContent"));
   ok(content.includes("a[href^=\"tel:\"]"));
   ok(content.includes("PF.shouldKeepWaitingForPhone"));
+  ok(content.includes("pane.querySelectorAll('button, [role=\"button\"]')"));
+  ok(content.includes('[aria-label="Giờ"]'));
+  ok(content.includes("PF.normalizeMapsHoursText"));
+  ok(content.includes("PF?.parseMapsRatingReviewLabels"));
   ok(contentVersion, "content.js phải khai báo CONTENT_VERSION");
   ok(requiredVersion, "background.js phải khai báo REQUIRED_CONTENT_VERSION");
   eq(

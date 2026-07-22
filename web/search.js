@@ -57,7 +57,7 @@
     try {
       if (!els.mapsAutoFocus) return;
       const saved = localStorage.getItem(MAPS_AUTO_FOCUS_KEY);
-      // Không dùng debugger: giữ Maps foreground là cách ổn định và đúng MV3 nhất.
+      // Chỉ focus để phục hồi khi Maps thật sự ngừng phản hồi.
       els.mapsAutoFocus.checked = saved == null ? true : saved === "1";
       if (saved == null) localStorage.setItem(MAPS_AUTO_FOCUS_KEY, "1");
     } catch {}
@@ -72,8 +72,8 @@
 
   function updateMapsAutoFocusLabel() {
     if (!els.mapsAutoFocusLabel) return;
-    const mins = getMapsAutoFocusMinutes();
-    els.mapsAutoFocusLabel.textContent = `Nên bật: tự đưa Google Maps lên trước khi Chrome chuyển tab sang nền và kiểm tra lại mỗi ${mins} phút. Tắt tùy chọn này có thể làm lượt quét chậm hoặc tạm dừng.`;
+    els.mapsAutoFocusLabel.textContent =
+      "Chỉ đưa Google Maps lên trước khi không phản hồi trong 5 phút hoặc thao tác thất bại. Bình thường bạn có thể làm việc ở tab khác.";
   }
 
   function syncMapsAutoFocusCheckbox(enabled) {
@@ -112,7 +112,7 @@
     if (!els.mapsAutoReopenLabel) return;
     const max = Number(window.TIMDIEMBAN_CONFIG?.MAPS_AUTO_REOPEN_MAX);
     const maxN = Number.isFinite(max) && max >= 1 ? Math.floor(max) : 5;
-    els.mapsAutoReopenLabel.textContent = `Nếu tab Maps bị đóng, tự mở lại và chuyển sang tab đó để tiếp tục; tối đa ${maxN} lần. Quá giới hạn sẽ dừng và giữ kết quả đã có.`;
+    els.mapsAutoReopenLabel.textContent = `Nếu tab Maps bị đóng, tự mở lại ở nền để tiếp tục; tối đa ${maxN} lần. Quá giới hạn sẽ dừng và giữ kết quả đã có.`;
   }
 
   function syncMapsAutoReopenCheckbox(enabled) {
@@ -154,7 +154,7 @@
     if (!els.searchOptionsHint) return;
     const tags = [];
     if (els.fastMode?.checked) tags.push("Nhanh");
-    if (els.mapsAutoFocus?.checked) tags.push("Giữ Maps hoạt động");
+    if (els.mapsAutoFocus?.checked) tags.push("Khôi phục Maps khi treo");
     if (els.mapsAutoReopen?.checked) tags.push("Mở lại tab");
     els.searchOptionsHint.textContent = tags.length ? tags.join(" · ") : "Chưa bật";
   }
@@ -677,7 +677,7 @@
     if (!searchRunning || !els.searchStatus) return;
     if (document.visibilityState === "hidden") {
       showSearchStatus(
-        "Tìm kiếm vẫn tiếp tục và kết quả đang được đồng bộ. Giữ tab Maps mở; nếu tiến độ chậm, hãy đưa Maps lên trước.",
+        "Tìm kiếm vẫn tiếp tục và kết quả đang được đồng bộ. Giữ tab Maps mở; Findmap chỉ đưa Maps lên trước nếu không phản hồi trong 5 phút hoặc thao tác nền thất bại.",
         "info"
       );
     }
@@ -1009,7 +1009,7 @@
           );
         }
         showSearchStatus(
-          "Phát hiện tab Maps có dấu hiệu treo / chậm phản hồi. Hãy chuyển sang tab Google Maps để tiếp tục ổn định.",
+          "Maps đang chậm phản hồi. Findmap sẽ thử khôi phục ở nền và chỉ đưa tab Maps lên trước khi thật sự cần thiết.",
           "info"
         );
       } else if (status.totalCells) {
@@ -1245,8 +1245,8 @@
           const endPromise = waitForSearchEnd(searchParams.searchId);
           await startSearchExclusive(searchParams);
           const autoFocusHint = searchParams.mapsAutoFocus
-            ? "Hãy giữ tab Google Maps ở phía trước; Findmap sẽ tự đưa tab trở lại khi cần."
-            : "Đang tắt tự-focus. Nếu tiến độ dừng, hãy tự đưa tab Google Maps lên trước.";
+            ? "Bạn có thể làm việc ở tab khác; Maps chỉ được đưa lên trước nếu không phản hồi trong 5 phút."
+            : "Đang tắt tự khôi phục tab Maps khi tiến trình không phản hồi.";
           showSearchStatus(`${stepLabel} — ${autoFocusHint}`, "info");
 
           const end = await endPromise;

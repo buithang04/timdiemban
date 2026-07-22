@@ -22,5 +22,6 @@ Các chức năng chính:
 - Quét lại các điểm còn thiếu số điện thoại hoặc địa chỉ.
 
 Tiện ích chỉ hoạt động khi người dùng chủ động bắt đầu tìm kiếm trên Findmap. Findmap mở một tab
-Google Maps chuyên dụng và giữ tab đó ở phía trước trong lúc quét để Chrome không tạm dừng trang.
+Google Maps chuyên dụng ở nền để người dùng tiếp tục làm việc ở tab khác. Tab Maps chỉ được đưa
+lên trước để khôi phục khi không có dữ liệu mới trong 5 phút hoặc một thao tác nền thực sự thất bại.
 Tiện ích không yêu cầu quyền gỡ lỗi và tự đóng tab Maps khi hoàn tất hoặc bị hủy.

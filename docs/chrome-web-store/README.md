@@ -25,15 +25,17 @@ nếu còn quyền `debugger`.
 
 - Cài ZIP bằng `chrome://extensions` ở Developer mode.
 - Đăng nhập Findmap, chạy một lượt tìm kiếm ngắn và một lượt nhiều khu vực.
-- Chạy tìm kiếm; xác nhận tab Maps chuyên dụng được đưa lên trước và tiến độ tiếp tục ổn định.
-- Chuyển sang tab khác; khi bật tùy chọn giữ Maps hoạt động, xác nhận Findmap tự đưa Maps trở lại.
+- Chạy tìm kiếm; xác nhận tab Maps chuyên dụng mở ở nền và không giành focus khi vẫn có dữ liệu mới.
+- Chuyển sang tab khác; xác nhận thao tác cuộn, đổi URL và đọc chi tiết trên Maps vẫn tiếp tục ở nền.
+- Mô phỏng Maps không phản hồi; xác nhận tab không được đưa lên trước trong 5 phút đầu và chỉ focus một lần để khôi phục sau ngưỡng này hoặc khi thao tác thực sự thất bại.
 - Trong lúc quét, bấm "service worker" > Terminate/Stop nếu Chrome cung cấp, sau đó chờ tối đa 30–60 giây và xác nhận phiên tự tiếp tục.
 - Khởi động lại Chrome trong lúc quét với tùy chọn tự mở lại Maps đang bật và xác nhận checkpoint được khôi phục.
 - Hoàn tất lượt quét phải đóng tab Maps và không còn alarm công việc hoạt động.
 
 ## 4. Lưu ý duyệt chợ
 
-Manifest V3 không hỗ trợ service worker chạy vĩnh viễn và không bảo đảm tab ẩn tiếp tục render.
-Findmap dùng tab Maps foreground, alarm, storage checkpoint và event của tab để phục hồi. Không
-thêm debugger, offscreen page, AudioContext/WebSocket giả hoặc vòng lặp gọi API chỉ nhằm né
-lifecycle vì có thể bị Chrome Web Store đánh giá là lạm dụng nền.
+Manifest V3 không hỗ trợ service worker chạy vĩnh viễn và không bảo đảm tab nền luôn render.
+Findmap ưu tiên chạy Maps ở nền, dùng alarm, storage checkpoint và event của tab để phục hồi;
+chỉ đưa Maps lên trước tạm thời khi không có dữ liệu mới trong 5 phút hoặc thao tác nền thất bại.
+Không thêm debugger, offscreen page, AudioContext/WebSocket giả hoặc vòng lặp gọi API chỉ nhằm
+né lifecycle vì có thể bị Chrome Web Store đánh giá là lạm dụng nền.

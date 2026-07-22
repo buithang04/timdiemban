@@ -1,6 +1,6 @@
 (function () {
   // Bump version mỗi lần sửa content — background sẽ reinject nếu Maps còn bản cũ
-  const CONTENT_VERSION = 60;
+  const CONTENT_VERSION = 65;
   if (window.__timDiemBanLoaded && window.__timDiemBanVersion === CONTENT_VERSION) return;
   if (typeof window.__timDiemBanCleanup === "function") {
     try {
@@ -202,7 +202,7 @@
         <div class="shield-text" id="timdiemban-shield-text">Đang chuẩn bị thu thập thông tin điểm bán…</div>
         <div class="shield-bar-wrap"><div class="shield-bar" id="timdiemban-shield-bar"></div></div>
         <div class="shield-percent" id="timdiemban-shield-percent">0%</div>
-        <div class="shield-warn" id="timdiemban-shield-warn">Kết quả đang được đồng bộ về Findmap. Hãy giữ tab Google Maps này ở phía trước để Chrome không tạm dừng lượt quét.</div>
+        <div class="shield-warn" id="timdiemban-shield-warn">Findmap có thể tiếp tục làm việc khi tab này ở nền. Chỉ khi Google Maps không phản hồi trong 5 phút, tab mới được đưa lên trước để khôi phục.</div>
         <div class="shield-hint">Không đóng hoặc tải lại tab Google Maps cho đến khi Findmap báo hoàn tất.</div>
       </div>`;
     const block = (e) => { e.stopPropagation(); e.preventDefault(); };
@@ -215,7 +215,7 @@
 
   function formatShieldWarn(webLabel) {
     const target = webLabel || "Findmap";
-    return `Kết quả đang được đồng bộ về ${target}. Hãy giữ tab Google Maps này ở phía trước để Chrome không tạm dừng lượt quét.`;
+    return `Kết quả đang được đồng bộ về ${target}. Bạn có thể làm việc ở tab khác; Maps chỉ được đưa lên trước khi không phản hồi trong 5 phút.`;
   }
 
   function resolveWebLabel(webUrl) {
@@ -273,9 +273,8 @@
     if (!totalCells) return 0;
     const ratio = Math.max(0, Math.min(1, Number(inCellRatio) || 0));
     const idx = Math.max(0, Number(cellIndex) || 0);
-    const doneCells = (idx / totalCells) * 70;
-    // Mỗi ô đang chạy chiếm tối thiểu ~8% thanh (dễ thấy), tối đa 1 phần theo số ô
-    const withinSpan = Math.max(8, 70 / totalCells);
+    const doneCells = (idx / totalCells) * 92;
+    const withinSpan = 92 / totalCells;
     const within = ratio * withinSpan;
     return Math.min(95, Math.max(0, Math.round(doneCells + within)));
   }
@@ -983,7 +982,7 @@
       const aria = star.getAttribute("aria-label") || "";
       const starM = aria.match(/(\d[.,]\d)\s*(sao|stars?)/i);
       if (starM) rating = starM[1].replace(",", ".");
-      const revM = aria.match(/([\d.,]+)\s*(đánh giá|reviews?|nhận xét)/i);
+      const revM = aria.match(/([\d.,]+)\s*((?:bài\s+)?đánh giá|reviews?|nhận xét)/i);
       if (revM) reviews = revM[1].replace(/[,\s.]/g, "");
     }
 
@@ -1456,20 +1455,34 @@
   function readHoursFromOverviewButton(pane) {
     pane = pane || getDetailPane();
     if (!pane || isHoursSubPanelOpen()) return "";
-    const ohBtn = pane.querySelector('button[data-item-id^="oh"]');
-    if (!ohBtn) return "";
-    const label = ohBtn.getAttribute("aria-label") || "";
-    let hours = label
-      .replace(/^Giờ hoạt động:\s*/i, "")
-      .replace(/^Hours:\s*/i, "")
-      .replace(/^Đang mở cửa[:\s]*/i, "")
-      .replace(/^Open now[:\s]*/i, "")
-      .trim();
-    if (!hours) {
-      const row = queryBodyText(ohBtn);
-      if (row && !/^giờ$/i.test(row) && !/^hours$/i.test(row)) hours = row;
+    let ohBtn = pane.querySelector(
+      'button[data-item-id^="oh"], [role="button"][data-item-id^="oh"], button[aria-label^="Giờ"], button[aria-label^="Hours"]'
+    );
+    if (!ohBtn) {
+      for (const candidate of pane.querySelectorAll('button, [role="button"]')) {
+        const label = candidate.getAttribute("aria-label") || "";
+        const rowText = candidate.textContent || "";
+        const hasHoursIcon = !!candidate.querySelector(
+          '[aria-label="Giờ"], [aria-label="Hours"], [aria-label="Opening hours"]'
+        );
+        if (
+          (hasHoursIcon || /^(Giờ|Hours?)\b/i.test(label)) &&
+          isOpeningHoursText(`${label} ${rowText}`)
+        ) {
+          ohBtn = candidate;
+          break;
+        }
+      }
     }
-    return hours;
+    if (!ohBtn) return "";
+    const statusText =
+      ohBtn.querySelector(".ZDu9vd")?.textContent ||
+      ohBtn.getAttribute("aria-label") ||
+      queryBodyText(ohBtn);
+    const hours = PF?.normalizeMapsHoursText
+      ? PF.normalizeMapsHoursText(statusText)
+      : String(statusText || "").replace(/\s+/g, " ").trim();
+    return /^(giờ|hours?)$/i.test(hours) ? "" : hours;
   }
 
   function isSafeExpandButton(btn) {
@@ -1487,7 +1500,9 @@
 
   function parseReviewCountText(text) {
     const t = (text || "").trim();
-    const kMatch = t.match(/^([\d.,]+)\s*([kK])(?:\s*(đánh giá|reviews?|nhận xét))?$/i);
+    const kMatch = t.match(
+      /^([\d.,]+)\s*([kK])(?:\s*((?:bài\s+)?đánh giá|reviews?|nhận xét))?$/i
+    );
     if (kMatch) {
       const n = parseFloat(kMatch[1].replace(",", "."));
       if (!isNaN(n)) return String(Math.round(n * 1000));
@@ -1498,7 +1513,9 @@
       if (/^\d{1,3}\.\d{3}$/.test(rv)) rv = rv.replace(".", "");
       return rv.replace(/\s/g, "").replace(/,/g, "");
     }
-    const label = t.match(/([\d.,]+)\s*([kK])?\s*(đánh giá|reviews?|nhận xét)/i);
+    const label = t.match(
+      /([\d.,]+)\s*([kK])?\s*((?:bài\s+)?đánh giá|reviews?|nhận xét)/i
+    );
     if (label) {
       let num = label[1].replace(",", ".");
       if (label[2] && /k/i.test(label[2])) {
@@ -1524,6 +1541,13 @@
       if (!ancestor) break;
       if (ancestor.querySelector('[role="feed"]')) break;
 
+      const fromLabels = PF?.parseMapsRatingReviewLabels?.(
+        [...ancestor.querySelectorAll('[role="img"][aria-label]')].map(
+          (el) => el.getAttribute("aria-label") || ""
+        )
+      );
+      if (fromLabels?.rating && fromLabels?.reviews) return fromLabels;
+
       for (const span of ancestor.querySelectorAll('span[aria-hidden="true"]')) {
         const rating = parseRatingText(span.textContent);
         if (!rating) continue;
@@ -1539,7 +1563,9 @@
             }
             const aria = s.getAttribute("aria-label") || "";
             const fromAria = parseReviewCountText(aria) ||
-              (aria.match(/([\d.,]+)\s*(đánh giá|reviews?|nhận xét)/i)?.[1]?.replace(/,/g, "") || "");
+              (aria
+                .match(/([\d.,]+)\s*((?:bài\s+)?đánh giá|reviews?|nhận xét)/i)?.[1]
+                ?.replace(/,/g, "") || "");
             if (fromAria) {
               reviews = fromAria;
               break;
@@ -1551,11 +1577,13 @@
         return { rating, reviews };
       }
 
-      for (const img of ancestor.querySelectorAll('span[role="img"][aria-label], span[role="img"]')) {
+      for (const img of ancestor.querySelectorAll('[role="img"][aria-label], [role="img"]')) {
         const aria = img.getAttribute("aria-label") || "";
         const starM = aria.match(/(\d[.,]\d)\s*(sao|star)/i);
         if (starM) {
-          const reviewM = aria.match(/([\d.,]+)\s*(đánh giá|reviews?|nhận xét)/i);
+          const reviewM = aria.match(
+            /([\d.,]+)\s*((?:bài\s+)?đánh giá|reviews?|nhận xét)/i
+          );
           return {
             rating: starM[1].replace(",", "."),
             reviews: reviewM ? reviewM[1].replace(/,/g, "") : ""
@@ -3189,10 +3217,12 @@
       : useQuick
         ? { lat: listData.lat, lng: listData.lng, exact: false }
         : await waitForPlaceCoords(listData, searchParams, fast ? 500 : enrich ? 1800 : T.coordWait);
+    const listedPlaceId = String(listData?.googlePlaceId || "").trim();
     const googlePlaceId =
-      getCanonicalPlaceId(pageUrl) ||
+      (/^ChIJ/i.test(listedPlaceId) ? listedPlaceId : "") ||
       getCanonicalPlaceId(listData?.href || "") ||
-      listData?.googlePlaceId;
+      getCanonicalPlaceId(pageUrl) ||
+      listedPlaceId;
     const placeName = cleanPlaceName(nameEl?.textContent?.trim() || listData?.name || "");
     const mapsUrl =
       getPlacePageUrl(pageUrl) ||
@@ -3807,25 +3837,36 @@
     return { success: true, places: enriched, needFallback };
   }
 
+  function updateEndMarkerConfirmation(confirmations, state) {
+    if (state.grew || state.loading || !state.endMarker) {
+      return { confirmations: 0, reachedEnd: false };
+    }
+    const next = Math.max(0, Number(confirmations) || 0) + 1;
+    return { confirmations: next, reachedEnd: next >= 2 };
+  }
+
   async function scrollFeed(feed, onItems, options = {}) {
     const {
       requireEndMarker = true,
-      safetyMax = 80,
-      maxMs = 150000,
+      safetyMax = 240,
+      maxMs = 300000,
       fastScroll = false,
       onProgress = null
     } = options;
-    const scrollPause = fastScroll ? 120 : T.scroll;
+    const scrollPause = fastScroll ? 180 : Math.max(T.scroll, 220);
     const scrollInitPause = fastScroll ? 80 : T.scrollInit;
-    const staleLimit = requireEndMarker ? 999 : fastScroll ? 8 : 10;
-    const staleHardLimit = requireEndMarker ? 30 : fastScroll ? 14 : 18;
-    const settleMs = fastScroll ? 2500 : 5000;
-    const endConfirmMs = fastScroll ? 900 : 2000;
-    const stepRatio = fastScroll ? 0.75 : 0.65;
-    const stepMin = fastScroll ? 320 : 280;
+    const staleLimit = fastScroll ? 10 : 14;
+    const settleMs = fastScroll ? 3000 : 5000;
+    const endConfirmMs = fastScroll ? 1200 : 1800;
+    const stepRatio = fastScroll ? 0.72 : 0.58;
+    const stepMin = fastScroll ? 300 : 240;
     let lastTotal = 0;
     let staleBottomRounds = 0;
     let lastScrollHeight = 0;
+    let endMarkerConfirmations = 0;
+    let reachedEnd = false;
+    let reason = "safety_limit";
+    let rounds = 0;
     const scrollStart = Date.now();
     feed = getFeedPanel() || feed;
     if (feed) {
@@ -3835,9 +3876,14 @@
     }
 
     for (let round = 0; round < safetyMax; round++) {
-      if (isAborted) break;
+      rounds = round + 1;
+      if (isAborted) {
+        reason = "aborted";
+        break;
+      }
       if (Date.now() - scrollStart > maxMs) {
         tbLog(`Đã dừng tải thêm sau ${Math.round(maxMs / 1000)} giây.`);
+        reason = "timeout";
         break;
       }
 
@@ -3846,10 +3892,14 @@
         try {
           feed = await waitForFeed(5000);
         } catch {
+          reason = "feed_missing";
           break;
         }
       }
-      if (!feed) break;
+      if (!feed) {
+        reason = "feed_missing";
+        break;
+      }
 
       await waitForFeedContentReady(feed, settleMs);
 
@@ -3861,92 +3911,94 @@
 
       if (feed.scrollHeight > lastScrollHeight + 30) {
         staleBottomRounds = 0;
+        endMarkerConfirmations = 0;
         lastScrollHeight = feed.scrollHeight;
       }
 
       if (found.total > lastTotal) {
         lastTotal = found.total;
         staleBottomRounds = 0;
+        endMarkerConfirmations = 0;
       } else if (atBottom) {
         staleBottomRounds++;
       }
 
       if (atBottom) {
-        // Bước 1: Chờ feed load xong hoàn toàn
+        const beforeTotal = found.total;
+        const beforeHeight = feed.scrollHeight;
+
+        // Giữ nhịp cuộn giống thao tác chuột: chạm đáy, chờ Maps tải rồi mới kiểm tra.
+        if (typeof feed.scrollBy === "function") {
+          feed.scrollBy({ top: Math.max(48, Math.round(feed.clientHeight * 0.18)), behavior: "smooth" });
+        } else {
+          feed.scrollTop = Math.max(0, feed.scrollHeight - feed.clientHeight);
+        }
+        await sleep(scrollPause + 120);
         await waitForFeedContentReady(feed, settleMs);
-        
-        // Bước 2: Cuộn nhẹ xuống đáy để trigger Google Maps load thêm
-        feed.scrollTop = feed.scrollHeight;
-        await sleep(400);
-        
-        // Bước 3: Chờ lại — nếu Google Maps đang load thêm item
-        if (isFeedLoading(feed)) {
-          await waitForFeedContentReady(feed, settleMs);
-          // Sau khi load xong, feed có thể dài hơn → chưa phải đáy thật
-          const newMaxScroll = Math.max(0, feed.scrollHeight - feed.clientHeight);
-          if (feed.scrollTop < newMaxScroll - 40) {
-            // Feed dài thêm → tiếp tục cuộn, không check end marker
-            staleBottomRounds = 0;
-            const afterLoad = await onItems(feed, round);
-            if (afterLoad.total > lastTotal) {
-              lastTotal = afterLoad.total;
-              staleBottomRounds = 0;
-            }
-            await sleep(scrollPause);
-            continue;
-          }
-        }
-        
-        // Bước 4: Feed đã load xong, thật sự ở đáy — giờ mới check end marker
-        await sleep(300);
-        feed.scrollTop = feed.scrollHeight;
-        await sleep(200);
+
         const afterNudge = await onItems(feed, round);
-        
-        if (hasEndMarker(feed)) {
-          // Thấy end marker — nhưng phải đảm bảo feed THẬT SỰ không còn load
-          tbLog(`Đã tới cuối danh sách · ${afterNudge.total} điểm bán. Đang xác nhận…`);
-          
-          // Chờ thêm rồi kiểm tra lại
-          await sleep(endConfirmMs);
-          await waitForFeedContentReady(feed, 4000);
-          feed.scrollTop = feed.scrollHeight;
-          await sleep(500);
-          
-          const finalCheck = await onItems(feed, round);
-          
-          // Kiểm tra end marker lần cuối SAU KHI chờ load
-          if (hasEndMarker(feed) && !isFeedLoading(feed)) {
-            tbLog(`Đã xác nhận cuối danh sách · Tổng ${finalCheck.total} điểm bán`);
+        const grew =
+          afterNudge.total > beforeTotal ||
+          feed.scrollHeight > beforeHeight + 30;
+
+        if (grew || isFeedLoading(feed)) {
+          lastTotal = Math.max(lastTotal, afterNudge.total || 0);
+          staleBottomRounds = 0;
+          endMarkerConfirmations = 0;
+          await sleep(scrollPause);
+          continue;
+        }
+
+        const endState = updateEndMarkerConfirmation(endMarkerConfirmations, {
+          grew,
+          loading: isFeedLoading(feed),
+          endMarker: hasEndMarker(feed)
+        });
+        endMarkerConfirmations = endState.confirmations;
+        if (endMarkerConfirmations > 0) {
+          tbLog(
+            `Đã thấy cuối danh sách · ${afterNudge.total} điểm bán · ` +
+              `xác nhận ${endMarkerConfirmations}/2`
+          );
+          if (endState.reachedEnd) {
+            reachedEnd = true;
+            reason = "end_marker";
+            lastTotal = Math.max(lastTotal, afterNudge.total || 0);
             break;
-          } else {
-            tbLog("Danh sách có thêm kết quả. Findmap sẽ tiếp tục tải.");
-            staleBottomRounds = 0;
-            await sleep(scrollPause);
-            continue;
           }
+          await sleep(endConfirmMs);
+          continue;
         }
-        
-        if (!requireEndMarker) break;
-        if (staleBottomRounds >= staleLimit && found.total > 0) {
-          tbLog(`Đã tải xong danh sách · ${found.total} điểm bán`);
-          await onItems(feed, round);
+
+        endMarkerConfirmations = 0;
+        if (!requireEndMarker && staleBottomRounds >= staleLimit && afterNudge.total > 0) {
+          reachedEnd = true;
+          reason = "stable_bottom";
+          lastTotal = Math.max(lastTotal, afterNudge.total || 0);
           break;
         }
-        if (staleBottomRounds >= staleHardLimit) {
-          tbLog("Danh sách không thay đổi sau nhiều lần kiểm tra. Findmap sẽ xử lý các kết quả đã có.");
-          await onItems(feed, round);
-          break;
-        }
-        await sleep(scrollPause + 200);
+
+        // Không có end marker thì vẫn tiếp tục. Maps có thể đứng vài nhịp rồi mới nạp đợt kế tiếp.
+        await sleep(scrollPause + Math.min(1200, staleBottomRounds * 80));
         continue;
       }
 
       const step = feedScrollStep(feed, stepRatio, stepMin);
-      feed.scrollTop = Math.min(feed.scrollTop + step, feed.scrollHeight);
+      if (typeof feed.scrollBy === "function") {
+        feed.scrollBy({ top: step, behavior: "smooth" });
+      } else {
+        feed.scrollTop = Math.min(feed.scrollTop + step, feed.scrollHeight);
+      }
       await sleep(scrollPause);
     }
-    return feed;
+    return {
+      feed,
+      reachedEnd,
+      reason,
+      total: lastTotal,
+      rounds,
+      elapsedMs: Date.now() - scrollStart
+    };
   }
 
   async function enrichAllWithDetails(
@@ -4045,11 +4097,7 @@
         .map((k) => k.slice(4).toLowerCase())
     );
     const results = [];
-    const processed = new Set();
-    let clickAttempts = 0;
     let skippedCount = 0;
-    let detailIdx = 0;
-    const maxPerCell = parseInt(searchParams.maxPlacesPerCell, 10) || 0;
     const fastMode = !!searchParams.fastMode;
     const tCellStart = Date.now();
     const secsSinceCellStart = () => Math.round((Date.now() - tCellStart) / 1000);
@@ -4067,7 +4115,14 @@
         feed = await waitForFeed(20000);
       } catch (err) {
         console.warn(`TimDiemBan ${cellLabel}: không có feed`, err);
-        return { places: [], skippedCount: 0, clickAttempts: 0, earlyExit: true };
+        return {
+          places: [],
+          skippedCount: 0,
+          clickAttempts: 0,
+          reachedEnd: false,
+          reason: "feed_missing",
+          earlyExit: true
+        };
       }
     }
     await sleep(120);
@@ -4103,7 +4158,6 @@
       let newInRound = 0;
       for (const item of getResultItems(panel)) {
         if (isAborted) break;
-        if (maxPerCell > 0 && pending.size >= maxPerCell) break;
 
         const listData = extractListItemData(item);
         if (!listData?.name) continue;
@@ -4132,169 +4186,54 @@
       );
     };
 
-    feed = await scrollFeed(feed, collectOnly, {
+    const scrollOutcome = await scrollFeed(feed, collectOnly, {
       requireEndMarker: true,
-      safetyMax: fastMode ? 55 : 80,
-      maxMs: fastMode ? 90000 : 150000,
+      safetyMax: 240,
+      maxMs: 300000,
       fastScroll: fastMode,
       onProgress: onScrollProgress
     });
-
-    if (pending.size === 0 && !hasEndMarker(feed)) {
-      tbLog(`${cellLabel}: chưa có kết quả — cuộn thêm...`);
-      feed = await scrollFeed(feed, collectOnly, {
-        requireEndMarker: false,
-        safetyMax: fastMode ? 28 : 40,
-        maxMs: fastMode ? 35000 : 60000,
-        fastScroll: fastMode
-      });
-    }
+    feed = scrollOutcome.feed;
 
     tbLog(
       `[DIAG] ${cellLabel}: pha CUỘN xong sau ${secsSinceCellStart()}s · gom được ${pending.size} điểm · ` +
-        `endMarker=${hasEndMarker(feed)} · trùng đã bỏ=${skippedCount}`
+        `reachedEnd=${scrollOutcome.reachedEnd} · reason=${scrollOutcome.reason} · ` +
+        `rounds=${scrollOutcome.rounds} · trùng đã bỏ=${skippedCount}`
     );
 
-    if (pending.size > 0) {
-      sendProgress(
-        calcProgressPercent(cellIndex, totalCells, 0.48),
-        `Khu vực ${cellIndex + 1}/${totalCells} · Đang thu thập thông tin của ${pending.size} điểm bán…`
-      );
-      if (feed) {
-        feed.scrollTop = 0;
-        await waitForFeedContentReady(feed, 12000);
-      }
-    }
-
-    const scrapeOneFromList = async (item, listData, place) => {
-      const track = getItemTrackKey(listData);
-      if (processed.has(track)) return false;
-
-      processed.add(track);
-      clickAttempts++;
-      detailIdx++;
-
-      sendProgress(
-        calcProgressPercent(cellIndex, totalCells, 0.48 + Math.min(detailIdx / Math.max(pending.size, 1), 0.48)),
-        `Khu vực ${cellIndex + 1}/${totalCells} · Đang xử lý ${detailIdx}/${pending.size} · ${place.name}`
-      );
-
-      try {
-        const data = await scrapeItemInPlace(
-          item,
-          listData,
-          searchParams,
-          detailIdx,
-          cellIndex,
-          totalCells,
-          cellLabel,
-          mapLat,
-          mapLng,
-          {
-            quiet: false,
-            fast: fastMode,
-            quick: fastMode,
-            needAddress: !fastMode,
-            needPhone: true,
-            searchUrl,
-            totalInCell: pending.size
-          }
-        );
-        if (data) {
-          mergePlaceRecord(place, data);
-          place._phase = "detail";
-          place.name = cleanPlaceName(data.name || place.name);
-          place.phone = data.phone || place.phone || "";
-          const mergedAddr = pickBestAddress(data.address, place.address);
-          place.address = mergedAddr || "";
-          place.rating = data.rating || place.rating || "";
-          place.reviews = data.reviews || place.reviews || "";
-        } else {
-          place._phase = "list";
-          place.name = cleanPlaceName(place.name);
-          if (!hasReliableAddress(place.address)) place.address = "";
-        }
-      } catch (err) {
-        console.warn("TimDiemBan detail:", place.name, err.message);
-        place._phase = "list";
-        if (!hasReliableAddress(place.address)) place.address = "";
-        await prepareForNextListClick({ searchUrl, cellLat: mapLat, cellLng: mapLng, cellIndex, maxBackMs: 2000 });
-      }
-
-      markCollected(listData, place, seenTrack, seenKeys, seenCanonical);
-      if (typeof sanitizeAddressField === "function") {
-        place.address = sanitizeAddressField(place.address);
-      }
-      results.push(place);
-      if (!place._webSent) {
-        sendItem(place, searchParams, detailIdx, pending.size);
-      }
-      return true;
-    };
-
-    const tDetailStart = Date.now();
-    let loopExitReason = "hết danh sách";
-    let findMsTotal = 0;
-    let idxInLoop = 0;
-
-    for (const { listData, place } of pending.values()) {
-      if (isAborted) {
-        loopExitReason = "isAborted (nhận SCRAPE_ABORT từ background)";
-        break;
-      }
-      if (maxPerCell > 0 && results.length >= maxPerCell) {
-        loopExitReason = `chạm maxPlacesPerCell=${maxPerCell}`;
-        break;
-      }
-
-      idxInLoop++;
-      const tFind = Date.now();
-      let item = findListItemForPlace(listData, getFeedPanel());
-      if (!item) {
-        item = await scrollToFindListItem(listData, getFeedPanel(), fastMode ? 5000 : 9000);
-      }
-      const findMs = Date.now() - tFind;
-      findMsTotal += findMs;
-
-      // Cứ 10 điểm ghi 1 dòng: nếu chi phí tìm item tăng dần theo thứ tự
-      // thì nút thắt là scrollToFindListItem chứ không phải thời gian click.
-      if (idxInLoop % 10 === 0 || findMs > 4000) {
-        const detailSecs = Math.round((Date.now() - tDetailStart) / 1000);
-        tbLog(
-          `[DIAG] điểm ${idxInLoop}/${pending.size} · tìm item ${findMs}ms ` +
-            `(tổng tìm ${Math.round(findMsTotal / 1000)}s) · pha chi tiết ${detailSecs}s · ` +
-            `tổng ô ${secsSinceCellStart()}s · TB ${Math.round((Date.now() - tDetailStart) / idxInLoop)}ms/điểm`
-        );
-      }
-
-      if (!item) {
+    if (scrollOutcome.reachedEnd) {
+      for (const { listData, place } of pending.values()) {
+        if (isAborted) break;
         markCollected(listData, place, seenTrack, seenKeys, seenCanonical);
+        place._phase = "list";
+        place.name = cleanPlaceName(place.name);
         if (typeof sanitizeAddressField === "function") {
           place.address = sanitizeAddressField(place.address);
         }
         results.push(place);
-        sendItem(place, searchParams, results.length, pending.size);
-        continue;
       }
 
-      await scrapeOneFromList(item, listData, place);
-    }
-
-    tbLog(
-      `[DIAG] ${cellLabel}: pha CHI TIẾT kết thúc — lý do: ${loopExitReason} · ` +
-        `xử lý ${idxInLoop}/${pending.size} điểm · pha chi tiết ${Math.round((Date.now() - tDetailStart) / 1000)}s · ` +
-        `tổng ô ${secsSinceCellStart()}s`
-    );
-
-    if (results.length > 0) {
       sendProgress(
-        calcProgressPercent(cellIndex, totalCells, 0.96),
-        `Hoàn tất khu vực ${cellIndex + 1}/${totalCells} · ${results.length} điểm bán`
+        calcProgressPercent(cellIndex, totalCells, 0.94),
+        `Đã tải hết khu vực ${cellIndex + 1}/${totalCells} · ${results.length} điểm bán`
       );
     }
 
-    tbLog(`${cellLabel}: hoàn tất ${results.length} điểm bán`);
-    return { places: results, skippedCount, clickAttempts, earlyExit: false };
+    tbLog(
+      scrollOutcome.reachedEnd
+        ? `${cellLabel}: đã thu đủ ${results.length} điểm bán`
+        : `${cellLabel}: chưa xác nhận được cuối danh sách, không chuyển khu vực`
+    );
+    return {
+      places: results,
+      skippedCount,
+      clickAttempts: 0,
+      reachedEnd: scrollOutcome.reachedEnd,
+      reason: scrollOutcome.reason,
+      rounds: scrollOutcome.rounds,
+      elapsedMs: scrollOutcome.elapsedMs,
+      earlyExit: !scrollOutcome.reachedEnd
+    };
   }
 
   async function waitForFeed(maxMs = 15000) {
@@ -4344,11 +4283,18 @@
     );
 
     return {
-      success: true,
+      success: outcome.reachedEnd,
       ...(RunLease.normalize(data) || {}),
       places: outcome.places,
       skippedCount: outcome.skippedCount,
       clickAttempts: outcome.clickAttempts,
+      reachedEnd: outcome.reachedEnd,
+      reason: outcome.reason,
+      rounds: outcome.rounds,
+      elapsedMs: outcome.elapsedMs,
+      error: outcome.reachedEnd
+        ? null
+        : "Google Maps chưa hiển thị điểm cuối danh sách. Findmap sẽ thử lại khu vực này.",
       cellIndex,
       totalCells,
       cellLabel: label
@@ -4431,13 +4377,20 @@
       return true;
     }
     if (message.action === "ENRICH_PLACE") {
-      const { listData, searchParams, progressText, percent, fast = false } = message.data || {};
+      const {
+        listData,
+        searchParams,
+        progressText,
+        percent,
+        fast = false,
+        thorough = false
+      } = message.data || {};
       const profile = typeof getEnrichProfile === "function" ? getEnrichProfile(listData) : null;
       enrichPlaceOnPage(listData, searchParams, progressText, percent, {
-        fast: fast || profile?.fast,
-        quick: profile?.quick,
-        needAddress: profile?.needAddress !== false,
-        needPhone: profile?.needPhone !== false
+        fast: thorough ? false : fast || profile?.fast,
+        quick: thorough ? false : profile?.quick,
+        needAddress: thorough ? true : profile?.needAddress !== false,
+        needPhone: thorough ? true : profile?.needPhone !== false
       })
         .then((place) => sendResponse({ success: !!place, place }))
         .catch((err) => sendResponse({ success: false, error: err.message }));
