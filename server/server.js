@@ -134,11 +134,10 @@ function expandOriginAliases(origin) {
     } else if (host !== "localhost" && !/^\d+\.\d+\.\d+\.\d+$/.test(host)) {
       out.add(`${u.protocol}//www.${host}${port}`);
     }
-    // Cùng hệ Findmap (apex / www / app / subdomain)
+    // Chỉ alias apex/www thuộc ứng dụng Findmap hiện tại.
     if (host === "findmap.vn" || host.endsWith(".findmap.vn")) {
       out.add(`${u.protocol}//findmap.vn`);
       out.add(`${u.protocol}//www.findmap.vn`);
-      out.add(`${u.protocol}//app.findmap.vn`);
     }
   } catch {}
   return out;
@@ -152,8 +151,7 @@ const allowedOrigins = new Set([
   "http://localhost:3001",
   "http://127.0.0.1:3001",
   "https://findmap.vn",
-  "https://www.findmap.vn",
-  "https://app.findmap.vn"
+  "https://www.findmap.vn"
 ]);
 for (const o of expandOriginAliases(appOrigin)) allowedOrigins.add(o);
 for (const o of expandOriginAliases(newsOrigin)) allowedOrigins.add(o);
@@ -177,7 +175,7 @@ function isAllowedWebOrigin(originOrUrl) {
 
   const host = hostnameOf(raw.includes("://") ? raw : `https://${raw}`);
   if (!host) return false;
-  if (host === "findmap.vn" || host.endsWith(".findmap.vn")) return true;
+  if (host === "findmap.vn" || host === "www.findmap.vn") return true;
   if (host === "localhost" || host === "127.0.0.1") return true;
 
   const appHost = hostnameOf(appOrigin);
@@ -1347,7 +1345,7 @@ function sendWebPage(res, file) {
 
 function redirectToNews(req, res) {
   const qs = req.url.includes("?") ? req.url.slice(req.url.indexOf("?")) : "";
-  // Cùng domain reverse-proxy: redirect tương đối (giữ app.findmap.vn / findmap.vn).
+  // Cùng domain reverse-proxy: redirect tương đối để giữ host Findmap hiện tại.
   if (sameNewsOrigin()) {
     return res.redirect(302, `${req.path}${qs}`);
   }

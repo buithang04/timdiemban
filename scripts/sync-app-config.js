@@ -54,7 +54,6 @@ function collectWebUrlPatterns(...origins) {
       const host = new URL(base).hostname;
       // Chỉ khai báo các host Findmap thực sự dùng để đáp ứng least privilege.
       if (/(^|\.)findmap\.vn$/i.test(host)) {
-        patterns.add("https://app.findmap.vn/*");
         patterns.add("https://findmap.vn/*");
         patterns.add("https://www.findmap.vn/*");
       }
@@ -63,7 +62,6 @@ function collectWebUrlPatterns(...origins) {
   // Alias cũ + prod mặc định — tránh miss khi sync từ env local
   patterns.add("https://findmap.vn/*");
   patterns.add("https://www.findmap.vn/*");
-  patterns.add("https://app.findmap.vn/*");
   patterns.add("https://findmap.app.chatplus.io.vn/*");
   // Dev local luôn được phép
   patterns.add("http://localhost:3000/*");
@@ -172,7 +170,6 @@ function syncManifest() {
   const bridgeMatches = [
     "https://findmap.vn/*",
     "https://www.findmap.vn/*",
-    "https://app.findmap.vn/*",
     "http://localhost/*",
     "http://127.0.0.1/*"
   ];

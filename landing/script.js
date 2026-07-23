@@ -24,7 +24,7 @@
 
       window.FindmapSessionCookie?.setSessionCookie?.();
 
-      // Luôn ở lại host hiện tại (app.findmap.vn / findmap.vn) — không nhảy domain cứng.
+      // Luôn ở lại host Findmap hiện tại — không nhảy domain cứng.
       if (sessionStorage.getItem("findmap_home_reload") === "1") return;
       sessionStorage.setItem("findmap_home_reload", "1");
       window.location.reload();

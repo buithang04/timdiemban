@@ -16,7 +16,6 @@
     "https://www.google.com/maps/*",
     "https://findmap.vn/*",
     "https://www.findmap.vn/*",
-    "https://app.findmap.vn/*",
     "http://localhost/*",
     "http://127.0.0.1/*"
   ],
@@ -44,7 +43,6 @@
       "matches": [
         "https://findmap.vn/*",
         "https://www.findmap.vn/*",
-        "https://app.findmap.vn/*",
         "http://localhost/*",
         "http://127.0.0.1/*"
       ],

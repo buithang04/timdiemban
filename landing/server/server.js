@@ -276,7 +276,7 @@ app.get("/app-config.js", (req, res) => {
   const search = page && sameSearchNewsHost() ? page : searchOrigin;
   const news = page && sameSearchNewsHost() ? page : appOrigin;
   const body = `/**
- * Runtime app-config — theo Host request (giữ app.findmap.vn / findmap.vn).
+ * Runtime app-config — theo Host Findmap đang nhận request.
  */
 function __findmapPageOrigin(fallback) {
   try {

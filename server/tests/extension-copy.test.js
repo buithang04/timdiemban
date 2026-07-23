@@ -42,6 +42,17 @@ test("manifest mô tả đúng sản phẩm và có metadata phát hành đầy 
   for (const pattern of manifest.host_permissions || []) {
     assert.doesNotMatch(pattern, /^(?:https?|\*):\/\/\*\//, `host permission quá rộng: ${pattern}`);
   }
+  assert.equal(
+    (manifest.host_permissions || []).includes("https://app.findmap.vn/*"),
+    false,
+    "app.findmap.vn thuộc hệ thống khác và không được extension tin cậy"
+  );
+  assert.equal(
+    (manifest.content_scripts || []).some((script) =>
+      (script.matches || []).includes("https://app.findmap.vn/*")
+    ),
+    false
+  );
 });
 
 test("đồng bộ cấu hình không xóa metadata mô tả của extension", () => {
@@ -143,6 +154,7 @@ test("chỉ nhớ origin sau khi bridge Findmap đã xác thực", () => {
 
 test("background khóa lệnh nhạy cảm theo đúng origin Findmap", () => {
   const background = read("extension", "background.js");
+  const webConfig = read("extension", "web-config.js");
 
   assert.match(background, /const PRIVILEGED_WEB_ACTIONS = new Set/);
   for (const action of [
@@ -158,6 +170,7 @@ test("background khóa lệnh nhạy cảm theo đúng origin Findmap", () => {
   }
   assert.match(background, /sender\.id !== chrome\.runtime\.id/);
   assert.match(background, /getConfiguredWebOrigins\(\)\.includes\(origin\)/);
+  assert.doesNotMatch(webConfig, /app\.findmap\.vn/);
   assert.match(
     background,
     /PRIVILEGED_WEB_ACTIONS\.has\(message\?\.action\)\s*&&\s*!isTrustedFindmapSender\(sender\)/
@@ -176,8 +189,7 @@ test("build release khóa đúng allowlist quyền và production hosts", () => 
   assert.deepEqual(readSetLiteral(build, "allowedReleaseHosts"), [
     "https://www.google.com/maps/*",
     "https://findmap.vn/*",
-    "https://www.findmap.vn/*",
-    "https://app.findmap.vn/*"
+    "https://www.findmap.vn/*"
   ]);
   assert.match(build, /!allowedReleasePermissions\.has\(permission\)/);
   assert.match(build, /!allowedReleaseHosts\.has\(pattern\)/);

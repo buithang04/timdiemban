@@ -17,8 +17,7 @@ const allowedReleasePermissions = new Set(["storage", "scripting", "alarms", "po
 const allowedReleaseHosts = new Set([
   "https://www.google.com/maps/*",
   "https://findmap.vn/*",
-  "https://www.findmap.vn/*",
-  "https://app.findmap.vn/*"
+  "https://www.findmap.vn/*"
 ]);
 
 const releaseFiles = [
