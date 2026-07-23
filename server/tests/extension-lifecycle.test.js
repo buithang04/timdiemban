@@ -306,7 +306,7 @@ test("recovery thử rescan sau khi main checkpoint không resume được", asy
     tryResumeRescanFromCheckpoint: async () => (calls.push("resume-rescan"), true),
     bgLog: () => {},
     clearDurableWorkAlarmIfIdle: async () => {},
-    releaseSystemKeepAwake: () => {},
+    releaseDisplayKeepAwake: () => {},
     console: { log: () => {}, warn: () => {} }
   });
   vm.runInContext(`${source}\nthis.recoverDurableWork = recoverDurableWork;`, context);

@@ -19,11 +19,11 @@ Các chức năng chính:
 - Đồng bộ kết quả theo thời gian thực về bảng Findmap.
 - Chống trùng dữ liệu và lưu checkpoint để hạn chế mất kết quả.
 - Tự khôi phục khi service worker của Chrome ngủ hoặc trình duyệt được mở lại.
-- Giữ hệ thống thức trong đúng phiên quét để lượt chạy không bị gián đoạn khi người dùng khóa màn hình.
+- Giữ màn hình và hệ thống thức trong đúng phiên quét để tránh tự khóa do thiết bị idle.
 - Quét lại các điểm còn thiếu số điện thoại hoặc địa chỉ.
 
 Tiện ích chỉ hoạt động khi người dùng chủ động bắt đầu tìm kiếm trên Findmap. Findmap mở một tab
 Google Maps chuyên dụng ở nền để người dùng tiếp tục làm việc ở tab khác. Tab Maps chỉ được đưa
 lên trước để khôi phục khi không có dữ liệu mới trong 5 phút hoặc một thao tác nền thực sự thất bại.
 Tiện ích không yêu cầu quyền gỡ lỗi và tự đóng tab Maps khi hoàn tất hoặc bị hủy.
-Yêu cầu giữ hệ thống thức cũng được nhả ngay khi lượt quét kết thúc; tiện ích không giữ máy thức khi rảnh.
+Yêu cầu giữ màn hình thức cũng được nhả ngay khi lượt quét tạm dừng hoặc kết thúc; tiện ích không giữ máy thức khi rảnh.

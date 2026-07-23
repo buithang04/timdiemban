@@ -111,7 +111,7 @@ let enrichRunPromise = null;
 let quickEnrichRunPromise = null;
 let enrichWatchdogBusy = false;
 let quickEnrichWatchdogBusy = false;
-let systemKeepAwakeRequested = false;
+let displayKeepAwakeRequested = false;
 let scrapeCheckpointQueue = Promise.resolve();
 let rescanCheckpointQueue = Promise.resolve();
 let mergedPlaceLookupIndex = null;
@@ -266,31 +266,31 @@ const rescanState = {
   _lastRecoveryFocusDataAt: 0
 };
 
-function requestSystemKeepAwake() {
-  if (systemKeepAwakeRequested) return true;
+function requestDisplayKeepAwake() {
+  if (displayKeepAwakeRequested) return true;
   try {
-    chrome.power?.requestKeepAwake("system");
-    systemKeepAwakeRequested = true;
+    chrome.power?.requestKeepAwake("display");
+    displayKeepAwakeRequested = true;
     return true;
   } catch (err) {
-    console.warn("requestSystemKeepAwake:", err?.message || err);
+    console.warn("requestDisplayKeepAwake:", err?.message || err);
     return false;
   }
 }
 
-function releaseSystemKeepAwake({ force = false } = {}) {
-  if (!force && !systemKeepAwakeRequested) return;
+function releaseDisplayKeepAwake({ force = false } = {}) {
+  if (!force && !displayKeepAwakeRequested) return;
   try {
     chrome.power?.releaseKeepAwake();
   } catch (err) {
-    console.warn("releaseSystemKeepAwake:", err?.message || err);
+    console.warn("releaseDisplayKeepAwake:", err?.message || err);
   }
-  systemKeepAwakeRequested = false;
+  displayKeepAwakeRequested = false;
 }
 
-function releaseSystemKeepAwakeIfIdle({ force = false } = {}) {
+function releaseDisplayKeepAwakeIfIdle({ force = false } = {}) {
   if (scrapeState.running || rescanState.running) return false;
-  releaseSystemKeepAwake({ force });
+  releaseDisplayKeepAwake({ force });
   return true;
 }
 
@@ -814,7 +814,7 @@ async function clearDurableWorkAlarmIfIdle() {
 }
 
 function startScrapeKeepAlive() {
-  requestSystemKeepAwake();
+  requestDisplayKeepAwake();
   scrapeKeepAliveTick().catch(() => {});
   ensureDurableWorkAlarm().catch(() => {});
   syncMapsAutoFocusAlarm();
@@ -2514,7 +2514,7 @@ async function parkSearchAfterResumeFailure(reason) {
   );
   scrapeState.resumeRequestedAt = 0;
   stopScrapeKeepAlive();
-  releaseSystemKeepAwakeIfIdle({ force: true });
+  releaseDisplayKeepAwakeIfIdle({ force: true });
   await persistScrapeCheckpoint({ forceRecoverable: true });
   await clearDurableWorkAlarmIfIdle();
   const status = await getSearchStatus();
@@ -2529,7 +2529,7 @@ async function tryResumeFromCheckpoint({ allowReopen = false, allowPaused = fals
   restoreScrapeStateFromCheckpoint(cp);
 
   if (cp.phase === "pending_complete" && cp.pendingCompletion) {
-    releaseSystemKeepAwake({ force: true });
+    releaseDisplayKeepAwake({ force: true });
     scrapeState.running = false;
     const flushed = await flushPendingComplete("resume_pending_complete");
     await resetScrapeState({ preserveCheckpoint: !flushed.delivered });
@@ -2542,7 +2542,7 @@ async function tryResumeFromCheckpoint({ allowReopen = false, allowPaused = fals
   scrapeState.resumeRequestedAt = Date.now();
   scrapeState.running = true;
   await persistScrapeCheckpoint({ forceRecoverable: true });
-  requestSystemKeepAwake();
+  requestDisplayKeepAwake();
   startScrapeKeepAlive();
 
   let mapsAlive = false;
@@ -2851,7 +2851,7 @@ async function pauseActiveSearch(reason = "Người dùng tạm dừng quét") {
 
   clearMapsCellWorkTokens();
   stopScrapeKeepAlive();
-  releaseSystemKeepAwakeIfIdle({ force: true });
+  releaseDisplayKeepAwakeIfIdle({ force: true });
 
   if (Number.isInteger(listTabId) && listLease) {
     await chrome.tabs
@@ -2910,7 +2910,7 @@ async function abandonActiveSearch() {
   try {
     await chrome.storage.local.remove(["activeSearch", "pendingComplete"]);
   } catch {}
-  releaseSystemKeepAwakeIfIdle({ force: true });
+  releaseDisplayKeepAwakeIfIdle({ force: true });
   await clearDurableWorkAlarmIfIdle();
   return { success: true };
   } finally {
@@ -3161,7 +3161,7 @@ async function resetScrapeState({ preserveCheckpoint = false } = {}) {
     // Normal cleanup removes the checkpoint; pending completion keeps it recoverable.
     await clearScrapeCheckpoint().catch(() => {});
   }
-  releaseSystemKeepAwakeIfIdle();
+  releaseDisplayKeepAwakeIfIdle();
   await clearDurableWorkAlarmIfIdle();
 }
 
@@ -3473,7 +3473,7 @@ async function tryResumeRescanFromCheckpoint({ allowReopen = false } = {}) {
   if (rescanState.placeIndex >= rescanState.places.length) {
     return finishRescanNormal();
   }
-  requestSystemKeepAwake();
+  requestDisplayKeepAwake();
 
   let mapsAlive = false;
   if (rescanState.mapsTabId) {
@@ -3491,14 +3491,14 @@ async function tryResumeRescanFromCheckpoint({ allowReopen = false } = {}) {
       mapsAlive = await openRescanMapsTab();
     } catch (err) {
       rescanState.running = false;
-      releaseSystemKeepAwake({ force: true });
+      releaseDisplayKeepAwake({ force: true });
       await ensureDurableWorkAlarm();
       throw err;
     }
   }
   if (!mapsAlive) {
     rescanState.running = false;
-    releaseSystemKeepAwake({ force: true });
+    releaseDisplayKeepAwake({ force: true });
     await ensureDurableWorkAlarm();
     return false;
   }
@@ -3540,7 +3540,7 @@ function resetRescanState() {
   rescanState._awaitingReopen = false;
   rescanState._lastDataAt = 0;
   rescanState._lastRecoveryFocusDataAt = 0;
-  releaseSystemKeepAwakeIfIdle();
+  releaseDisplayKeepAwakeIfIdle();
 }
 
 async function closeRescanMapsTabSafely() {
@@ -6251,9 +6251,9 @@ async function handleStartSearch(params) {
   } catch (err) {
     if (scrapeState.running || scrapeState.searchParams) {
       await closeMapsTabSafely().catch(() => {});
-      await resetScrapeState().catch(() => releaseSystemKeepAwake({ force: true }));
+      await resetScrapeState().catch(() => releaseDisplayKeepAwake({ force: true }));
     } else if (!rescanState.running) {
-      releaseSystemKeepAwakeIfIdle({ force: true });
+      releaseDisplayKeepAwakeIfIdle({ force: true });
     }
     throw err;
   } finally {
@@ -6357,7 +6357,7 @@ async function handleStartRescan(params) {
   delete durableParams.authToken;
   delete durableParams.places;
   rescanState.running = true;
-  requestSystemKeepAwake();
+  requestDisplayKeepAwake();
   rescanState.webUrl = params.webUrl;
   rescanState.params = durableParams;
   rescanState.places = params.places.map((place) => ({ ...place }));
@@ -6390,7 +6390,7 @@ async function handleStartRescan(params) {
       await clearRescanCheckpoint().catch(() => {});
       resetRescanState();
     } else if (!scrapeState.running) {
-      releaseSystemKeepAwake({ force: true });
+      releaseDisplayKeepAwake({ force: true });
     }
     throw err;
   } finally {
@@ -6637,7 +6637,7 @@ async function recoverDurableWork(reason = "service_wake") {
     return false;
   } finally {
     if (!scrapeState.running && !rescanState.running) {
-      releaseSystemKeepAwake({ force: true });
+      releaseDisplayKeepAwake({ force: true });
     }
     durableRecoveryBusy = false;
   }

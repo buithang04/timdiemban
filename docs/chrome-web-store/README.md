@@ -30,7 +30,7 @@ nếu còn quyền `debugger`.
 - Chuyển sang tab khác trong giai đoạn đọc chi tiết URL; xác nhận thao tác đổi URL và đọc thông tin vẫn tiếp tục ở nền.
 - Mô phỏng Maps không phản hồi; xác nhận tab không được đưa lên trước trong 5 phút đầu và chỉ focus một lần để khôi phục sau ngưỡng này hoặc khi thao tác thực sự thất bại.
 - Trong lúc quét, bấm "service worker" > Terminate/Stop nếu Chrome cung cấp, sau đó chờ tối đa 30–60 giây và xác nhận phiên tự tiếp tục.
-- Khóa màn hình 15–30 phút nhưng không đóng nắp/không chọn Sleep; xác nhận số URL hoặc URL chi tiết tiếp tục tăng và máy không tự chuyển sang system sleep.
+- Không thao tác 15–30 phút nhưng không đóng nắp/không chọn Sleep/không khóa thủ công; xác nhận màn hình không tự tắt, macOS không tự khóa và số URL hoặc URL chi tiết tiếp tục tăng.
 - Dừng hoặc hoàn tất lượt quét; xác nhận extension đã nhả `power` keep-awake và máy có thể tự sleep bình thường trở lại.
 - Khởi động lại Chrome trong lúc quét với tùy chọn tự mở lại Maps đang bật và xác nhận checkpoint được khôi phục.
 - Hoàn tất lượt quét phải đóng tab Maps và không còn alarm công việc hoạt động.
@@ -44,7 +44,7 @@ phục hồi; ngoài lần bắt đầu pha list, Maps chỉ tự quay lại khi
 hoặc thao tác nền thất bại.
 Pha cuộn dài được chia thành các chunk dưới 5 phút, lưu URL đã gom vào checkpoint rồi tiếp tục
 cùng ô. Chunk còn phát sinh URL không bị tính là retry lỗi. Trong đúng thời gian thao tác do người
-dùng khởi chạy, extension yêu cầu Chrome giữ hệ thống thức và background gửi wake message có giới
+dùng khởi chạy, extension yêu cầu Chrome giữ màn hình và hệ thống thức; background gửi wake message có giới
 hạn để timer của tab ẩn tiếp tục tiến. Cả power request và wake pulse đều dừng khi công việc Maps
 kết thúc hoặc được đưa về trạng thái chờ phục hồi. Không thêm debugger, offscreen page,
 AudioContext/WebSocket giả hoặc keepalive chạy vĩnh viễn.

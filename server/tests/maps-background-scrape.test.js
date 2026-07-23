@@ -1013,8 +1013,8 @@ test("resume checkpoint ô cuối rỗng kết thúc và dọn checkpoint thay v
     nextPendingCellFromScrapeState: () => 1,
     closeMapsTabSafely: async () => calls.push("tab:close"),
     resetScrapeState: async () => calls.push("state:reset"),
-    requestSystemKeepAwake: () => {},
-    releaseSystemKeepAwake: () => {},
+    requestDisplayKeepAwake: () => {},
+    releaseDisplayKeepAwake: () => {},
     chrome: {
       tabs: {
         get: async (tabId) => {
@@ -1788,21 +1788,74 @@ test("START chỉ chạy Maps sau khi checkpoint đầu tiên đã lưu thành c
   assert.match(startRescan, /if \(!initialCheckpointSaved\)[\s\S]*Không lưu được trạng thái quét lại/);
 });
 
-test("power wake lock chỉ giữ trong phiên Maps active", () => {
-  const power = section("function requestSystemKeepAwake", "function pingMapsTabWake");
+test("display wake lock chỉ giữ trong phiên Maps active", () => {
+  const power = section("function requestDisplayKeepAwake", "function pingMapsTabWake");
   const keepalive = section("function startScrapeKeepAlive", "function stopScrapeKeepAlive");
   const resetMain = section("async function resetScrapeState", "function isMapsAutoReopenEnabled");
   const resetRescan = section("function resetRescanState", "async function closeRescanMapsTabSafely");
   const alarmCleanup = section("async function clearDurableWorkAlarmIfIdle", "function startScrapeKeepAlive");
 
   assert.equal(manifest.permissions.includes("power"), true);
-  assert.match(power, /systemKeepAwakeRequested/);
-  assert.match(power, /requestKeepAwake\("system"\)/);
+  assert.match(power, /displayKeepAwakeRequested/);
+  assert.match(power, /requestKeepAwake\("display"\)/);
+  assert.doesNotMatch(power, /requestKeepAwake\("system"\)/);
   assert.match(power, /releaseKeepAwake\(\)/);
-  assert.match(keepalive, /requestSystemKeepAwake\(\)/);
-  assert.match(resetMain, /releaseSystemKeepAwakeIfIdle\(\)/);
-  assert.match(resetRescan, /releaseSystemKeepAwakeIfIdle\(\)/);
-  assert.doesNotMatch(alarmCleanup, /requestSystemKeepAwake|releaseSystemKeepAwake/);
+  assert.match(keepalive, /requestDisplayKeepAwake\(\)/);
+  assert.match(resetMain, /releaseDisplayKeepAwakeIfIdle\(\)/);
+  assert.match(resetRescan, /releaseDisplayKeepAwakeIfIdle\(\)/);
+  assert.doesNotMatch(alarmCleanup, /requestDisplayKeepAwake|releaseDisplayKeepAwake/);
+});
+
+test("display wake lock idempotent và nhả ngay khi cả scan lẫn rescan đều idle", () => {
+  const power = section("function requestDisplayKeepAwake", "function pingMapsTabWake");
+  const calls = [];
+  const scrapeState = { running: false };
+  const rescanState = { running: false };
+  const context = vm.createContext({
+    scrapeState,
+    rescanState,
+    displayKeepAwakeRequested: false,
+    console,
+    chrome: {
+      power: {
+        requestKeepAwake: (level) => calls.push(["request", level]),
+        releaseKeepAwake: () => calls.push(["release"])
+      }
+    }
+  });
+  vm.runInContext(
+    `${power}\nthis.requestDisplayKeepAwake = requestDisplayKeepAwake;\n` +
+      "this.releaseDisplayKeepAwake = releaseDisplayKeepAwake;\n" +
+      "this.releaseDisplayKeepAwakeIfIdle = releaseDisplayKeepAwakeIfIdle;",
+    context
+  );
+
+  assert.equal(context.requestDisplayKeepAwake(), true);
+  assert.equal(context.requestDisplayKeepAwake(), true);
+  assert.deepEqual(calls, [["request", "display"]]);
+
+  scrapeState.running = true;
+  assert.equal(context.releaseDisplayKeepAwakeIfIdle({ force: true }), false);
+  assert.deepEqual(calls, [["request", "display"]]);
+
+  scrapeState.running = false;
+  assert.equal(context.releaseDisplayKeepAwakeIfIdle(), true);
+  assert.deepEqual(calls, [["request", "display"], ["release"]]);
+
+  context.requestDisplayKeepAwake();
+  rescanState.running = true;
+  assert.equal(context.releaseDisplayKeepAwakeIfIdle({ force: true }), false);
+  rescanState.running = false;
+  assert.equal(context.releaseDisplayKeepAwakeIfIdle(), true);
+  assert.deepEqual(calls, [
+    ["request", "display"],
+    ["release"],
+    ["request", "display"],
+    ["release"]
+  ]);
+
+  context.releaseDisplayKeepAwake({ force: true });
+  assert.deepEqual(calls.at(-1), ["release"]);
 });
 
 test("chunk có tiến triển tiếp tục mà không tăng failure retry", () => {
@@ -2213,8 +2266,8 @@ test("abandon main không force-release power khi rescan vẫn chạy", async ()
     endOperationTransition: () => {},
     getScrapeCheckpoint: async () => null,
     clearScrapeCheckpoint: async () => {},
-    releaseSystemKeepAwake: (options) => releases.push(options),
-    releaseSystemKeepAwakeIfIdle: (options) => {
+    releaseDisplayKeepAwake: (options) => releases.push(options),
+    releaseDisplayKeepAwakeIfIdle: (options) => {
       if (context.scrapeState.running || context.rescanState.running) return false;
       releases.push(options);
       return true;
@@ -2267,7 +2320,7 @@ test("pause lưu đúng ô/lease và vô hiệu hóa list + enrich trước khi 
     },
     clearMapsCellWorkTokens: () => calls.push("clear-work"),
     stopScrapeKeepAlive: () => calls.push("stop-keepalive"),
-    releaseSystemKeepAwakeIfIdle: (options) => calls.push(["release-power", options]),
+    releaseDisplayKeepAwakeIfIdle: (options) => calls.push(["release-power", options]),
     clearDurableWorkAlarmIfIdle: async () => calls.push("clear-alarm"),
     notifyPopup: (message) => calls.push(["popup", message]),
     getSearchStatus: async () => ({ paused: true, gridIndex: 2 }),

@@ -34,9 +34,11 @@ dùng chủ động cấu hình trong hệ thống Findmap.
 Findmap chỉ truy cập Google Maps và các domain Findmap được khai báo trong manifest. Tiện ích
 không yêu cầu quyền `debugger`, không đọc lịch sử duyệt web và không truy cập các website ngoài
 phạm vi đã khai báo. Tab Google Maps chuyên dụng chỉ được mở khi người dùng chủ động bắt đầu quét.
-Trong đúng thời gian quét, tiện ích có thể yêu cầu Chrome giữ hệ thống thức để tránh mất tiến trình
-khi khóa màn hình; yêu cầu này được nhả khi hoàn tất, hủy hoặc dừng công việc Maps và không thu thập
-thêm dữ liệu cá nhân.
+Trong đúng thời gian quét, tiện ích có thể yêu cầu Chrome giữ màn hình thức để
+ngăn tự tắt màn hình, tự sleep và tự khóa do thiết bị idle. Yêu cầu này được nhả khi
+hoàn tất, tạm dừng, hủy, gặp lỗi kết thúc hoặc chờ phục hồi và không thu thập thêm dữ
+liệu cá nhân. Tiện ích không thể ghi đè thao tác khóa thủ công, chính sách bảo mật của thiết bị
+hoặc việc đóng nắp máy.
 
 ## Xóa dữ liệu
 
