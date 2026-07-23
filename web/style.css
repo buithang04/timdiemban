@@ -311,6 +311,11 @@ body {
   color: var(--wm-primary-deep);
 }
 
+.status-paused {
+  background: #fff3cd;
+  color: #8a5200;
+}
+
 .status-completed {
   background: #dcfce7;
   color: #15803d;
@@ -319,23 +324,6 @@ body {
 .status-error {
   background: #fee2e2;
   color: #b91c1c;
-}
-
-.scrape-log {
-  background: #0f172a;
-  color: #94a3b8;
-  padding: 8px 12px;
-  font-size: 11px;
-  font-family: Consolas, monospace;
-  overflow: auto;
-  max-height: 120px;
-  white-space: pre-wrap;
-}
-
-.scrape-log-mini {
-  max-height: 48px;
-  margin: 0 20px 8px;
-  border-radius: 6px;
 }
 
 .conn-status {
@@ -1357,11 +1345,6 @@ body.picking-center .leaflet-container {
   color: var(--wm-primary);
 }
 
-body.page-winmap .scrape-log-mini {
-  margin: 0 16px 8px;
-  border-radius: 4px;
-}
-
 .wm-main {
   flex: 1;
   display: flex;
@@ -1851,18 +1834,99 @@ body.wm-console .wm-app {
 
 .wm-sidebar-cta {
   width: 100%;
-  padding: 12px;
-  border: none;
-  border-radius: 8px;
-  background: var(--wm-primary);
+  min-height: 58px;
+  padding: 10px 12px;
+  border: 1px solid #244ee5;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #315cff 0%, #2448d8 100%);
   color: #fff;
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
   font-family: inherit;
   margin-bottom: 8px;
+  text-decoration: none;
+  box-shadow: 0 10px 22px rgba(43, 89, 255, 0.24);
+  transition: transform 160ms ease, box-shadow 160ms ease, background 160ms ease;
 }
-.wm-sidebar-cta:hover { background: var(--wm-primary-deep); }
+.wm-sidebar-cta:hover {
+  background: linear-gradient(135deg, #244ee5 0%, #1939b7 100%);
+  box-shadow: 0 12px 26px rgba(43, 89, 255, 0.3);
+  transform: translateY(-1px);
+}
+
+.wm-sidebar-cta:focus-visible {
+  outline: 3px solid rgba(49, 92, 255, 0.28);
+  outline-offset: 2px;
+}
+
+.wm-extension-download {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.wm-extension-download > svg {
+  flex: 0 0 auto;
+}
+
+.wm-extension-download > span {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  line-height: 1.2;
+}
+
+.wm-extension-download strong {
+  font-size: 13px;
+}
+
+.wm-extension-download small {
+  margin-top: 3px;
+  color: #dbe4ff;
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.wm-extension-download.is-unavailable {
+  background: #e8edf8;
+  border-color: #d3daea;
+  color: #59657a;
+  box-shadow: none;
+  cursor: default;
+}
+
+.wm-extension-download.is-unavailable small {
+  color: #7b879b;
+}
+
+.wm-extension-download.is-unavailable:hover {
+  background: #e8edf8;
+  box-shadow: none;
+  transform: none;
+}
+
+.wm-header-extension-download {
+  display: none;
+  min-height: 36px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 12px;
+  border: 1px solid #315cff;
+  border-radius: 8px;
+  color: #2448d8;
+  font-size: 12px;
+  font-weight: 700;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.wm-header-extension-download.is-unavailable {
+  border-color: #d3daea;
+  color: #7b879b;
+  pointer-events: none;
+}
 
 .wm-nav-foot { padding-left: 12px; }
 
@@ -2121,6 +2185,45 @@ body.wm-console .wm-main { display: contents; }
 .wm-btn-danger:hover:not(:disabled) {
   background: #991b1b !important;
   border-color: #991b1b !important;
+}
+
+.wm-scan-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 0.78fr);
+  gap: 8px;
+}
+
+.wm-scan-actions:has(#resumeSearchBtn:not(.hidden)) {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 0.72fr);
+}
+
+.wm-scan-actions .wm-btn {
+  min-height: 44px;
+  border-radius: 8px;
+  font-weight: 650;
+}
+
+.wm-btn-pause {
+  background: #fff7e6;
+  border-color: #f0b44c;
+  color: #8b5100;
+}
+
+.wm-btn-pause:hover:not(:disabled) {
+  background: #ffefc9;
+  border-color: #dd9c2e;
+}
+
+.wm-btn-resume {
+  background: #087a55;
+  border-color: #087a55;
+  color: #fff;
+  box-shadow: 0 8px 18px rgba(8, 122, 85, 0.18);
+}
+
+.wm-btn-resume:hover:not(:disabled) {
+  background: #066747;
+  border-color: #066747;
 }
 
 .wm-btn-block {
@@ -2683,6 +2786,9 @@ body.wm-console .wm-table .col-rating {
   .wm-sidebar {
     display: none;
   }
+  .wm-header-extension-download {
+    display: inline-flex;
+  }
   .wm-top-row {
     grid-template-columns: 1fr;
     min-height: 0;
@@ -2778,6 +2884,10 @@ body.wm-console .wm-header {
 }
 
 @media (max-width: 640px) {
+  .wm-scan-actions {
+    grid-template-columns: 1fr;
+  }
+
   .jobs-sync-summary-head {
     align-items: flex-start;
     flex-direction: column;

@@ -19,7 +19,7 @@ const TIMDIEMBAN_CONFIG = {
   SEARCH_ORIGIN: __findmapPageOrigin("https://findmap.vn"),
   MAPS_AUTO_FOCUS_MINUTES: 2,
   MAPS_AUTO_REOPEN_MAX: 5,
-  EXTENSION_INSTALL_URL: ""
+  EXTENSION_INSTALL_URL: "https://chromewebstore.google.com/detail/dkdopmhionlfkmeicnppaljeibldgjia"
 };
 if (typeof module !== "undefined" && module.exports) {
   module.exports = TIMDIEMBAN_CONFIG;

@@ -1415,6 +1415,8 @@ const webPages = {
   "/nap-diem": "nap-diem.html",
   "/cau-hinh-site": "cau-hinh-site.html",
   "/ket-noi-jobs": "ket-noi-jobs.html",
+  "/chinh-sach-quyen-rieng-tu": "privacy-policy.html",
+  "/privacy-policy": "privacy-policy.html",
   "/quen-mat-khau": "quen-mat-khau.html",
   "/dat-lai-mat-khau": "dat-lai-mat-khau.html"
 };

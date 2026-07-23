@@ -98,9 +98,27 @@ test("service worker dùng alarm bền vững và không dùng vòng lặp 500ms
 
 test("checkpoint không nhân đôi danh sách rescan và không lưu auth token trong params", () => {
   const background = read("extension", "background.js");
+  const persistRescan = section(
+    background,
+    "async function persistRescanCheckpoint",
+    "async function getRescanCheckpoint"
+  );
+  const startRescan = section(
+    background,
+    "async function handleStartRescan",
+    "async function doRescan"
+  );
   assert.match(background, /delete durableParams\.places/);
   assert.match(background, /delete durableParams\.authToken/);
   assert.match(background, /delete durable\.authToken/);
+  assert.match(
+    persistRescan,
+    /searchParams: toDurableSearchParams\(rescanState\.params\?\.searchParams \|\| \{\}\)/
+  );
+  assert.match(
+    startRescan,
+    /searchParams: toDurableSearchParams\(params\.searchParams \|\| \{\}\)/
+  );
 });
 
 test("ghi và xóa checkpoint cùng đi qua hàng đợi serialize", () => {
@@ -275,6 +293,7 @@ test("recovery thử rescan sau khi main checkpoint không resume được", asy
     scrapeState: { running: false },
     rescanState: { running: false },
     DurableLifecycle: {
+      shouldAutoResumeScrapeCheckpoint: () => true,
       isRecoverableScrapeCheckpoint: () => true,
       isRecoverableRescanCheckpoint: () => true
     },
@@ -340,5 +359,32 @@ test("URL rescan ngoài Google bị loại và URL hợp lệ được chuẩn h
   assert.equal(
     context.buildRescanHref({ href: "https://www.google.com/maps/search/?api=1&query_place_id=ChIJ123#x" }),
     "https://www.google.com/maps/search/?api=1&query_place_id=ChIJ123"
+  );
+});
+
+test("checkpoint tạm dừng chỉ cho resume thủ công, watchdog không tự chạy lại", () => {
+  const lifecycle = require("../../extension/lifecycle.js");
+  const base = {
+    running: true,
+    savedAt: Date.now(),
+    searchParams: { searchId: "search-paused" },
+    totalCells: 3,
+    gridIndex: 1,
+    gridPoints: [{}, {}, {}]
+  };
+
+  assert.equal(lifecycle.isRecoverableScrapeCheckpoint({ ...base, paused: true }), true);
+  assert.equal(lifecycle.shouldAutoResumeScrapeCheckpoint({ ...base, paused: true }), false);
+  assert.equal(lifecycle.shouldAutoResumeScrapeCheckpoint({ ...base, paused: false }), true);
+});
+
+test("durable recovery bỏ qua checkpoint đang tạm dừng", () => {
+  const background = read("extension", "background.js");
+  const recovery = section(background, "async function recoverDurableWork", "function ensureServiceReady");
+
+  assert.match(recovery, /shouldAutoResumeScrapeCheckpoint\(scrapeCheckpoint\)/);
+  assert.doesNotMatch(
+    recovery,
+    /isRecoverableScrapeCheckpoint\(scrapeCheckpoint\)[\s\S]{0,160}tryResumeFromCheckpoint\(\)/
   );
 });

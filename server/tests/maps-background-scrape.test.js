@@ -398,7 +398,7 @@ test("chỉ phản hồi thật từ Maps mới đặt lại đồng hồ 5 phú
   const notify = section("function notifyProgress", "async function waitForMapsTabReady");
   const progressHandler = section(
     'if (message.action === "SCRAPE_PROGRESS")',
-    'if (message.action === "SCRAPE_LOG")'
+    'if (message.action === "SCRAPE_ITEM")'
   );
   const itemHandler = section(
     'if (message.action === "SCRAPE_ITEM")',
@@ -609,7 +609,10 @@ test("cleanup cũ khóa mọi START mới cho tới khi dọn xong", () => {
   assert.match(completeSearch, /finally\s*\{\s*endOperationTransition\(transitionToken\)/);
   assert.match(completeRescan, /beginOperationTransition\("complete-rescan"\)/);
   assert.match(completeRescan, /finally\s*\{\s*endOperationTransition\(transitionToken\)/);
-  assert.match(completeCell, /beginOperationTransition\("complete-empty-search"\)/);
+  assert.match(
+    completeCell,
+    /if \(total === 0\) \{\s*await handleScrapeComplete\(\{ searchParams: scrapeState\.searchParams \}\)/
+  );
   assert.match(recovery, /operationTransitionTokens\.size > 0/);
   assert.match(ownership, /durableRecoveryBusy/);
 });
@@ -1006,6 +1009,7 @@ test("resume checkpoint ô cuối rỗng kết thúc và dọn checkpoint thay v
     },
     startScrapeKeepAlive: () => calls.push("keepalive:start"),
     stopScrapeKeepAlive: () => calls.push("keepalive:stop"),
+    persistScrapeCheckpoint: async () => calls.push("checkpoint:resume"),
     nextPendingCellFromScrapeState: () => 1,
     closeMapsTabSafely: async () => calls.push("tab:close"),
     resetScrapeState: async () => calls.push("state:reset"),
@@ -1028,6 +1032,7 @@ test("resume checkpoint ô cuối rỗng kết thúc và dọn checkpoint thay v
   assert.equal(scrapeState.running, false);
   assert.deepEqual(calls, [
     "restore",
+    "checkpoint:resume",
     "keepalive:start",
     "tab:get:17",
     "keepalive:stop",
@@ -2226,6 +2231,111 @@ test("abandon main không force-release power khi rescan vẫn chạy", async ()
   assert.deepEqual(releases, []);
 });
 
+test("pause lưu đúng ô/lease và vô hiệu hóa list + enrich trước khi trả ACK", async () => {
+  const source = section("async function pauseActiveSearch", "async function abandonActiveSearch");
+  const calls = [];
+  const scrapeState = {
+    running: true,
+    paused: false,
+    pausedAt: 0,
+    pauseReason: "",
+    resumeRequestedAt: 0,
+    runId: "run-pause",
+    cellGeneration: 7,
+    _enrichGeneration: 3,
+    _activeEnrichOpId: "enrich-1",
+    searchParams: { searchId: "run-pause", quickScan: true },
+    quickScan: true,
+    mapsTabId: 17,
+    enrichTabId: 18,
+    phase: "grid",
+    gridIndex: 2,
+    completedCells: new Set([0, 1]),
+    _cellContinueFlags: {},
+    _cellResumeLeases: {},
+    _pendingGridContinuation: -1
+  };
+  const context = vm.createContext({
+    scrapeState,
+    enrichRunPromise: Promise.resolve(),
+    quickEnrichRunPromise: Promise.resolve(),
+    DurableLifecycle: { isRecoverableScrapeCheckpoint: () => true },
+    getActiveCellLease: () => ({ runId: "run-pause", cellGeneration: 7 }),
+    persistScrapeCheckpoint: async (options) => {
+      calls.push(["persist", options]);
+      return true;
+    },
+    clearMapsCellWorkTokens: () => calls.push("clear-work"),
+    stopScrapeKeepAlive: () => calls.push("stop-keepalive"),
+    releaseSystemKeepAwakeIfIdle: (options) => calls.push(["release-power", options]),
+    clearDurableWorkAlarmIfIdle: async () => calls.push("clear-alarm"),
+    notifyPopup: (message) => calls.push(["popup", message]),
+    getSearchStatus: async () => ({ paused: true, gridIndex: 2 }),
+    pushSearchStatusToWeb: async (status) => calls.push(["web-status", status]),
+    getScrapeCheckpoint: async () => null,
+    restoreScrapeStateFromCheckpoint: () => false,
+    chrome: {
+      tabs: {
+        sendMessage: async (tabId, message) => {
+          calls.push(["message", tabId, message]);
+          return { success: true };
+        }
+      }
+    },
+    Date,
+    Number,
+    String,
+    Error
+  });
+  vm.runInContext(`${source}\nthis.pauseActiveSearch = pauseActiveSearch;`, context);
+
+  const result = await context.pauseActiveSearch("Tạm dừng để kiểm tra");
+
+  assert.equal(result.success, true);
+  assert.equal(scrapeState.running, false);
+  assert.equal(scrapeState.paused, true);
+  assert.equal(scrapeState.pauseReason, "Tạm dừng để kiểm tra");
+  assert.equal(scrapeState.cellGeneration, 8);
+  assert.equal(scrapeState._enrichGeneration, 4);
+  assert.equal(scrapeState._cellContinueFlags[2], true);
+  assert.equal(scrapeState._pendingGridContinuation, 2);
+  assert.deepEqual(plain(scrapeState._cellResumeLeases[2]), {
+    runId: "run-pause",
+    cellGeneration: 7
+  });
+  assert.deepEqual(plain(calls[0]), ["persist", { forceRecoverable: true }]);
+  assert.equal(
+    calls.some(
+      (call) =>
+        Array.isArray(call) &&
+        call[0] === "message" &&
+        call[1] === 17 &&
+        call[2]?.action === "SCRAPE_ABORT"
+    ),
+    true
+  );
+  assert.equal(
+    calls.some(
+      (call) =>
+        Array.isArray(call) &&
+        call[0] === "message" &&
+        call[1] === 18 &&
+        call[2]?.action === "ENRICH_ABORT"
+    ),
+    true
+  );
+  assert.equal(
+    calls.some(
+      (call) =>
+        Array.isArray(call) &&
+        call[0] === "web-status" &&
+        call[1]?.paused === true &&
+        call[1]?.gridIndex === 2
+    ),
+    true
+  );
+});
+
 test("continuation park khi renderer chưa ready và keepalive chỉ resume sau preflight", async () => {
   const continuation = section(
     "async function parkGridCellUntilRendererReady",
@@ -2357,4 +2467,33 @@ test("continuation park khi renderer chưa ready và keepalive chỉ resume sau 
   assert.equal(resumeCalls.includes("abort"), false);
   assert.match(continuation, /const ready = await ensureMapsContentReady/);
   assert.match(keepalive, /await resumePendingGridContinuationIfReady\(\)/);
+});
+
+test("lease và ID hai tab được checkpoint trước request danh sách dài", () => {
+  const runCell = section("async function runGridCell", "function getEnrichCheckpointKey");
+  const openTabAt = runCell.indexOf("await openMapsScrapeTab(url)");
+  const tabCheckpointAt = runCell.indexOf(
+    "await persistScrapeCheckpoint({ forceRecoverable: true })",
+    openTabAt
+  );
+  const launchCheckpointAt = runCell.indexOf(
+    "const launchCheckpointSaved = await persistScrapeCheckpoint({ forceRecoverable: true })"
+  );
+  const longRequestAt = runCell.indexOf('"SCRAPE_CELL_LIST"');
+
+  assert.ok(openTabAt >= 0);
+  assert.ok(tabCheckpointAt > openTabAt, "phải lưu ID tab ngay sau khi mở Maps");
+  assert.ok(launchCheckpointAt > tabCheckpointAt, "phải lưu generation/lease sau preflight");
+  assert.ok(longRequestAt > launchCheckpointAt, "checkpoint phải xong trước request list dài");
+  assert.match(runCell, /scrapeState\.gridIndex = cellIndex/);
+});
+
+test("tìm kiếm thường không có kết quả vẫn gửi complete về web", () => {
+  const source = section("async function completeCellAfterEnrich", "function continueGridAfterEnrich");
+
+  assert.match(
+    source,
+    /if \(total === 0\) \{\s*await handleScrapeComplete\(\{ searchParams: scrapeState\.searchParams \}\)/
+  );
+  assert.doesNotMatch(source, /chrome\.runtime\.sendMessage\(\{\s*action: "SCRAPE_ERROR"/);
 });

@@ -9,9 +9,10 @@ kết quả về tài khoản Findmap của họ.
 
 - Thông tin tài khoản và token phiên Findmap để xác thực việc đồng bộ.
 - Từ khóa, tọa độ trung tâm, bán kính và tùy chọn của lượt tìm kiếm do người dùng nhập.
-- Thông tin điểm bán công khai hiển thị trên Google Maps, như tên, địa chỉ, số điện thoại,
-  website, tọa độ và đường dẫn Google Maps.
-- Checkpoint kỹ thuật và log tiến độ tối thiểu để phục hồi lượt quét khi Chrome tạm dừng service worker.
+- Thông tin điểm bán công khai hiển thị trên Google Maps, như tên, danh mục, địa chỉ, số điện
+  thoại, website, điểm đánh giá, số lượt đánh giá, giờ mở cửa, tọa độ và đường dẫn Google Maps.
+- Checkpoint kỹ thuật và trạng thái tiến độ tối thiểu để phục hồi lượt quét khi Chrome tạm dừng
+  service worker hoặc tab Maps bị đóng.
 
 ## Mục đích sử dụng
 
@@ -20,11 +21,13 @@ chống mất kết quả và đồng bộ dữ liệu vào tài khoản Findmap
 
 ## Lưu trữ và chia sẻ
 
-Checkpoint được lưu trong vùng lưu trữ riêng của extension trên thiết bị. Token phiên được lưu
-trong vùng lưu trữ extension và vùng lưu trữ cục bộ của chính các trang Findmap để duy trì đăng nhập
-và đồng bộ giữa website với tiện ích. Kết quả được gửi đến máy chủ Findmap khi người dùng sử dụng
-chức năng đồng bộ. Findmap không bán dữ liệu, không dùng dữ liệu cho quảng cáo và không chia sẻ với
-bên thứ ba ngoài các tích hợp mà người dùng chủ động cấu hình trong hệ thống Findmap.
+Checkpoint được lưu trong vùng lưu trữ riêng của extension trên thiết bị và có thể được khôi phục
+trong tối đa 30 ngày kể từ lần lưu hoạt động gần nhất; checkpoint thường được xóa ngay khi lượt quét
+hoàn tất, bị hủy hoặc người dùng xóa dữ liệu. Token phiên được lưu trong vùng lưu trữ extension và
+vùng lưu trữ cục bộ của chính các trang Findmap để duy trì đăng nhập và đồng bộ giữa website với tiện
+ích. Kết quả được gửi đến máy chủ Findmap khi người dùng sử dụng chức năng đồng bộ. Findmap không bán
+dữ liệu, không dùng dữ liệu cho quảng cáo và không chia sẻ với bên thứ ba ngoài các tích hợp mà người
+dùng chủ động cấu hình trong hệ thống Findmap.
 
 ## Quyền trình duyệt
 
@@ -43,7 +46,7 @@ bộ của extension. Yêu cầu liên quan đến dữ liệu tài khoản có 
 ## Liên hệ
 
 - Đơn vị vận hành: Công Ty TNHH An Đức Tâm.
-- Email hỗ trợ: `[CẦN ĐIỀN EMAIL HỖ TRỢ CHÍNH THỨC]`.
+- Email hỗ trợ: `business@chatplus.vn`.
 
-Trước khi nộp Chrome Web Store, đăng chính sách này tại một URL HTTPS công khai thuộc `findmap.vn`
-và thay placeholder email bằng địa chỉ hỗ trợ đang hoạt động.
+URL công khai dùng cho Chrome Web Store:
+`https://findmap.vn/chinh-sach-quyen-rieng-tu`.

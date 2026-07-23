@@ -12,7 +12,7 @@ test("website chỉ phát hiện extension, không so sánh phiên bản", () =>
 
   assert.match(presence, /isInstalled/);
   assert.match(presence, /bridgeOk/);
-  assert.match(html, /src="\/ext-presence\.js"/);
+  assert.match(html, /src="\/ext-presence\.js(?:\?[^" ]*)?"/);
   assert.doesNotMatch(
     presence,
     /requiredVersion|installedVersion|compareSemver|isUpToDate|\/api\/ext-version|chrome:\/\/extensions/i

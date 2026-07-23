@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Chính sách quyền riêng tư tiện ích Findmap</title>
+  <meta name="description" content="Chính sách quyền riêng tư của tiện ích Chrome Findmap – Tìm điểm bán." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    :root { --ink: #172033; --muted: #5f6b7d; --line: #dce3ef; --blue: #315cff; --paper: #f5f7fb; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: radial-gradient(circle at 15% 0%, #e8eeff 0, transparent 34%), var(--paper); color: var(--ink); font-family: "Hanken Grotesk", sans-serif; line-height: 1.7; }
+    main { width: min(860px, calc(100% - 32px)); margin: 40px auto; padding: clamp(28px, 5vw, 58px); border: 1px solid var(--line); border-radius: 20px; background: rgba(255, 255, 255, 0.96); box-shadow: 0 24px 70px rgba(31, 48, 86, 0.12); }
+    .eyebrow { margin: 0 0 12px; color: var(--blue); font-size: 12px; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase; }
+    h1 { max-width: 680px; margin: 0; font-size: clamp(32px, 6vw, 54px); line-height: 1.03; letter-spacing: -0.045em; }
+    .updated { margin: 18px 0 34px; color: var(--muted); }
+    h2 { margin: 34px 0 8px; font-size: 21px; letter-spacing: -0.02em; }
+    p, li { color: var(--muted); }
+    ul { padding-left: 22px; }
+    a { color: var(--blue); font-weight: 700; }
+    .note { margin-top: 36px; padding: 18px 20px; border-left: 4px solid var(--blue); border-radius: 8px; background: #eef2ff; }
+    @media (max-width: 600px) { main { margin: 16px auto; border-radius: 14px; } }
+  </style>
+</head>
+<body>
+  <main>
+    <p class="eyebrow">Findmap · Chrome Extension</p>
+    <h1>Chính sách quyền riêng tư</h1>
+    <p class="updated">Cập nhật lần cuối: 23/07/2026</p>
+
+    <p>Tiện ích Findmap giúp người dùng thu thập thông tin điểm bán công khai đang hiển thị trên Google Maps và đồng bộ kết quả về tài khoản Findmap của họ.</p>
+
+    <h2>Dữ liệu được xử lý</h2>
+    <ul>
+      <li>Thông tin tài khoản và token phiên Findmap để xác thực việc đồng bộ.</li>
+      <li>Từ khóa, tọa độ trung tâm, bán kính và tùy chọn tìm kiếm do người dùng nhập.</li>
+      <li>Thông tin điểm bán công khai như tên, danh mục, địa chỉ, số điện thoại, website, điểm đánh giá, số lượt đánh giá, giờ mở cửa, tọa độ và đường dẫn Google Maps.</li>
+      <li>Checkpoint kỹ thuật và trạng thái tiến trình tối thiểu để khôi phục lượt quét khi Chrome tạm dừng service worker hoặc tab Maps bị đóng.</li>
+    </ul>
+
+    <h2>Mục đích sử dụng</h2>
+    <p>Dữ liệu được dùng để thực hiện chức năng tìm điểm bán, hiển thị tiến độ, chống mất kết quả, tiếp tục lượt quét đang dở và đồng bộ dữ liệu vào tài khoản Findmap theo yêu cầu của người dùng.</p>
+
+    <h2>Lưu trữ và chia sẻ</h2>
+    <p>Checkpoint được lưu trong vùng lưu trữ riêng của extension trên thiết bị và có thể được khôi phục trong tối đa 30 ngày kể từ lần lưu hoạt động gần nhất; checkpoint thường được xóa ngay khi lượt quét hoàn tất, bị hủy hoặc người dùng xóa dữ liệu. Token phiên được lưu trong vùng lưu trữ extension và vùng lưu trữ cục bộ của trang Findmap để duy trì đăng nhập. Kết quả được gửi đến máy chủ Findmap khi người dùng sử dụng chức năng đồng bộ. Findmap không bán dữ liệu, không dùng dữ liệu cho quảng cáo và không chia sẻ cho bên thứ ba ngoài các tích hợp mà người dùng chủ động cấu hình.</p>
+
+    <h2>Quyền trình duyệt</h2>
+    <p>Tiện ích chỉ truy cập Google Maps và các domain Findmap được khai báo trong manifest. Tiện ích không yêu cầu quyền debugger, không đọc lịch sử duyệt web và không truy cập website ngoài phạm vi đã khai báo. Trong một lượt quét do người dùng bắt đầu, tiện ích có thể yêu cầu Chrome giữ hệ thống thức và sẽ nhả yêu cầu khi hoàn tất, tạm dừng, hủy hoặc gặp lỗi kết thúc.</p>
+
+    <h2>Xóa dữ liệu</h2>
+    <p>Người dùng có thể đăng xuất, xóa kết quả trên Findmap hoặc gỡ extension để xóa dữ liệu cục bộ của extension. Yêu cầu liên quan đến dữ liệu tài khoản có thể gửi tới đơn vị vận hành.</p>
+
+    <div class="note">
+      <strong>Liên hệ</strong><br />
+      Công Ty TNHH An Đức Tâm · <a href="mailto:business@chatplus.vn">business@chatplus.vn</a>
+    </div>
+  </main>
+</body>
+</html>

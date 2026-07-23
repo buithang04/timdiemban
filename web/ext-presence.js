@@ -11,7 +11,10 @@
   const els = {
     banner: null,
     text: null,
-    install: null
+    install: null,
+    sidebarDownload: null,
+    sidebarDownloadHint: null,
+    headerDownload: null
   };
 
   function getInstallUrl() {
@@ -34,6 +37,36 @@
     }
   }
 
+  function updateSidebarDownload() {
+    const url = getInstallUrl();
+    for (const link of [els.sidebarDownload, els.headerDownload].filter(Boolean)) {
+      if (url) {
+        link.href = url;
+        link.setAttribute("target", "_blank");
+        link.setAttribute("rel", "noopener noreferrer");
+        link.removeAttribute("aria-disabled");
+        link.classList.remove("is-unavailable");
+      } else {
+        link.removeAttribute("href");
+        link.removeAttribute("target");
+        link.setAttribute("aria-disabled", "true");
+        link.classList.add("is-unavailable");
+      }
+    }
+    if (url) {
+      if (els.sidebarDownloadHint) {
+        els.sidebarDownloadHint.textContent = state.bridgeOk
+          ? "Mở trang tiện ích Chrome"
+          : "Cài cho Google Chrome";
+      }
+      return;
+    }
+
+    if (els.sidebarDownloadHint) {
+      els.sidebarDownloadHint.textContent = "Đường dẫn tải đang cập nhật";
+    }
+  }
+
   function showBanner(kind, message, { showInstall = false } = {}) {
     if (!els.banner || !els.text) return;
     els.banner.className = `ext-version-banner ext-version-${kind}`;
@@ -43,6 +76,7 @@
   }
 
   function render() {
+    updateSidebarDownload();
     if (!state.checked) {
       showBanner("info", "Đang kiểm tra tiện ích Findmap…");
       return;
@@ -75,6 +109,9 @@
     els.banner = document.getElementById("extVersionBanner");
     els.text = document.getElementById("extVersionBannerText");
     els.install = document.getElementById("extInstallLink");
+    els.sidebarDownload = document.getElementById("sidebarExtensionDownload");
+    els.sidebarDownloadHint = document.getElementById("sidebarExtensionDownloadHint");
+    els.headerDownload = document.getElementById("headerExtensionDownload");
 
     render();
     window.TimDiemBanSearch?.pingExtensionBridge?.();

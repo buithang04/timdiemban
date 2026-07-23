@@ -35,6 +35,13 @@
     );
   }
 
+  function shouldAutoResumeScrapeCheckpoint(checkpoint, now = Date.now()) {
+    return (
+      isRecoverableScrapeCheckpoint(checkpoint, now) &&
+      checkpoint?.paused !== true
+    );
+  }
+
   function nextPendingCell(checkpoint) {
     const total = Math.max(0, Number(checkpoint?.totalCells) || 0);
     const completed = new Set(
@@ -66,6 +73,7 @@
     MAX_CHECKPOINT_AGE_MS,
     MAX_CLOCK_SKEW_MS,
     isRecoverableScrapeCheckpoint,
+    shouldAutoResumeScrapeCheckpoint,
     nextPendingCell,
     isRecoverableRescanCheckpoint
   };

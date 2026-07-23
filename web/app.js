@@ -10,6 +10,10 @@ let jobsIntegrationStatus = { linked: false };
 let jobsSyncBusy = false;
 const TABLE_PAGE_SIZE = 50;
 let currentPage = 1;
+
+function isSearchInProgress(search = currentSearch) {
+  return search?.status === "running" || search?.status === "paused";
+}
 /** Danh sách từ khóa của lượt tìm (theo thứ tự nhập) */
 let plannedKeywords = [];
 /** Tab đang chọn: "all" | tên từ khóa */
@@ -45,7 +49,7 @@ function peekLocalResultsWorkspace() {
     if (emailRaw) {
       try {
         const parsed = JSON.parse(emailRaw);
-        if (Array.isArray(parsed?.data) && parsed.data.length) {
+        if (Array.isArray(parsed?.data) && (parsed.data.length || parsed.search)) {
           candidates.push({ key: emailKey, parsed, kind: "email" });
         }
       } catch {}
@@ -62,7 +66,7 @@ function peekLocalResultsWorkspace() {
         if (!claimed || claimed === email) {
           try {
             const parsed = JSON.parse(legacyRaw);
-            if (Array.isArray(parsed?.data) && parsed.data.length) {
+            if (Array.isArray(parsed?.data) && (parsed.data.length || parsed.search)) {
               candidates.push({ key: STORAGE_RESULTS_KEY, parsed, kind: "legacy" });
             }
           } catch {}
@@ -74,7 +78,7 @@ function peekLocalResultsWorkspace() {
       if (raw) {
         try {
           const parsed = JSON.parse(raw);
-          if (Array.isArray(parsed?.data) && parsed.data.length) {
+          if (Array.isArray(parsed?.data) && (parsed.data.length || parsed.search)) {
             candidates.push({ key: STORAGE_RESULTS_KEY, parsed, kind: "legacy" });
           }
         } catch {}
@@ -105,7 +109,7 @@ function buildResultsWorkspacePayload() {
 
 function applyResultsWorkspace(payload) {
   const data = Array.isArray(payload?.data) ? payload.data : [];
-  if (!data.length) return false;
+  if (!data.length && !payload?.search) return false;
   currentData = data;
   currentSearch = payload.search || null;
   sentKeys = new Set(Array.isArray(payload.sentKeys) ? payload.sentKeys : []);
@@ -137,7 +141,7 @@ function applyResultsWorkspace(payload) {
 function writeResultsLocalCache() {
   try {
     const key = getResultsStorageKey();
-    if (!currentData.length) {
+    if (!currentData.length && !currentSearch) {
       localStorage.removeItem(key);
       localStorage.removeItem(STORAGE_RESULTS_KEY);
       return;
@@ -412,7 +416,6 @@ const els = {
   pkgPointsHdr: document.getElementById("pkgPointsHdr"),
   statUsedHdr: document.getElementById("statUsedHdr"),
   infoPointsHdr: document.getElementById("infoPointsHdr"),
-  sidebarNewSearchBtn: document.getElementById("sidebarNewSearchBtn"),
   connStatus: document.getElementById("connStatus"),
   infoKeyword: document.getElementById("infoKeyword"),
   infoRadius: document.getElementById("infoRadius"),
@@ -719,6 +722,7 @@ async function refreshUserPoints() {
 async function loadCurrentUser() {
   const token = getAuthToken();
   if (!token) {
+    window.TimDiemBanSearch?.clearBatchRecovery?.();
     currentUser = null;
     updateAuthUI();
     if (window.location.pathname === "/") {
@@ -738,6 +742,7 @@ async function loadCurrentUser() {
     await loadPendingPackageOrders();
     return user;
   } catch {
+    window.TimDiemBanSearch?.resetSearchRecovery?.({ abandon: true });
     setAuthToken("");
     currentUser = null;
     updateAuthUI();
@@ -1042,7 +1047,7 @@ function renderKeywordTabs() {
     activeKeywordTab = "all";
   }
 
-  const runningKw = currentSearch?.status === "running" ? String(currentSearch.keyword || "").trim() : "";
+  const runningKw = isSearchInProgress() ? String(currentSearch.keyword || "").trim() : "";
   const items = [{ id: "all", label: "Tất cả" }, ...tabs.map((t) => ({ id: t, label: t }))];
 
   host.classList.remove("hidden");
@@ -1256,7 +1261,7 @@ async function flushChargeNewPhones() {
   await loadCurrentUser();
   syncSessionToExtension();
 
-  if (paid < newPhones.length && currentSearch?.status !== "running") {
+  if (paid < newPhones.length && !isSearchInProgress()) {
     // Không xóa hàng khỏi bảng khi hết credit — trước đây cắt SĐT chưa trừ điểm
     // khiến người dùng tưởng "không bắt được kết quả về".
     const unpaid = newPhones.length - paid;
@@ -1291,11 +1296,51 @@ async function tryChargePendingSearch() {
   }
 }
 
+function emitSearchFinished(type, payload = {}, fallbackSearchId = null) {
+  const searchId =
+    payload.searchParams?.searchId ||
+    payload.searchId ||
+    payload.search?.searchId ||
+    fallbackSearchId ||
+    null;
+  window.dispatchEvent(
+    new CustomEvent("timdiemban:search-finished", {
+      detail: {
+        type,
+        searchId,
+        partial: payload.partial === true,
+        partialCode: payload.partialCode || "",
+        partialReason: payload.partialReason || "",
+        error: payload.error || ""
+      }
+    })
+  );
+}
+
 async function reconcileStaleSearchState(extStatus = {}) {
   const extRunning = !!(extStatus.running || extStatus.stalled);
+  const extPaused = !!(extStatus.paused || (!extRunning && extStatus.canResume));
+  const extActive = extRunning || extPaused;
+  const sameSearch =
+    !extStatus.searchId ||
+    !currentSearch?.searchId ||
+    extStatus.searchId === currentSearch.searchId;
   let changed = false;
 
-  if (currentSearch?.status === "running" && !extRunning) {
+  if (!sameSearch) return false;
+
+  if (currentSearch && extPaused) {
+    currentSearch = { ...currentSearch, status: "paused" };
+    awaitingNewSearchResults = false;
+    hideLiveProgress();
+    setInfoStatus('<span class="status-badge status-paused">Tạm dừng</span>');
+    saveResultsToStorage();
+    changed = true;
+  } else if (currentSearch?.status === "paused" && extRunning) {
+    currentSearch = { ...currentSearch, status: "running" };
+    changed = true;
+  } else if (isSearchInProgress() && !extActive) {
+    const finishedSearchId = currentSearch?.searchId || extStatus.searchId || null;
     currentSearch = {
       ...currentSearch,
       status: currentData.length ? "completed" : "error",
@@ -1305,10 +1350,10 @@ async function reconcileStaleSearchState(extStatus = {}) {
     hideLiveProgress();
     saveResultsToStorage();
     changed = true;
-    window.dispatchEvent(new CustomEvent("timdiemban:search-finished"));
+    emitSearchFinished(currentData.length ? "complete" : "error", {}, finishedSearchId);
   }
 
-  if (currentSearch && currentSearch.status !== "running" && currentData.length) {
+  if (currentSearch && !isSearchInProgress() && currentData.length) {
     await tryChargePendingSearch();
   }
 
@@ -1821,7 +1866,9 @@ function updateSearchResultBox() {
   const kw = keyword ? `"${keyword}"` : "từ khóa hiện tại";
   const r = radius ? `${radius} km` : "khu vực đã chọn";
 
-  if (currentSearch?.status === "running") {
+  if (currentSearch?.status === "paused") {
+    els.searchResultText.textContent = `Đã tạm dừng ${kw} — tiến độ hiện tại vẫn được giữ nguyên.`;
+  } else if (currentSearch?.status === "running") {
     els.searchResultText.textContent = `Đang quét ${kw} trong phạm vi ${r}…`;
   } else if (total) {
     els.searchResultText.textContent = `Đang hiển thị ${visible}/${total} kết quả phù hợp nhất cho ${kw} trong phạm vi ${r}.`;
@@ -1854,7 +1901,7 @@ function renderSearchInfo(search) {
     if (multi.length > 1) {
       const idx = Number(search.keywordIndex);
       const step =
-        Number.isFinite(idx) && search.status === "running"
+        Number.isFinite(idx) && isSearchInProgress(search)
           ? ` (${idx + 1}/${multi.length}: ${search.keyword || multi[idx] || ""})`
           : "";
       els.infoKeyword.textContent = `${multi.join(", ")}${step}`;
@@ -1882,6 +1929,8 @@ function renderSearchInfo(search) {
   }
   if (search.status === "running") {
     setInfoStatus('<span class="status-badge status-running">Đang tìm</span>');
+  } else if (search.status === "paused") {
+    setInfoStatus('<span class="status-badge status-paused">Tạm dừng</span>');
   } else if (search.status === "error") {
     setInfoStatus('<span class="status-badge status-error">Lỗi</span>');
   } else if (search.status === "completed") {
@@ -2385,7 +2434,7 @@ function updateRescanBtn() {
   if (!els.rescanBtn) return;
 
   // Chỉ cho quét lại SAU KHI quét xong (status !== "running")
-  const searchStillRunning = currentSearch?.status === "running";
+  const searchStillRunning = isSearchInProgress();
   if (searchStillRunning) {
     els.rescanBtn.textContent = "Đợi quét xong…";
     els.rescanBtn.disabled = true;
@@ -2424,7 +2473,7 @@ function updateRescanBtn() {
 
 function rescanMissingRows() {
   // Không cho quét lại khi search đang chạy
-  if (currentSearch?.status === "running") {
+  if (isSearchInProgress()) {
     setConnStatus("Đợi quét chính kết thúc trước khi quét lại", "error");
     return;
   }
@@ -2618,7 +2667,7 @@ function countRowsForActiveSearchKeyword() {
 
 function maybeRequestSyncIfBehind(mergedCount) {
   if (mergedCount == null || mergedCount <= 0) return;
-  if (currentSearch?.status !== "running") return;
+  if (!isSearchInProgress()) return;
   const tableForKw = countRowsForActiveSearchKeyword();
   const gap = mergedCount - tableForKw;
   updateUnifiedCountUI(mergedCount);
@@ -2654,10 +2703,10 @@ function updateUnifiedCountUI(mergedCount) {
   const tableCount = currentData.length;
   const tableForKw = countRowsForActiveSearchKeyword();
   const ext = extensionMergedCount;
-  const behind = currentSearch?.status === "running" && ext > tableForKw;
+  const behind = isSearchInProgress() && ext > tableForKw;
 
   if (els.infoTotal) els.infoTotal.textContent = String(tableCount);
-  if (els.resultsBadge && currentSearch?.status === "running" && ext > 0) {
+  if (els.resultsBadge && isSearchInProgress() && ext > 0) {
     const kw = String(currentSearch?.keyword || "").trim();
     const label = kw ? `"${kw}"` : "ĐIỂM BÁN";
     els.resultsBadge.textContent = behind
@@ -2666,7 +2715,7 @@ function updateUnifiedCountUI(mergedCount) {
     els.resultsBadge.classList.toggle("wm-results-badge-warn", behind);
   }
 
-  if (currentSearch?.status === "running" && ext > 0) {
+  if (isSearchInProgress() && ext > 0) {
     if (behind) {
       setConnStatus(
         `Đang đồng bộ kết quả: Findmap đã nhận ${tableForKw}/${ext} điểm (từ khóa hiện tại)`,
@@ -2801,7 +2850,7 @@ function applyExtensionDataSync(type, payload = {}) {
     }
     ensureSearchSession(search);
     if (payload.searchParams) {
-      if (!currentSearch || currentSearch.status !== "running") {
+      if (!currentSearch || !isSearchInProgress()) {
         if (!currentData.length || !syncSearchId || syncSearchId !== currentSearch?.searchId) {
           currentSearch = {
             ...payload.searchParams,
@@ -2827,8 +2876,13 @@ function applyExtensionDataSync(type, payload = {}) {
     lastSyncApplied = currentData.length;
     extensionMergedCount = Math.max(extensionMergedCount, extCount, incoming.length);
     if (currentSearch) {
-      currentSearch.status = "running";
-      setInfoStatus('<span class="status-badge status-running">Đang tìm</span>');
+      const syncStatus = currentSearch.status === "paused" ? "paused" : "running";
+      currentSearch.status = syncStatus;
+      setInfoStatus(
+        syncStatus === "paused"
+          ? '<span class="status-badge status-paused">Tạm dừng</span>'
+          : '<span class="status-badge status-running">Đang tìm</span>'
+      );
     }
     els.tableSection.classList.remove("hidden");
     els.loadingState.classList.add("hidden");
@@ -2860,7 +2914,7 @@ function applyExtensionDataSync(type, payload = {}) {
       completeId &&
       currentSearch?.searchId &&
       completeId !== currentSearch.searchId &&
-      currentSearch.status === "running"
+      isSearchInProgress()
     ) {
       return;
     }
@@ -2883,11 +2937,6 @@ function applyExtensionDataSync(type, payload = {}) {
     setConnStatus(`Hoàn tất — ${currentData.length} kết quả`, "connected");
     saveResultsToStorage(true);
     tryChargePendingSearch().catch(() => {});
-    window.dispatchEvent(
-      new CustomEvent("timdiemban:search-finished", {
-        detail: { searchId: currentSearch?.searchId || search?.searchId || null }
-      })
-    );
     updateView();
   }
 }
@@ -2965,6 +3014,7 @@ async function handleExtensionPayload(type, payload) {
     } else if (payload.partial) {
       showErrorBanner("Đã dừng tìm kiếm", payload.partialReason || "Kết quả đã lưu.");
     }
+    emitSearchFinished("complete", payload, currentSearch?.searchId || null);
     return;
   }
 
@@ -2974,7 +3024,7 @@ async function handleExtensionPayload(type, payload) {
       errId &&
       currentSearch?.searchId &&
       errId !== currentSearch.searchId &&
-      currentSearch.status === "running"
+      isSearchInProgress()
     ) {
       return;
     }
@@ -2985,11 +3035,7 @@ async function handleExtensionPayload(type, payload) {
     showErrorBanner("Lỗi tìm kiếm", payload.error);
     setConnStatus(payload.error, "error");
     if (currentData.length) await tryChargePendingSearch();
-    window.dispatchEvent(
-      new CustomEvent("timdiemban:search-finished", {
-        detail: { searchId: currentSearch?.searchId || payload?.searchParams?.searchId || null }
-      })
-    );
+    emitSearchFinished("error", payload, currentSearch?.searchId || null);
     updateView();
   }
 
@@ -2999,7 +3045,7 @@ async function handleExtensionPayload(type, payload) {
       errId &&
       currentSearch?.searchId &&
       errId !== currentSearch.searchId &&
-      currentSearch.status === "running"
+      isSearchInProgress()
     ) {
       return;
     }
@@ -3013,11 +3059,7 @@ async function handleExtensionPayload(type, payload) {
     );
     setConnStatus(payload.error, "error");
     if (currentData.length) await tryChargePendingSearch();
-    window.dispatchEvent(
-      new CustomEvent("timdiemban:search-finished", {
-        detail: { searchId: currentSearch?.searchId || payload?.searchParams?.searchId || null }
-      })
-    );
+    emitSearchFinished("tab_closed", payload, currentSearch?.searchId || null);
     updateView();
   }
 
@@ -3109,13 +3151,17 @@ async function handleExtensionPayload(type, payload) {
 
 function deleteSelectedRows() {
   if (!currentData.length) return;
+  if (window.TimDiemBanSearch?.isFormLocked?.()) {
+    alert("Lượt quét vẫn đang chạy hoặc tạm dừng. Hãy bấm 'Dừng hẳn' trước khi xóa kết quả.");
+    return;
+  }
   if (!confirm("Xóa toàn bộ kết quả trên bảng?")) return;
   clearAllData();
   setConnStatus("Đã xóa tất cả", "connected");
 }
 
 function clearAllData() {
-  window.TimDiemBanSearch?.abandonExtensionSearch?.();
+  window.TimDiemBanSearch?.resetSearchRecovery?.({ abandon: true });
   // Hủy mọi lần lưu DB đang chờ / đang bay — tránh PUT cũ ghi đè sau DELETE
   _resultsSaveEpoch += 1;
   _dbSaveQueued = false;
@@ -3234,6 +3280,10 @@ els.exportBtn?.addEventListener("click", exportExcel);
 els.exportBtnFooter?.addEventListener("click", exportExcel);
 els.clearBtn?.addEventListener("click", deleteSelectedRows);
 els.resetBtn?.addEventListener("click", () => {
+  if (window.TimDiemBanSearch?.isFormLocked?.()) {
+    alert("Lượt quét vẫn đang chạy hoặc tạm dừng. Hãy bấm 'Dừng hẳn' trước khi xóa kết quả.");
+    return;
+  }
   if (!confirm("Xóa toàn bộ dữ liệu tìm kiếm hiện tại? Dữ liệu đã lưu cũng sẽ bị xóa.")) return;
   clearAllData();
   setConnStatus("Đã làm mới — sẵn sàng tìm mới", "");
@@ -3290,6 +3340,7 @@ els.resultsBody?.addEventListener("change", (e) => {
 
 async function handleAuthClick() {
   if (currentUser) {
+    window.TimDiemBanSearch?.resetSearchRecovery?.({ abandon: true });
     try {
       if (_dbSaveTimer) clearTimeout(_dbSaveTimer);
       await flushResultsToDatabase();
@@ -3322,13 +3373,6 @@ els.headerUserAvatar?.addEventListener("click", (e) => {
 els.openProfileBtn?.addEventListener("click", () => {
   toggleHeaderUserMenu(false);
   openProfileModal();
-});
-
-els.sidebarNewSearchBtn?.addEventListener("click", () => {
-  if (!confirm("Làm mới — xóa toàn bộ dữ liệu tìm kiếm hiện tại?")) return;
-  clearAllData();
-  document.getElementById("searchKeyword")?.focus();
-  setConnStatus("Đã làm mới — sẵn sàng tìm mới", "");
 });
 
 document.getElementById("mapZoomIn")?.addEventListener("click", () => window.TimDiemBanMap?.zoomIn?.());
@@ -3442,6 +3486,7 @@ els.authForm.addEventListener("submit", async (e) => {
     } else {
       setConnStatus("Đăng nhập thành công", "connected");
     }
+    announceWorkspaceReady();
   } catch (err) {
     els.authError.textContent = err.message;
     els.authError.classList.remove("hidden");
@@ -3471,6 +3516,17 @@ window.addEventListener("timdiemban:bridge-ready", (e) => {
     setConnStatus("Chưa phát hiện tiện ích Findmap", "error");
   }
 });
+
+function announceWorkspaceReady() {
+  window.dispatchEvent(
+    new CustomEvent("timdiemban:workspace-ready", {
+      detail: {
+        search: currentSearch ? { ...currentSearch } : null,
+        resultCount: currentData.length
+      }
+    })
+  );
+}
 
 loadCurrentUser().then(async () => {
   await loadPendingPackageOrders();
@@ -3506,7 +3562,7 @@ loadCurrentUser().then(async () => {
     );
     migrateLegacyChargedSearchIds();
     await refreshUserPoints();
-    if (currentSearch?.status !== "running") {
+    if (!isSearchInProgress()) {
       await tryChargePendingSearch();
       await refreshUserPoints();
     }
@@ -3521,6 +3577,7 @@ loadCurrentUser().then(async () => {
 
   drainExtensionQueue();
   updateView();
+  announceWorkspaceReady();
   setTimeout(() => window.TimDiemBanMap?.invalidateSize?.(), 500);
 });
 

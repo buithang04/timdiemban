@@ -29,6 +29,8 @@ const defaultApp = "https://findmap.vn";
 const appOrigin = env("APP_ORIGIN") || defaultApp;
 const isLocalApp = /localhost|127\.0\.0\.1/i.test(appOrigin);
 const defaultNews = isLocalApp ? "http://localhost:3001" : appOrigin;
+const defaultExtensionInstallUrl =
+  "https://chromewebstore.google.com/detail/dkdopmhionlfkmeicnppaljeibldgjia";
 
 const TIMDIEMBAN_CONFIG = {
   APP_ORIGIN: appOrigin,
@@ -36,7 +38,7 @@ const TIMDIEMBAN_CONFIG = {
   MAPS_AUTO_FOCUS_MINUTES: 2,
   MAPS_AUTO_REOPEN_MAX: 5,
   /** Link cài Extension Chrome — cập nhật khi có URL store/zip */
-  EXTENSION_INSTALL_URL: env("EXTENSION_INSTALL_URL") || ""
+  EXTENSION_INSTALL_URL: env("EXTENSION_INSTALL_URL") || defaultExtensionInstallUrl
 };
 
 /** Alias rõ nghĩa — SEARCH = hệ tìm kiếm */

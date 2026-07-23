@@ -1,6 +1,6 @@
 (function () {
   // Bump version mỗi lần sửa content — background sẽ reinject nếu Maps còn bản cũ
-  const CONTENT_VERSION = 74;
+  const CONTENT_VERSION = 75;
   if (window.__timDiemBanLoaded && window.__timDiemBanVersion === CONTENT_VERSION) return;
   if (typeof window.__timDiemBanCleanup === "function") {
     try {
@@ -119,8 +119,6 @@
   let shieldEl = null;
   let blockKeysHandler = null;
   let shieldWebLabel = "";
-  const shieldLogLines = [];
-  const SHIELD_LOG_MAX = 14;
 
   // Google đôi khi phát ra data-item-id chứa phần trăm không hợp lệ; giữ raw thay vì làm hỏng cả lượt quét.
   function safeDecodeURIComponent(value) {
@@ -134,17 +132,8 @@
 
   function tbLog(msg, level = "log") {
     const text = String(msg || "");
-    const line = `${new Date().toLocaleTimeString("vi-VN")} ${text}`;
-    shieldLogLines.push(line);
-    if (shieldLogLines.length > SHIELD_LOG_MAX) shieldLogLines.shift();
     if (level === "warn") console.warn("TimDiemBan:", text);
     else console.log("TimDiemBan:", text);
-    appendShieldLog();
-    safeSend({ action: "SCRAPE_LOG", line: text, ...(activeCellLease || {}) });
-  }
-
-  function appendShieldLog() {
-    /* log chỉ ghi Console — không hiển thị trên overlay */
   }
 
   function isAllowedBrowserShortcut(e) {
@@ -248,7 +237,6 @@
   function showShield(text, percent, meta) {
     createShield();
     if (meta) setShieldMeta(meta);
-    shieldLogLines.length = 0;
     scrapeInProgress = true;
     updateShield(text, percent);
     blockKeysHandler = (e) => {
@@ -285,7 +273,6 @@
 
   function hideShield() {
     scrapeInProgress = false;
-    shieldLogLines.length = 0;
     if (blockKeysHandler) {
       document.removeEventListener("keydown", blockKeysHandler, true);
       blockKeysHandler = null;
@@ -4150,6 +4137,144 @@
     return { before, after: Number(feed.scrollTop || 0), target };
   }
 
+  function feedScrollSnapshot(feed) {
+    let resultCount = 0;
+    try {
+      resultCount = getResultItems(feed).length;
+    } catch {}
+    return {
+      scrollTop: Math.max(0, Number(feed?.scrollTop) || 0),
+      scrollHeight: Math.max(0, Number(feed?.scrollHeight) || 0),
+      resultCount: Math.max(0, Number(resultCount) || 0)
+    };
+  }
+
+  function feedSnapshotGrew(before, after) {
+    return (
+      after.scrollHeight > before.scrollHeight + 30 ||
+      after.resultCount > before.resultCount
+    );
+  }
+
+  function randomScrollValue(min, max) {
+    const low = Math.min(min, max);
+    const high = Math.max(min, max);
+    const unit = Math.max(0, Math.min(1, Number(Math.random()) || 0));
+    return low + (high - low) * unit;
+  }
+
+  /**
+   * Mô phỏng một nhịp lăn chuột: quãng đường được chia thành nhiều
+   * chuyển động nhỏ. Tab ẩn dùng setter đồng bộ vì Chrome có thể đóng
+   * băng smooth scroll và không phát sinh bất kỳ thay đổi scrollTop nào.
+   */
+  async function scrollFeedLikeUser(feed, distance, pauseBeforeDeadline, fastScroll = false) {
+    const before = feedScrollSnapshot(feed);
+    const maxScroll = Math.max(
+      0,
+      Number(feed?.scrollHeight || 0) - Number(feed?.clientHeight || 0)
+    );
+    const target = Math.max(
+      before.scrollTop,
+      Math.min(maxScroll, before.scrollTop + Math.max(0, Number(distance) || 0))
+    );
+    const intendedDistance = Math.max(0, target - before.scrollTop);
+    let interrupted = false;
+    let usedDirectFallback = false;
+
+    if (intendedDistance <= 1) {
+      return {
+        before,
+        after: before,
+        target,
+        moved: false,
+        grew: false,
+        interrupted,
+        usedDirectFallback
+      };
+    }
+
+    if (document.hidden) {
+      scrollFeedInstantly(feed, intendedDistance);
+      usedDirectFallback = true;
+      interrupted = !(await pauseBeforeDeadline(fastScroll ? 70 : 110));
+    } else {
+      const partCount = Math.max(
+        3,
+        Math.min(6, Math.round(randomScrollValue(fastScroll ? 3 : 4, fastScroll ? 5 : 6)))
+      );
+      let remainingDistance = intendedDistance;
+
+      for (let part = 0; part < partCount && remainingDistance > 1; part++) {
+        if (isAborted) {
+          interrupted = true;
+          break;
+        }
+        const remainingParts = partCount - part;
+        const averagePart = remainingDistance / remainingParts;
+        const partDistance =
+          remainingParts === 1
+            ? remainingDistance
+            : Math.min(
+                remainingDistance,
+                Math.max(18, averagePart * randomScrollValue(0.82, 1.18))
+              );
+        const partStart = Math.max(0, Number(feed.scrollTop) || 0);
+        let smoothAccepted = false;
+
+        try {
+          if (typeof feed.scrollBy === "function") {
+            feed.scrollBy({ top: partDistance, behavior: "smooth" });
+            smoothAccepted = true;
+          }
+        } catch {}
+
+        const keepGoing = await pauseBeforeDeadline(
+          Math.round(randomScrollValue(fastScroll ? 55 : 80, fastScroll ? 105 : 155))
+        );
+        const partAfterPause = Math.max(0, Number(feed.scrollTop) || 0);
+        const expectedPartTarget = Math.min(maxScroll, partStart + partDistance);
+
+        // Smooth scroll bị renderer bỏ qua: đặt phần còn lại ngay để không
+        // lặp vô hạn tại cùng một vị trí.
+        if (
+          keepGoing &&
+          expectedPartTarget > partStart + 1 &&
+          (!smoothAccepted || partAfterPause < partStart + Math.min(8, partDistance * 0.12))
+        ) {
+          scrollFeedInstantly(feed, expectedPartTarget - partAfterPause);
+          usedDirectFallback = true;
+        }
+
+        remainingDistance = Math.max(
+          0,
+          target - Math.max(0, Number(feed.scrollTop) || 0)
+        );
+        if (!keepGoing) {
+          interrupted = true;
+          break;
+        }
+      }
+
+      const afterPartsTop = Math.max(0, Number(feed.scrollTop) || 0);
+      if (!interrupted && afterPartsTop < target - Math.max(2, intendedDistance * 0.15)) {
+        scrollFeedInstantly(feed, target - afterPartsTop);
+        usedDirectFallback = true;
+      }
+    }
+
+    const after = feedScrollSnapshot(feed);
+    return {
+      before,
+      after,
+      target,
+      moved: after.scrollTop > before.scrollTop + 1,
+      grew: feedSnapshotGrew(before, after),
+      interrupted,
+      usedDirectFallback
+    };
+  }
+
   async function scrollFeed(feed, onItems, options = {}) {
     const {
       requireEndMarker = true,
@@ -4159,13 +4284,16 @@
       onProgress = null,
       resumeFromCurrent = false
     } = options;
-    const scrollPause = fastScroll ? 180 : Math.max(T.scroll, 220);
+    const scrollPause = fastScroll ? 180 : Math.max(T.scroll, 260);
     const scrollInitPause = fastScroll ? 80 : T.scrollInit;
     const staleLimit = fastScroll ? 10 : 14;
-    const settleMs = fastScroll ? 3000 : 5000;
+    const settleMs = fastScroll ? 3800 : 5600;
+    const growthSettleMs = fastScroll ? 5600 : 8000;
+    const growthPauseMin = fastScroll ? 380 : 650;
+    const growthPauseMax = fastScroll ? 650 : 1050;
+    const nearBottomPauseMin = fastScroll ? 420 : 720;
+    const nearBottomPauseMax = fastScroll ? 700 : 1200;
     const endConfirmMs = fastScroll ? 1200 : 1800;
-    const stepRatio = fastScroll ? 0.72 : 0.58;
-    const stepMin = fastScroll ? 300 : 240;
     let lastTotal = 0;
     let staleBottomRounds = 0;
     let lastScrollHeight = 0;
@@ -4269,7 +4397,7 @@
 
       if (atBottom) {
         const beforeTotal = found.total;
-        const beforeHeight = feed.scrollHeight;
+        const beforeNudge = feedScrollSnapshot(feed);
 
         // Wheel thật ở đáy vẫn phát ý định cuộn. Dùng auto để không phụ thuộc animation bị
         // Chrome đóng băng khi tab ẩn; nếu Maps chưa phản ứng thì lùi nhẹ rồi cuộn lại đáy.
@@ -4293,15 +4421,19 @@
 
         const afterNudge = await onItems(feed, round);
         rememberFound(afterNudge);
+        const afterNudgeSnapshot = feedScrollSnapshot(feed);
         const grew =
           afterNudge.total > beforeTotal ||
-          feed.scrollHeight > beforeHeight + 30;
+          feedSnapshotGrew(beforeNudge, afterNudgeSnapshot);
 
         if (grew || isFeedLoading(feed)) {
           lastTotal = Math.max(lastTotal, afterNudge.total || 0);
           staleBottomRounds = 0;
           endMarkerConfirmations = 0;
-          await pauseBeforeDeadline(scrollPause);
+          await pauseBeforeDeadline(
+            Math.round(randomScrollValue(growthPauseMin, growthPauseMax))
+          );
+          await waitForFeedContentReady(feed, growthSettleMs, scrollDeadline);
           continue;
         }
 
@@ -4339,9 +4471,63 @@
         continue;
       }
 
+      const stepRatio = randomScrollValue(fastScroll ? 0.64 : 0.55, 0.85);
+      const stepMin = Math.min(
+        fastScroll ? 300 : 240,
+        Math.max(0, Number(feed.clientHeight) || 0) * 0.85
+      );
       const step = feedScrollStep(feed, stepRatio, stepMin);
-      scrollFeedInstantly(feed, step);
-      await pauseBeforeDeadline(scrollPause);
+      const movement = await scrollFeedLikeUser(feed, step, pauseBeforeDeadline, fastScroll);
+      if (isAborted) {
+        reason = "aborted";
+        break;
+      }
+      if (observeSuspend()) {
+        reason = "renderer_suspended";
+        break;
+      }
+      if (Date.now() >= scrollDeadline || movement.interrupted) {
+        reason = "chunk_budget";
+        break;
+      }
+
+      const continuedAfterScroll = await pauseBeforeDeadline(scrollPause);
+      if (!continuedAfterScroll) {
+        reason = observeSuspend() ? "renderer_suspended" : "chunk_budget";
+        break;
+      }
+      const afterPause = feedScrollSnapshot(feed);
+      const grewAfterScroll = movement.grew || feedSnapshotGrew(movement.before, afterPause);
+      const remainingAfterScroll = Math.max(
+        0,
+        afterPause.scrollHeight - Number(feed.clientHeight || 0) - afterPause.scrollTop
+      );
+      const nearBottomAfterScroll =
+        remainingAfterScroll <= Math.max(80, Number(feed.clientHeight || 0) * 0.3);
+
+      if (grewAfterScroll || nearBottomAfterScroll || !movement.moved) {
+        const continuedForSettle = await pauseBeforeDeadline(
+          Math.round(
+            randomScrollValue(
+              grewAfterScroll ? growthPauseMin : nearBottomPauseMin,
+              grewAfterScroll ? growthPauseMax : nearBottomPauseMax
+            )
+          )
+        );
+        if (!continuedForSettle) {
+          reason = observeSuspend() ? "renderer_suspended" : "chunk_budget";
+          break;
+        }
+        await waitForFeedContentReady(feed, growthSettleMs, scrollDeadline);
+        if (observeSuspend()) {
+          reason = "renderer_suspended";
+          break;
+        }
+        if (Date.now() >= scrollDeadline) {
+          reason = "chunk_budget";
+          break;
+        }
+      }
     }
 
     // Sau khi renderer thức lại, đọc DOM hiện tại một lần trước khi trả về để không

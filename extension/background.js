@@ -19,9 +19,15 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const scrapeState = {
   running: false,
+  paused: false,
+  pausedAt: 0,
+  pauseReason: "",
+  resumeRequestedAt: 0,
   runId: "",
   mapsTabId: null,
   mapsWindowId: null,
+  enrichTabId: null,
+  enrichWindowId: null,
   webTabId: null,
   searchParams: null,
   gridPoints: [],
@@ -37,6 +43,8 @@ const scrapeState = {
   failedEnrichKeys: new Set(),
   enrichTotal: 0,
   phase: "grid",
+  quickScan: false,
+  quickProducerDone: false,
   cellGeneration: 0,
   _expectMapsNavigation: false,
   _programmaticMapsNavUntil: 0,
@@ -55,7 +63,9 @@ const scrapeState = {
   _enrichGeneration: 0,
   _pendingCompletion: null,
   _lastRecoveryFocusDataAt: 0,
-  _lastSoftRecoveryAt: 0
+  _lastEnrichRecoveryFocusDataAt: 0,
+  _lastSoftRecoveryAt: 0,
+  _enrichMapsReopenCount: 0
 };
 
 const RunLease = globalThis.TimDiemBanRunLease;
@@ -88,17 +98,23 @@ let mapsReloadTimer = null;
 let syncDebounceTimer = null;
 const MAPS_AUTO_FOCUS_ALARM = "timdiemban_maps_focus";
 const mapsCellWorkTokens = new Set();
+const quickEnrichWorkTokens = new Set();
 let activeMapsCellListToken = null;
 const mapsRescanWorkTokens = new Set();
 const operationTransitionTokens = new Set();
 let mapsContentWakeTimer = null;
 let mapsContentWakeTickBusy = false;
 let mapsTabLossBusy = false;
+let quickEnrichTabLossBusy = false;
+let mapsTabRecoveryQueue = Promise.resolve();
 let enrichRunPromise = null;
+let quickEnrichRunPromise = null;
 let enrichWatchdogBusy = false;
+let quickEnrichWatchdogBusy = false;
 let systemKeepAwakeRequested = false;
 let scrapeCheckpointQueue = Promise.resolve();
 let rescanCheckpointQueue = Promise.resolve();
+let mergedPlaceLookupIndex = null;
 
 function beginOperationTransition(label) {
   const token = Symbol(label || "operation-transition");
@@ -116,6 +132,9 @@ function claimOperationStart(kind) {
   }
   if (scrapeState.running) {
     throw new Error("Một lượt tìm kiếm đang chạy. Hãy dừng hoặc đợi lượt hiện tại hoàn tất.");
+  }
+  if (scrapeState.paused && kind !== "resume-search") {
+    throw new Error("Một lượt tìm kiếm đang tạm dừng. Hãy tiếp tục hoặc dừng hẳn lượt đó trước.");
   }
   if (rescanState.running) {
     throw new Error("Đang quét lại dữ liệu. Hãy đợi lượt hiện tại hoàn tất.");
@@ -135,6 +154,8 @@ const MAPS_STALL_FOCUS_MS = 5 * 60 * 1000;
 const MAPS_SOFT_RECOVERY_INTERVAL_MS = 60 * 1000;
 const CELL_LIST_STALL_RETRY_MS = 5 * 60 * 1000;
 const CELL_LIST_SCROLL_GROWTH_PX = 8;
+const QUICK_SCAN_QUEUE_LIMIT = 180;
+const MERGED_PLACE_NEAR_DUPLICATE_CANDIDATE_LIMIT = 32;
 
 const SCRAPE_CHECKPOINT_KEY = "scrapeCheckpoint";
 const RESCAN_CHECKPOINT_KEY = "rescanCheckpoint";
@@ -274,6 +295,7 @@ function releaseSystemKeepAwakeIfIdle({ force = false } = {}) {
 }
 
 function pingMapsTabWake(tabId) {
+  if (!Number.isInteger(tabId)) return;
   chrome.scripting
     .executeScript({
       target: { tabId },
@@ -294,22 +316,30 @@ function startMapsContentWakePulse() {
   const tick = async () => {
     if (mapsContentWakeTickBusy) return;
     const hasCellWork = mapsCellWorkTokens.size > 0;
+    const hasQuickEnrichWork =
+      typeof quickEnrichWorkTokens !== "undefined" && quickEnrichWorkTokens.size > 0;
     const hasRescanWork = mapsRescanWorkTokens.size > 0;
-    if (!hasCellWork && !hasRescanWork) {
+    if (!hasCellWork && !hasQuickEnrichWork && !hasRescanWork) {
       stopMapsContentWakePulse();
       return;
     }
-    const tabId =
-      hasCellWork && scrapeState.mapsTabId
-        ? scrapeState.mapsTabId
+    const tabIds = hasCellWork
+      ? [scrapeState.mapsTabId, scrapeState?.quickScan ? scrapeState.enrichTabId : null]
+          .filter(Number.isInteger)
+      : hasQuickEnrichWork && scrapeState.enrichTabId
+        ? [scrapeState.enrichTabId]
         : hasRescanWork && rescanState.mapsTabId
-          ? rescanState.mapsTabId
-          : null;
+          ? [rescanState.mapsTabId]
+          : [];
     // Giữ timer khi tab đang được mở lại; tick sau sẽ tự dùng tab mới.
-    if (!tabId) return;
+    if (!tabIds.length) return;
     mapsContentWakeTickBusy = true;
     try {
-      await chrome.tabs.sendMessage(tabId, { action: "KEEPALIVE_TICK" });
+      await Promise.all(
+        tabIds.map((tabId) =>
+          chrome.tabs.sendMessage(tabId, { action: "KEEPALIVE_TICK" }).catch(() => null)
+        )
+      );
     } catch {
     } finally {
       mapsContentWakeTickBusy = false;
@@ -334,6 +364,7 @@ function clearMapsCellListWorkTokens() {
 
 function clearMapsCellWorkTokens() {
   mapsCellWorkTokens.clear();
+  if (typeof quickEnrichWorkTokens !== "undefined") quickEnrichWorkTokens.clear();
   scrapeState._mapsCellWorkActive = false;
   clearMapsCellListWorkTokens();
   if (mapsRescanWorkTokens.size === 0) stopMapsContentWakePulse();
@@ -341,7 +372,12 @@ function clearMapsCellWorkTokens() {
 
 function clearMapsRescanWorkTokens() {
   mapsRescanWorkTokens.clear();
-  if (mapsCellWorkTokens.size === 0) stopMapsContentWakePulse();
+  if (
+    mapsCellWorkTokens.size === 0 &&
+    (typeof quickEnrichWorkTokens === "undefined" || quickEnrichWorkTokens.size === 0)
+  ) {
+    stopMapsContentWakePulse();
+  }
 }
 
 function isValidWindowId(windowId) {
@@ -590,6 +626,13 @@ async function focusMapsTabAfterFailure(tabId, reason) {
   if (tabId === scrapeState.mapsTabId) {
     return focusMapsTabForRecovery(reason, { force: true });
   }
+  if (tabId === scrapeState.enrichTabId) {
+    try {
+      return await focusTabForRecovery(tabId);
+    } catch {
+      return false;
+    }
+  }
   if (tabId === rescanState.mapsTabId) {
     return focusRescanTabForRecovery(reason, { force: true });
   }
@@ -611,6 +654,22 @@ async function maybeFocusRescanTabForStall() {
 async function maybeFocusMapsTabAfterStall(tabId) {
   if (tabId === rescanState.mapsTabId) return maybeFocusRescanTabForStall();
   if (tabId === scrapeState.mapsTabId) return maybeFocusMapsTabForStall();
+  if (tabId === scrapeState.enrichTabId) {
+    const activityAt = Number(scrapeState._enrichActivityAt || 0);
+    if (
+      !shouldFocusMapsForRecovery({
+        running: scrapeState.running,
+        enabled: isMapsAutoFocusEnabled(),
+        tabId,
+        lastDataAt: activityAt,
+        lastRecoveryFocusDataAt: scrapeState._lastEnrichRecoveryFocusDataAt
+      })
+    ) {
+      return false;
+    }
+    scrapeState._lastEnrichRecoveryFocusDataAt = activityAt;
+    return focusTabForRecovery(tabId).catch(() => false);
+  }
   return false;
 }
 
@@ -639,6 +698,15 @@ async function openMapsScrapeTab(url) {
   return tab;
 }
 
+async function openQuickEnrichTab(url) {
+  const preferredWindowId =
+    scrapeState.mapsWindowId || (await getTabWindowId(scrapeState.webTabId));
+  const tab = await createMapsTab(url, preferredWindowId, { active: false });
+  scrapeState.enrichTabId = tab.id;
+  scrapeState.enrichWindowId = tab.windowId;
+  return tab;
+}
+
 async function scrapeKeepAliveTick() {
   if (!scrapeState.running) {
     stopScrapeKeepAlive();
@@ -659,12 +727,21 @@ async function scrapeKeepAliveTick() {
     await maybeFocusMapsTabForStall();
   }
 
+  if (
+    (scrapeState.quickScan === true || scrapeState.searchParams?.quickScan === true) &&
+    scrapeState.enrichTabId
+  ) {
+    await chrome.tabs
+      .update(scrapeState.enrichTabId, { autoDiscardable: false })
+      .catch(() => {});
+    pingMapsTabWake(scrapeState.enrichTabId);
+  }
+
   if (scrapeState.webTabId) {
     try {
       await chrome.tabs.update(scrapeState.webTabId, { autoDiscardable: false });
     } catch {}
   }
-
   webPushTick += 1;
   const mergedCount = getFinalResultsList().length;
   const now = Date.now();
@@ -725,7 +802,7 @@ async function clearDurableWorkAlarmIfIdle() {
       getPendingComplete()
     ]);
     if (
-      DurableLifecycle.isRecoverableScrapeCheckpoint(scrapeCheckpoint) ||
+      DurableLifecycle.shouldAutoResumeScrapeCheckpoint(scrapeCheckpoint) ||
       DurableLifecycle.isRecoverableRescanCheckpoint(rescanCheckpoint) ||
       isValidPendingComplete(pendingComplete)
     ) {
@@ -1349,6 +1426,9 @@ async function flushPendingComplete(reason = "service_wake") {
   if (checkpoint?.mapsTabId) {
     await chrome.tabs.remove(checkpoint.mapsTabId).catch(() => {});
   }
+  if (checkpoint?.enrichTabId && checkpoint.enrichTabId !== checkpoint.mapsTabId) {
+    await chrome.tabs.remove(checkpoint.enrichTabId).catch(() => {});
+  }
 
   const delivered = await sendToWebPage(
     payload.searchParams.webUrl,
@@ -1587,17 +1667,9 @@ function notifyPopup(error) {
   chrome.runtime.sendMessage({ action: "SEARCH_ERROR", error }).catch(() => {});
 }
 
-/**
- * Log chẩn đoán từ background — đi cùng luồng với SCRAPE_LOG của content.js
- * nên hiện ở cả Console, popup và trang kết quả.
- */
 function bgLog(line) {
   const text = `[BG] ${line}`;
   console.log("TimDiemBan:", text);
-  chrome.runtime.sendMessage({ action: "SEARCH_LOG", line: text }).catch(() => {});
-  if (currentSearch?.webUrl) {
-    sendToWebPage(currentSearch.webUrl, "log", { line: text }).catch(() => {});
-  }
 }
 
 function notifyProgress(percent, text, extra = {}) {
@@ -1623,14 +1695,28 @@ async function waitForMapsTabReady(timeoutMs = 30000) {
     if (scrapeState.mapsTabId) {
       try {
         const tab = await chrome.tabs.get(scrapeState.mapsTabId);
-        if (tab?.status === "complete") return true;
+        if (tab?.status === "complete") {
+          const quickScan =
+            scrapeState.quickScan === true || scrapeState.searchParams?.quickScan === true;
+          if (!quickScan) return true;
+          if (!scrapeState.enrichTabId) {
+            await sleep(250);
+            continue;
+          }
+          const enrichTab = await chrome.tabs.get(scrapeState.enrichTabId);
+          if (enrichTab?.status === "complete") return true;
+        }
       } catch {
         return false;
       }
     }
     await sleep(250);
   }
-  return Boolean(scrapeState.mapsTabId);
+  return Boolean(
+    scrapeState.mapsTabId &&
+      (!(scrapeState.quickScan === true || scrapeState.searchParams?.quickScan === true) ||
+        scrapeState.enrichTabId)
+  );
 }
 
 function mergePlaces(newPlaces) {
@@ -1739,6 +1825,229 @@ function clearCellListProgress(cellIndex) {
   if (scrapeState._cellListProgress) delete scrapeState._cellListProgress[cellIndex];
 }
 
+function getMergedPlaceCanonicalId(place) {
+  return String(
+    place?.googlePlaceId || getCanonicalPlaceId(place?.mapsUrl || place?.href || "") || ""
+  ).toLowerCase();
+}
+
+function addMergedPlaceLookupBucket(bucketMap, value, record) {
+  if (!value) return;
+  let bucket = bucketMap.get(value);
+  if (!bucket) {
+    bucket = new Set();
+    bucketMap.set(value, bucket);
+  }
+  bucket.add(record);
+}
+
+function removeMergedPlaceLookupBucket(bucketMap, value, record) {
+  if (!value) return;
+  const bucket = bucketMap.get(value);
+  if (!bucket) return;
+  bucket.delete(record);
+  if (!bucket.size) bucketMap.delete(value);
+}
+
+function indexMergedPlaceRecord(key, record) {
+  if (!mergedPlaceLookupIndex || !record) return;
+  const metadata = {
+    key,
+    canonicalId: getMergedPlaceCanonicalId(record),
+    phone: normalizePhone(record.phone),
+    name: normalizeName(record.name),
+    address: normalizeAddress(record.address)
+  };
+  mergedPlaceLookupIndex.metadataByRecord.set(record, metadata);
+  addMergedPlaceLookupBucket(
+    mergedPlaceLookupIndex.byCanonicalId,
+    metadata.canonicalId,
+    record
+  );
+  if (metadata.phone.length >= 9) {
+    addMergedPlaceLookupBucket(mergedPlaceLookupIndex.byPhone, metadata.phone, record);
+    if (metadata.name) {
+      addMergedPlaceLookupBucket(
+        mergedPlaceLookupIndex.byNamePhone,
+        `${metadata.name}|${metadata.phone}`,
+        record
+      );
+    }
+  }
+  addMergedPlaceLookupBucket(mergedPlaceLookupIndex.byName, metadata.name, record);
+  if (metadata.name && metadata.address.length > 10) {
+    addMergedPlaceLookupBucket(
+      mergedPlaceLookupIndex.byNameAddress,
+      `${metadata.name}|${metadata.address}`,
+      record
+    );
+  }
+}
+
+function unindexMergedPlaceRecord(record) {
+  const index = mergedPlaceLookupIndex;
+  const metadata = index?.metadataByRecord.get(record);
+  if (!metadata) return;
+  removeMergedPlaceLookupBucket(index.byCanonicalId, metadata.canonicalId, record);
+  removeMergedPlaceLookupBucket(index.byPhone, metadata.phone, record);
+  removeMergedPlaceLookupBucket(
+    index.byNamePhone,
+    metadata.name && metadata.phone.length >= 9 ? `${metadata.name}|${metadata.phone}` : "",
+    record
+  );
+  removeMergedPlaceLookupBucket(index.byName, metadata.name, record);
+  removeMergedPlaceLookupBucket(
+    index.byNameAddress,
+    metadata.name && metadata.address.length > 10
+      ? `${metadata.name}|${metadata.address}`
+      : "",
+    record
+  );
+  index.metadataByRecord.delete(record);
+}
+
+function rebuildMergedPlaceLookupIndex() {
+  mergedPlaceLookupIndex = {
+    source: scrapeState.mergedPlaces,
+    indexedSize: 0,
+    byCanonicalId: new Map(),
+    byPhone: new Map(),
+    byName: new Map(),
+    byNamePhone: new Map(),
+    byNameAddress: new Map(),
+    metadataByRecord: new WeakMap()
+  };
+  for (const [key, record] of scrapeState.mergedPlaces.entries()) {
+    indexMergedPlaceRecord(key, record);
+  }
+  mergedPlaceLookupIndex.indexedSize = scrapeState.mergedPlaces.size;
+  return mergedPlaceLookupIndex;
+}
+
+function ensureMergedPlaceLookupIndex() {
+  if (
+    !mergedPlaceLookupIndex ||
+    mergedPlaceLookupIndex.source !== scrapeState.mergedPlaces ||
+    mergedPlaceLookupIndex.indexedSize !== scrapeState.mergedPlaces.size
+  ) {
+    return rebuildMergedPlaceLookupIndex();
+  }
+  return mergedPlaceLookupIndex;
+}
+
+function syncMergedPlaceLookupSize() {
+  if (mergedPlaceLookupIndex?.source === scrapeState.mergedPlaces) {
+    mergedPlaceLookupIndex.indexedSize = scrapeState.mergedPlaces.size;
+  }
+}
+
+function addRankedMergedPlaceCandidate(candidates, candidate) {
+  candidates.push(candidate);
+  candidates.sort((a, b) => a.rank - b.rank);
+  if (candidates.length > MERGED_PLACE_NEAR_DUPLICATE_CANDIDATE_LIMIT) {
+    candidates.pop();
+  }
+}
+
+function findMergedPlaceEntry(place, excludeRecord = null) {
+  const index = ensureMergedPlaceLookupIndex();
+  const directKey = getDedupeKey(place);
+  const directRecord = scrapeState.mergedPlaces.get(directKey);
+  if (directRecord && directRecord !== excludeRecord) {
+    return { key: directKey, record: directRecord };
+  }
+
+  const canonicalId = getMergedPlaceCanonicalId(place);
+  const phone = normalizePhone(place?.phone);
+  const name = normalizeName(place?.name);
+  const address = normalizeAddress(place?.address);
+  const coords = resolvePlaceCoords(place || {});
+  const candidateRecords = new Set();
+  const candidates = [];
+
+  const appendBucket = (bucket) => {
+    if (!bucket) return;
+    for (const record of bucket) {
+      if (candidateRecords.size >= MERGED_PLACE_NEAR_DUPLICATE_CANDIDATE_LIMIT) break;
+      if (!record || record === excludeRecord) continue;
+      candidateRecords.add(record);
+    }
+  };
+  appendBucket(index.byCanonicalId.get(canonicalId));
+  if (name && phone.length >= 9) {
+    appendBucket(index.byNamePhone.get(`${name}|${phone}`));
+  }
+  if (name && address.length > 10) {
+    appendBucket(index.byNameAddress.get(`${name}|${address}`));
+  }
+  if (phone.length >= 9) appendBucket(index.byPhone.get(phone));
+  appendBucket(index.byName.get(name));
+
+  for (const record of candidateRecords) {
+    const metadata = index.metadataByRecord.get(record) || {};
+    const key = metadata.key || getDedupeKey(record);
+
+    const recordKey = getDedupeKey(record);
+    if (recordKey === directKey) return { key, record };
+
+    const recordCanonicalId = metadata.canonicalId || getMergedPlaceCanonicalId(record);
+    if (canonicalId && recordCanonicalId === canonicalId) return { key, record };
+
+    const recordPhone = metadata.phone || normalizePhone(record.phone);
+    const recordName = metadata.name || normalizeName(record.name);
+    const samePhone = phone.length >= 9 && phone === recordPhone;
+    const sameName = Boolean(name && name === recordName);
+    if (!samePhone && !sameName) continue;
+
+    let rank = samePhone && sameName ? 4 : samePhone ? 12 : 20;
+    if (sameName && address.length > 10 && address === normalizeAddress(record.address)) {
+      rank = 1;
+    }
+
+    const recordCoords = coords ? resolvePlaceCoords(record) : null;
+    if (coords && recordCoords) {
+      const distanceKm = haversineKm(coords.lat, coords.lng, recordCoords.lat, recordCoords.lng);
+      if (samePhone && distanceKm < 0.12) rank = Math.min(rank, 2 + distanceKm);
+      if (sameName && distanceKm < 0.25) rank = Math.min(rank, 3 + distanceKm);
+    }
+
+    addRankedMergedPlaceCandidate(candidates, { key, record, rank });
+  }
+
+  return candidates.find(({ record }) => isNearDuplicate(record, place)) || null;
+}
+
+function storeMergedPlaceRecord(entry) {
+  const { key: previousKey = "" } = entry;
+  let { record } = entry;
+  unindexMergedPlaceRecord(record);
+  if (previousKey && scrapeState.mergedPlaces.get(previousKey) === record) {
+    scrapeState.mergedPlaces.delete(previousKey);
+  }
+
+  // Chỉ xử lý va chạm khóa phát sinh từ record vừa merge, không rebuild toàn bộ Map.
+  for (let pass = 0; pass < 3; pass++) {
+    const key = getDedupeKey(record);
+    const collision = scrapeState.mergedPlaces.get(key);
+    if (!collision || collision === record) {
+      scrapeState.mergedPlaces.set(key, record);
+      indexMergedPlaceRecord(key, record);
+      syncMergedPlaceLookupSize();
+      return { key, record };
+    }
+    unindexMergedPlaceRecord(collision);
+    scrapeState.mergedPlaces.delete(key);
+    mergePlaceRecord(collision, record);
+    record = collision;
+  }
+
+  const key = getDedupeKey(record);
+  scrapeState.mergedPlaces.set(key, record);
+  indexMergedPlaceRecord(key, record);
+  syncMergedPlaceLookupSize();
+  return { key, record };
+}
+
 function upsertMergedPlace(place) {
   const params = scrapeState.searchParams;
   if (!params || !place || !isValidPlaceName(place.name)) return null;
@@ -1746,31 +2055,41 @@ function upsertMergedPlace(place) {
   const mapLat = cell.lat ?? params.lat;
   const mapLng = cell.lng ?? params.lng;
 
-  const existingList = Array.from(scrapeState.mergedPlaces.values());
-  let record = existingList.find((e) => isNearDuplicate(e, place));
+  let match = findMergedPlaceEntry(place);
+  let record = match?.record || null;
 
   if (record) {
     mergePlaceRecord(record, place);
   } else {
-    let sanitized =
+    const sanitized =
       sanitizePlace(place, params.lat, params.lng, params.radius, mapLat, mapLng) ||
       sanitizeFromList(place, params.lat, params.lng, params.radius, mapLat, mapLng, true);
     record = sanitized || { ...place };
-    existingList.push(record);
+    match = findMergedPlaceEntry(record);
+    if (match) {
+      mergePlaceRecord(match.record, record);
+      record = match.record;
+    }
   }
 
-  const deduped = dedupePlaces(existingList);
-  scrapeState.mergedPlaces = placesToMap(deduped);
-  return (
-    scrapeState.mergedPlaces.get(getDedupeKey(record)) ||
-    [...scrapeState.mergedPlaces.values()].find((e) => isNearDuplicate(e, record)) ||
-    record
-  );
+  const shouldRecheckNearDuplicate = Boolean(match && match.key !== getDedupeKey(record));
+  let stored = storeMergedPlaceRecord({ key: match?.key || "", record });
+  if (shouldRecheckNearDuplicate) {
+    for (let pass = 0; pass < 2; pass++) {
+      const duplicate = findMergedPlaceEntry(stored.record, stored.record);
+      if (!duplicate) break;
+      unindexMergedPlaceRecord(stored.record);
+      scrapeState.mergedPlaces.delete(stored.key);
+      mergePlaceRecord(duplicate.record, stored.record);
+      stored = storeMergedPlaceRecord(duplicate);
+    }
+  }
+  return stored.record;
 }
 
 async function persistScrapeCheckpoint({ forceRecoverable = false } = {}) {
   if (!scrapeState.searchParams) return;
-  const running = scrapeState.running || scrapeState.mergedPlaces.size > 0;
+  const running = scrapeState.running || scrapeState.paused || scrapeState.mergedPlaces.size > 0;
   if (!running) return;
   const durableSearchParams = toDurableSearchParams(scrapeState.searchParams);
   const now = Date.now();
@@ -1779,13 +2098,18 @@ async function persistScrapeCheckpoint({ forceRecoverable = false } = {}) {
   const checkpoint = {
     version: DurableLifecycle.CHECKPOINT_VERSION,
     cellFlowVersion: CELL_FLOW_VERSION,
-    running: forceRecoverable || completionPending || scrapeState.running,
+    running: forceRecoverable || completionPending || scrapeState.running || scrapeState.paused,
+    paused: scrapeState.paused === true,
+    pausedAt: Number(scrapeState.pausedAt || 0),
+    pauseReason: String(scrapeState.pauseReason || ""),
+    resumeRequestedAt: Number(scrapeState.resumeRequestedAt || 0),
     runId: scrapeState.runId,
     cellGeneration: scrapeState.cellGeneration,
     lastHeartbeat: now,
     savedAt: now,
     lastProgressAt: lastScrapeProgressAt || now,
     lastRecoveryFocusDataAt: Number(scrapeState._lastRecoveryFocusDataAt || 0),
+    lastEnrichRecoveryFocusDataAt: Number(scrapeState._lastEnrichRecoveryFocusDataAt || 0),
     gridIndex: scrapeState.gridIndex,
     totalCells: scrapeState.totalCells,
     completedCells: [...scrapeState.completedCells],
@@ -1797,6 +2121,8 @@ async function persistScrapeCheckpoint({ forceRecoverable = false } = {}) {
     enrichActivityAt: Number(scrapeState._enrichActivityAt || 0),
     enrichGeneration: Number(scrapeState._enrichGeneration || 0),
     phase: scrapeState.phase,
+    quickScan: scrapeState.quickScan === true || scrapeState.searchParams?.quickScan === true,
+    quickProducerDone: scrapeState.quickProducerDone === true,
     searchParams: durableSearchParams,
     cellSizeKm: scrapeState.cellSizeKm,
     viewportM: scrapeState.viewportM,
@@ -1816,7 +2142,10 @@ async function persistScrapeCheckpoint({ forceRecoverable = false } = {}) {
     mapsUserReloadCount: Number(scrapeState._mapsUserReloadCount || 0),
     webTabId: scrapeState.webTabId,
     mapsTabId: scrapeState.mapsTabId,
-    mapsWindowId: scrapeState.mapsWindowId
+    mapsWindowId: scrapeState.mapsWindowId,
+    enrichTabId: scrapeState.enrichTabId,
+    enrichWindowId: scrapeState.enrichWindowId,
+    enrichMapsReopenCount: Number(scrapeState._enrichMapsReopenCount || 0)
   };
 
   return enqueueCheckpointMutation("scrape", async () => {
@@ -1838,17 +2167,25 @@ function restoreScrapeStateFromCheckpoint(cp) {
   const hasPerCellEnrich = Number(cp.cellFlowVersion || 0) >= PER_CELL_ENRICH_FLOW_VERSION;
   const hasChunkedCellList = Number(cp.cellFlowVersion || 0) >= CELL_FLOW_VERSION;
   scrapeState.searchParams = cp.searchParams;
+  scrapeState.paused = cp.paused === true;
+  scrapeState.pausedAt = Number(cp.pausedAt || 0);
+  scrapeState.pauseReason = String(cp.pauseReason || "");
+  scrapeState.resumeRequestedAt = Number(cp.resumeRequestedAt || 0);
   scrapeState.runId = String(cp.runId || cp.searchParams.searchId || "");
   scrapeState.cellGeneration = Number(cp.cellGeneration || 0);
   scrapeState.webTabId = cp.webTabId ?? null;
   scrapeState.mapsTabId = cp.mapsTabId ?? null;
   scrapeState.mapsWindowId = cp.mapsWindowId ?? null;
+  scrapeState.enrichTabId = cp.enrichTabId ?? null;
+  scrapeState.enrichWindowId = cp.enrichWindowId ?? null;
   scrapeState.gridPoints = cp.gridPoints || [];
   scrapeState.gridIndex = hasPerCellEnrich ? cp.gridIndex || 0 : 0;
   scrapeState.totalCells = cp.totalCells || 0;
   scrapeState.cellSizeKm = cp.cellSizeKm;
   scrapeState.viewportM = cp.viewportM;
   scrapeState.phase = hasPerCellEnrich ? cp.phase || "grid" : "grid";
+  scrapeState.quickScan = cp.quickScan === true || cp.searchParams?.quickScan === true;
+  scrapeState.quickProducerDone = scrapeState.quickScan && cp.quickProducerDone === true;
   scrapeState.completedCells = new Set(hasPerCellEnrich ? cp.completedCells || [] : []);
   scrapeState.enrichedPlaceKeys = new Set(hasPerCellEnrich ? cp.enrichedPlaceKeys || [] : []);
   scrapeState.failedEnrichKeys = new Set(hasPerCellEnrich ? cp.failedEnrichKeys || [] : []);
@@ -1907,6 +2244,7 @@ function restoreScrapeStateFromCheckpoint(cp) {
   scrapeState._mapsListWarningKey = "";
   scrapeState._mapsReopenCount = Number(cp.mapsReopenCount || 0);
   scrapeState._mapsUserReloadCount = Number(cp.mapsUserReloadCount || 0);
+  scrapeState._enrichMapsReopenCount = Number(cp.enrichMapsReopenCount || 0);
   scrapeState._activeEnrichOpId = "";
   scrapeState._enrichActivityAt = Number(cp.enrichActivityAt || cp.lastProgressAt || 0);
   scrapeState._enrichGeneration = Number(cp.enrichGeneration || 0) + 1;
@@ -1914,6 +2252,7 @@ function restoreScrapeStateFromCheckpoint(cp) {
   currentSearch = { ...cp.searchParams, gridCells: cp.totalCells };
   lastScrapeProgressAt = cp.lastProgressAt || cp.lastHeartbeat || Date.now();
   scrapeState._lastRecoveryFocusDataAt = Number(cp.lastRecoveryFocusDataAt || 0);
+  scrapeState._lastEnrichRecoveryFocusDataAt = Number(cp.lastEnrichRecoveryFocusDataAt || 0);
   return true;
 }
 
@@ -2027,8 +2366,84 @@ async function recoverStalledEnrich(idleMs) {
   }
 }
 
+async function recoverStalledQuickEnrich(idleMs) {
+  if (
+    !scrapeState.running ||
+    !(scrapeState.quickScan === true || scrapeState.searchParams?.quickScan === true) ||
+    !scrapeState.enrichTabId ||
+    getQuickPendingEnrichPlaces().length === 0 ||
+    quickEnrichWatchdogBusy
+  ) {
+    return false;
+  }
+
+  quickEnrichWatchdogBusy = true;
+  const observedRunId = scrapeState.runId;
+  const observedTabId = scrapeState.enrichTabId;
+  const observedGeneration = Number(scrapeState._enrichGeneration || 0);
+  const observedActivityAt = Number(scrapeState._enrichActivityAt || 0);
+  const staleTask = quickEnrichRunPromise;
+  const stillOwnsObservedQuickEnrich = () =>
+    scrapeState.running &&
+    scrapeState.runId === observedRunId &&
+    (scrapeState.quickScan === true || scrapeState.searchParams?.quickScan === true) &&
+    scrapeState.enrichTabId === observedTabId &&
+    Number(scrapeState._enrichGeneration || 0) === observedGeneration &&
+    Number(scrapeState._enrichActivityAt || 0) <= observedActivityAt &&
+    quickEnrichRunPromise === staleTask;
+  try {
+    await maybeFocusMapsTabAfterStall(observedTabId);
+    if (!stillOwnsObservedQuickEnrich()) return false;
+
+    const recoveryGeneration = observedGeneration + 1;
+    scrapeState._enrichGeneration = recoveryGeneration;
+    scrapeState._enrichActivityAt = Date.now();
+    await persistScrapeCheckpoint();
+    const stillOwnsQuickRecovery = () =>
+      scrapeState.running &&
+      scrapeState.runId === observedRunId &&
+      (scrapeState.quickScan === true || scrapeState.searchParams?.quickScan === true) &&
+      scrapeState.enrichTabId === observedTabId &&
+      Number(scrapeState._enrichGeneration || 0) === recoveryGeneration &&
+      (quickEnrichRunPromise === staleTask || quickEnrichRunPromise === null);
+    if (!stillOwnsQuickRecovery()) return false;
+    bgLog(`QUICK ENRICH WATCHDOG kích hoạt · idle ${Math.round(idleMs / 1000)}s`);
+    const cancellation = await cancelQuickEnrichOperation(observedTabId, { timeoutMs: 5000 });
+    if (!stillOwnsQuickRecovery()) return false;
+    if (!cancellation.reloaded) {
+      await reloadMapsAfterUnsettledEnrich(observedTabId);
+    }
+    if (!stillOwnsQuickRecovery()) return false;
+    if (quickEnrichRunPromise === staleTask) quickEnrichRunPromise = null;
+    scrapeState._activeEnrichOpId = "";
+    scrapeState._enrichActivityAt = Date.now();
+    await persistScrapeCheckpoint();
+    if (!stillOwnsQuickRecovery()) return false;
+    runQuickEnrichPhase().catch(async (err) => {
+      if (scrapeState.running && !pointsFinalized) {
+        await abortSearch("QUICK_ENRICH_RECOVER_FAILED", err?.message || String(err), {
+          chargePartial: true
+        });
+      }
+    });
+    return true;
+  } finally {
+    quickEnrichWatchdogBusy = false;
+  }
+}
+
 async function maybeRecoverStalledScrape() {
   if (!scrapeState.running || isAborting || stallRecoveryBusy) return;
+  if (
+    (scrapeState.quickScan === true || scrapeState.searchParams?.quickScan === true) &&
+    getQuickPendingEnrichPlaces().length > 0
+  ) {
+    const enrichIdleMs = Date.now() - Number(scrapeState._enrichActivityAt || Date.now());
+    if (enrichIdleMs >= MAPS_STALL_FOCUS_MS) {
+      const recovered = await recoverStalledQuickEnrich(enrichIdleMs);
+      if (recovered) return;
+    }
+  }
   const activityAt =
     scrapeState.phase === "enrich"
       ? scrapeState._enrichActivityAt || lastScrapeProgressAt
@@ -2090,9 +2505,26 @@ async function maybeRecoverStalledScrape() {
   }
 }
 
-async function tryResumeFromCheckpoint({ allowReopen = false } = {}) {
+async function parkSearchAfterResumeFailure(reason) {
+  scrapeState.running = false;
+  scrapeState.paused = true;
+  scrapeState.pausedAt = Date.now();
+  scrapeState.pauseReason = String(
+    reason || "Chưa thể khôi phục Google Maps. Tiến độ vẫn được giữ để thử tiếp sau."
+  );
+  scrapeState.resumeRequestedAt = 0;
+  stopScrapeKeepAlive();
+  releaseSystemKeepAwakeIfIdle({ force: true });
+  await persistScrapeCheckpoint({ forceRecoverable: true });
+  await clearDurableWorkAlarmIfIdle();
+  const status = await getSearchStatus();
+  await pushSearchStatusToWeb(status);
+}
+
+async function tryResumeFromCheckpoint({ allowReopen = false, allowPaused = false } = {}) {
   const cp = await getScrapeCheckpoint();
   if (!DurableLifecycle.isRecoverableScrapeCheckpoint(cp) || scrapeState.running) return false;
+  if (cp.paused === true && !allowPaused) return false;
 
   restoreScrapeStateFromCheckpoint(cp);
 
@@ -2104,7 +2536,12 @@ async function tryResumeFromCheckpoint({ allowReopen = false } = {}) {
     return flushed.delivered;
   }
 
+  scrapeState.paused = false;
+  scrapeState.pausedAt = 0;
+  scrapeState.pauseReason = "";
+  scrapeState.resumeRequestedAt = Date.now();
   scrapeState.running = true;
+  await persistScrapeCheckpoint({ forceRecoverable: true });
   requestSystemKeepAwake();
   startScrapeKeepAlive();
 
@@ -2125,32 +2562,74 @@ async function tryResumeFromCheckpoint({ allowReopen = false } = {}) {
       try {
         reopened = await reopenMapsTabForSearch();
       } catch (err) {
-        scrapeState.running = false;
-        stopScrapeKeepAlive();
-        releaseSystemKeepAwake({ force: true });
-        await ensureDurableWorkAlarm();
+        await parkSearchAfterResumeFailure(
+          `Chưa mở lại được Google Maps: ${err?.message || "không rõ lỗi"}`
+        );
         throw err;
       }
       if (reopened) return true;
     }
-    scrapeState.running = false;
-    stopScrapeKeepAlive();
-    releaseSystemKeepAwake({ force: true });
-    await ensureDurableWorkAlarm();
+    await parkSearchAfterResumeFailure(
+      "Chưa mở lại được tab Google Maps. Tiến độ vẫn được giữ để bạn thử tiếp."
+    );
     return false;
   }
 
   const next = nextPendingCellFromScrapeState();
+  if (scrapeState.quickScan === true || scrapeState.searchParams?.quickScan === true) {
+    let enrichAlive = false;
+    if (scrapeState.enrichTabId) {
+      try {
+        await chrome.tabs.get(scrapeState.enrichTabId);
+        enrichAlive = true;
+      } catch {
+        scrapeState.enrichTabId = null;
+        scrapeState.enrichWindowId = null;
+      }
+    }
+    if (!enrichAlive) {
+      const canReopen = allowReopen || isMapsAutoReopenEnabled(scrapeState.searchParams);
+      if (!canReopen || !(await ensureQuickEnrichTab())) {
+        await parkSearchAfterResumeFailure(
+          "Chưa mở lại được tab Google Maps đọc chi tiết. Tiến độ vẫn được giữ."
+        );
+        return false;
+      }
+    } else {
+      // Tách thao tác DOM cũ khỏi worker mới trước khi khôi phục hàng đợi URL.
+      await reloadMapsAfterUnsettledEnrich(scrapeState.enrichTabId);
+    }
+
+    scrapeState.quickProducerDone = scrapeState.quickProducerDone || next >= scrapeState.totalCells;
+    if (scrapeState.quickProducerDone) scrapeState.phase = "enrich";
+    await persistScrapeCheckpoint();
+    runQuickEnrichPhase().catch(async (err) => {
+      if (scrapeState.running && !pointsFinalized) {
+        await abortSearch("QUICK_ENRICH_RECOVER_FAILED", err?.message || String(err), {
+          chargePartial: true
+        });
+      }
+    });
+    if (!scrapeState.quickProducerDone) {
+      scrapeState.gridIndex = next;
+      runGridCell(next).catch(async (err) => {
+        if (scrapeState.running || scrapeState.mergedPlaces.size > 0) {
+          await abortSearch("RECOVER_FAILED", err?.message || String(err));
+        }
+      });
+    }
+    return true;
+  }
+
   if (scrapeState.phase === "enrich") {
     // Service worker có thể ngủ trong khi content script cũ vẫn thao tác DOM.
     // Reload là isolation barrier trước khi tiếp tục hàng đợi URL từ checkpoint.
     try {
       await reloadMapsAfterUnsettledEnrich(scrapeState.mapsTabId);
     } catch (err) {
-      scrapeState.running = false;
-      stopScrapeKeepAlive();
-      releaseSystemKeepAwake({ force: true });
-      await ensureDurableWorkAlarm();
+      await parkSearchAfterResumeFailure(
+        `Chưa khôi phục được tab Google Maps đọc chi tiết: ${err?.message || "không rõ lỗi"}`
+      );
       throw err;
     }
     notifyPopup("Đã khôi phục danh sách. Findmap tiếp tục click các điểm chưa xử lý…");
@@ -2211,6 +2690,14 @@ async function finalizeFromCheckpoint(reason) {
       });
     } catch {}
   }
+  if (scrapeState.enrichTabId) {
+    await chrome.tabs
+      .sendMessage(scrapeState.enrichTabId, {
+        action: "ENRICH_ABORT",
+        data: { opId: String(scrapeState._activeEnrichOpId || "") }
+      })
+      .catch(() => {});
+  }
 
   if (scrapeState.mergedPlaces.size > 0) {
     const count = scrapeState.mergedPlaces.size;
@@ -2257,6 +2744,14 @@ async function abortSearch(code, message, { chargePartial = true } = {}) {
         await chrome.tabs.sendMessage(scrapeState.mapsTabId, { action: "SCRAPE_ABORT" });
       } catch {}
     }
+    if (scrapeState.enrichTabId) {
+      await chrome.tabs
+        .sendMessage(scrapeState.enrichTabId, {
+          action: "ENRICH_ABORT",
+          data: { opId: String(scrapeState._activeEnrichOpId || "") }
+        })
+        .catch(() => {});
+    }
 
     notifyPopup(message);
 
@@ -2291,11 +2786,89 @@ async function abortSearch(code, message, { chargePartial = true } = {}) {
 }
 
 async function cancelActiveSearch(reason) {
+  if (scrapeState.paused) {
+    return finalizeFromCheckpoint(reason || "Người dùng dừng tìm kiếm");
+  }
   if (scrapeState.running || scrapeState.searchParams) {
     await abortSearch("USER_CANCEL", reason || "Người dùng dừng tìm kiếm", { chargePartial: true });
     return { success: true };
   }
   return finalizeFromCheckpoint(reason || "Người dùng dừng tìm kiếm");
+}
+
+async function pauseActiveSearch(reason = "Người dùng tạm dừng quét") {
+  if (!scrapeState.searchParams) {
+    const cp = await getScrapeCheckpoint();
+    if (!DurableLifecycle.isRecoverableScrapeCheckpoint(cp)) {
+      return { success: false, error: "Không có lượt quét đang chạy để tạm dừng." };
+    }
+    restoreScrapeStateFromCheckpoint(cp);
+  }
+
+  if (scrapeState.paused) {
+    const status = await getSearchStatus();
+    await pushSearchStatusToWeb(status);
+    return { success: true, paused: true, status };
+  }
+  if (!scrapeState.running) {
+    return { success: false, error: "Lượt quét hiện không còn chạy." };
+  }
+
+  const listLease = getActiveCellLease();
+  const listTabId = scrapeState.mapsTabId;
+  const enrichTabId = scrapeState.quickScan ? scrapeState.enrichTabId : scrapeState.mapsTabId;
+  const enrichOpId = String(scrapeState._activeEnrichOpId || "");
+  const oldCellGeneration = Number(scrapeState.cellGeneration || 0);
+  const oldEnrichGeneration = Number(scrapeState._enrichGeneration || 0);
+  const cellIndex = Number(scrapeState.gridIndex || 0);
+
+  if (scrapeState.phase === "grid" && !scrapeState.completedCells.has(cellIndex)) {
+    scrapeState._cellContinueFlags[cellIndex] = true;
+    scrapeState._pendingGridContinuation = cellIndex;
+    if (listLease) scrapeState._cellResumeLeases[cellIndex] = listLease;
+  }
+
+  scrapeState.paused = true;
+  scrapeState.pausedAt = Date.now();
+  scrapeState.pauseReason = String(reason || "Người dùng tạm dừng quét");
+  scrapeState.resumeRequestedAt = 0;
+  scrapeState.running = false;
+  scrapeState.cellGeneration = oldCellGeneration + 1;
+  scrapeState._enrichGeneration = oldEnrichGeneration + 1;
+  enrichRunPromise = null;
+  quickEnrichRunPromise = null;
+
+  const saved = await persistScrapeCheckpoint({ forceRecoverable: true });
+  if (!saved) {
+    scrapeState.paused = false;
+    scrapeState.pausedAt = 0;
+    scrapeState.pauseReason = "";
+    scrapeState.running = true;
+    scrapeState.cellGeneration = oldCellGeneration;
+    scrapeState._enrichGeneration = oldEnrichGeneration;
+    throw new Error("Không lưu được tiến độ nên chưa thể tạm dừng an toàn.");
+  }
+
+  clearMapsCellWorkTokens();
+  stopScrapeKeepAlive();
+  releaseSystemKeepAwakeIfIdle({ force: true });
+
+  if (Number.isInteger(listTabId) && listLease) {
+    await chrome.tabs
+      .sendMessage(listTabId, { action: "SCRAPE_ABORT", data: listLease })
+      .catch(() => null);
+  }
+  if (Number.isInteger(enrichTabId) && enrichOpId) {
+    await chrome.tabs
+      .sendMessage(enrichTabId, { action: "ENRICH_ABORT", data: { opId: enrichOpId } })
+      .catch(() => null);
+  }
+  scrapeState._activeEnrichOpId = "";
+  await clearDurableWorkAlarmIfIdle();
+  notifyPopup("Đã tạm dừng quét. Tiến độ hiện tại đã được lưu.");
+  const status = await getSearchStatus();
+  await pushSearchStatusToWeb(status);
+  return { success: true, paused: true, status };
 }
 
 async function abandonActiveSearch() {
@@ -2311,6 +2884,14 @@ async function abandonActiveSearch() {
         });
       } catch {}
     }
+    if (scrapeState.enrichTabId) {
+      await chrome.tabs
+        .sendMessage(scrapeState.enrichTabId, {
+          action: "ENRICH_ABORT",
+          data: { opId: String(scrapeState._activeEnrichOpId || "") }
+        })
+        .catch(() => {});
+    }
     await closeMapsTabSafely();
     await resetScrapeState();
     return { success: true };
@@ -2321,6 +2902,9 @@ async function abandonActiveSearch() {
     try {
       await chrome.tabs.remove(cp.mapsTabId);
     } catch {}
+  }
+  if (cp?.enrichTabId && cp.enrichTabId !== cp.mapsTabId) {
+    await chrome.tabs.remove(cp.enrichTabId).catch(() => {});
   }
   await clearScrapeCheckpoint();
   try {
@@ -2335,7 +2919,7 @@ async function abandonActiveSearch() {
 }
 
 async function ensureReadyForNewSearch() {
-  if (scrapeState.running) {
+  if (scrapeState.running || scrapeState.paused) {
     throw new Error("Đang có tìm kiếm chạy. Bấm 'Dừng quét điểm bán' hoặc đợi hoàn tất.");
   }
 
@@ -2346,16 +2930,28 @@ async function ensureReadyForNewSearch() {
     );
   }
 
+  const cp = await getScrapeCheckpoint();
+  if (cp?.paused && DurableLifecycle.isRecoverableScrapeCheckpoint(cp)) {
+    throw new Error(
+      "Có một lượt quét đang tạm dừng. Hãy bấm 'Tiếp tục quét' hoặc dừng hẳn lượt đó trước khi tìm mới."
+    );
+  }
+
   // Đóng tab Maps còn sót (tránh mở nhiều tab khi tìm tuần tự nhiều từ khóa)
-  if (scrapeState.mapsTabId) {
+  if (scrapeState.mapsTabId || scrapeState.enrichTabId) {
     await closeMapsTabSafely();
   }
 
-  const cp = await getScrapeCheckpoint();
   if (cp?.mapsTabId) {
     try {
       await chrome.tabs.get(cp.mapsTabId);
       await chrome.tabs.remove(cp.mapsTabId).catch(() => {});
+    } catch {}
+  }
+  if (cp?.enrichTabId && cp.enrichTabId !== cp.mapsTabId) {
+    try {
+      await chrome.tabs.get(cp.enrichTabId);
+      await chrome.tabs.remove(cp.enrichTabId).catch(() => {});
     } catch {}
   }
 
@@ -2391,12 +2987,14 @@ async function pushSearchSyncToWeb(reason) {
 
 async function getSearchStatus() {
   const cp = await getScrapeCheckpoint();
+  const hasMemoryState = Boolean(scrapeState.searchParams);
   const running = scrapeState.running;
+  const paused = scrapeState.paused === true || cp?.paused === true;
   const checkpointRunning = !!cp?.running;
   const mergedCount =
     getFinalResultsList().length || (cp?.mergedPlaces?.length ?? 0);
   const totalCells = scrapeState.totalCells || cp?.totalCells || 0;
-  const gridIndex = scrapeState.gridIndex ?? cp?.gridIndex ?? 0;
+  const gridIndex = hasMemoryState ? scrapeState.gridIndex : cp?.gridIndex ?? 0;
   const lastBeat = cp?.lastHeartbeat || 0;
 
   // Checkpoint có mapsTabId ≠ tab còn sống — kiểm tra trước khi báo bận
@@ -2417,8 +3015,29 @@ async function getSearchStatus() {
     }
   }
 
-  const checkpointBusy = checkpointRunning && (!!liveMapsTabId || Date.now() - lastBeat < 120000);
+  let liveEnrichTabId = scrapeState.enrichTabId || null;
+  if (!liveEnrichTabId && cp?.enrichTabId) {
+    try {
+      await chrome.tabs.get(cp.enrichTabId);
+      liveEnrichTabId = cp.enrichTabId;
+    } catch {
+      liveEnrichTabId = null;
+    }
+  } else if (liveEnrichTabId) {
+    try {
+      await chrome.tabs.get(liveEnrichTabId);
+    } catch {
+      liveEnrichTabId = null;
+      scrapeState.enrichTabId = null;
+    }
+  }
+
+  const checkpointBusy =
+    !paused &&
+    checkpointRunning &&
+    (!!liveMapsTabId || !!liveEnrichTabId || Date.now() - lastBeat < 120000);
   const stalled =
+    !paused &&
     !running &&
     checkpointRunning &&
     mergedCount > 0 &&
@@ -2426,23 +3045,42 @@ async function getSearchStatus() {
 
   return {
     // Không OR checkpoint mồ côi (tab Maps đã đóng) — để chuỗi nhiều từ khóa chạy tiếp
-    running: running || checkpointBusy,
+    running: !paused && (running || checkpointBusy),
+    paused,
     stalled,
-    phase: scrapeState.phase || cp?.phase || "grid",
+    phase: hasMemoryState ? scrapeState.phase : cp?.phase || "grid",
     gridIndex,
     totalCells,
     mergedCount,
     searchId: scrapeState.searchParams?.searchId || cp?.searchParams?.searchId || null,
     mapsTabId: liveMapsTabId,
+    enrichTabId: liveEnrichTabId,
+    quickScan:
+      scrapeState.quickScan === true ||
+      scrapeState.searchParams?.quickScan === true ||
+      cp?.searchParams?.quickScan === true,
     mapsTabHiddenDuringList: Boolean(scrapeState._mapsListWarningKey),
     lastHeartbeat: lastBeat,
     lastProgressAt: lastScrapeProgressAt || cp?.lastProgressAt || lastBeat,
-    canCancel: running || checkpointBusy || mergedCount > 0,
-    canResume: !running && DurableLifecycle.isRecoverableScrapeCheckpoint(cp),
+    canCancel: running || checkpointBusy || paused || mergedCount > 0,
+    canPause: !paused && (running || checkpointBusy),
+    canResume: paused || (!running && DurableLifecycle.isRecoverableScrapeCheckpoint(cp)),
+    pausedAt: Number(scrapeState.pausedAt || cp?.pausedAt || 0),
+    pauseReason: String(scrapeState.pauseReason || cp?.pauseReason || ""),
     mapsAutoFocus: scrapeState.searchParams?.mapsAutoFocus === true || cp?.searchParams?.mapsAutoFocus === true,
     mapsAutoReopen:
       scrapeState.searchParams?.mapsAutoReopen === true || cp?.searchParams?.mapsAutoReopen === true
   };
+}
+
+async function pushSearchStatusToWeb(status = null) {
+  const webUrl = scrapeState.searchParams?.webUrl;
+  if (!webUrl) return false;
+  const payload = status || (await getSearchStatus());
+  return sendToWebPage(webUrl, "search_status", payload).catch((err) => {
+    console.warn("pushSearchStatusToWeb:", err?.message || err);
+    return false;
+  });
 }
 
 async function resetScrapeState({ preserveCheckpoint = false } = {}) {
@@ -2453,9 +3091,15 @@ async function resetScrapeState({ preserveCheckpoint = false } = {}) {
     syncDebounceTimer = null;
   }
   scrapeState.running = false;
+  scrapeState.paused = false;
+  scrapeState.pausedAt = 0;
+  scrapeState.pauseReason = "";
+  scrapeState.resumeRequestedAt = 0;
   scrapeState.runId = "";
   scrapeState.mapsTabId = null;
   scrapeState.mapsWindowId = null;
+  scrapeState.enrichTabId = null;
+  scrapeState.enrichWindowId = null;
   scrapeState.webTabId = null;
   scrapeState.searchParams = null;
   scrapeState.gridPoints = [];
@@ -2470,6 +3114,8 @@ async function resetScrapeState({ preserveCheckpoint = false } = {}) {
   scrapeState._pendingCompletion = null;
   scrapeState.enrichTotal = 0;
   scrapeState.phase = "grid";
+  scrapeState.quickScan = false;
+  scrapeState.quickProducerDone = false;
   scrapeState.cellGeneration = 0;
   scrapeState._retriedCells = new Set();
   scrapeState._cellRetryCounts = {};
@@ -2484,9 +3130,12 @@ async function resetScrapeState({ preserveCheckpoint = false } = {}) {
   scrapeState._activeEnrichOpId = "";
   scrapeState._enrichActivityAt = 0;
   scrapeState._enrichGeneration = 0;
+  scrapeState._enrichMapsReopenCount = 0;
   scrapeState._scheduledCellRetry = "";
   enrichRunPromise = null;
+  quickEnrichRunPromise = null;
   enrichWatchdogBusy = false;
+  quickEnrichWatchdogBusy = false;
   scrapeState._programmaticMapsNavUntil = 0;
   scrapeState._expectMapsNavigation = false;
   scrapeState._mapsCellListActive = false;
@@ -2496,6 +3145,7 @@ async function resetScrapeState({ preserveCheckpoint = false } = {}) {
   pointsFinalized = false;
   lastScrapeProgressAt = 0;
   scrapeState._lastRecoveryFocusDataAt = 0;
+  scrapeState._lastEnrichRecoveryFocusDataAt = 0;
   scrapeState._lastSoftRecoveryAt = 0;
   stallRecoveryBusy = false;
   mapsReloadRecoverBusy = false;
@@ -2565,6 +3215,35 @@ async function reopenMapsTabForSearch() {
     `Đã mở lại Google Maps · Tiếp tục khu vực ${idx + 1}/${scrapeState.totalCells}`
   );
 
+  if (scrapeState.quickScan === true || scrapeState.searchParams?.quickScan === true) {
+    const enrichReady = await ensureQuickEnrichTab(url);
+    if (!enrichReady) return false;
+    runQuickEnrichPhase().catch(async (err) => {
+      if ((scrapeState.running || scrapeState.mergedPlaces.size > 0) && !pointsFinalized) {
+        await abortSearch("QUICK_ENRICH_RECOVER_FAILED", err?.message || String(err), {
+          chargePartial: true
+        });
+      }
+    });
+    if (scrapeState.quickProducerDone) return true;
+
+    const resumeAt = scrapeState.completedCells.has(idx) ? idx + 1 : idx;
+    if (resumeAt >= scrapeState.totalCells) {
+      scrapeState.quickProducerDone = true;
+      scrapeState.phase = "enrich";
+      await persistScrapeCheckpoint();
+      await runQuickEnrichPhase();
+      return true;
+    }
+    scrapeState.cellGeneration = (scrapeState.cellGeneration || 0) + 1;
+    runGridCell(resumeAt).catch(async (err) => {
+      if ((scrapeState.running || scrapeState.mergedPlaces.size > 0) && !pointsFinalized) {
+        await abortSearch("RECOVER_FAILED", err?.message || String(err), { chargePartial: true });
+      }
+    });
+    return true;
+  }
+
   if (scrapeState.phase === "enrich") {
     runEnrichPhase().catch(async (err) => {
       if ((scrapeState.running || scrapeState.mergedPlaces.size > 0) && !pointsFinalized) {
@@ -2593,9 +3272,15 @@ async function reopenMapsTabForSearch() {
   return true;
 }
 
-async function handleSearchMapsTabLost() {
+function enqueueMapsTabRecovery(task) {
+  const next = mapsTabRecoveryQueue.catch(() => {}).then(task);
+  mapsTabRecoveryQueue = next.catch(() => {});
+  return next;
+}
+
+async function handleSearchMapsTabLost(closedTabId = scrapeState.mapsTabId) {
   if (mapsTabLossBusy || isAborting || !scrapeState.running) return;
-  if (scrapeState.mapsTabId == null) return;
+  if (scrapeState.mapsTabId == null || scrapeState.mapsTabId !== closedTabId) return;
 
   mapsTabLossBusy = true;
   scrapeState.mapsTabId = null;
@@ -2609,10 +3294,8 @@ async function handleSearchMapsTabLost() {
       scrapeState._mapsReopenCount = count;
       const maxReopen = getMapsAutoReopenMax();
       if (count > maxReopen) {
-        await abortSearch(
-          "MAPS_REOPEN_LIMIT",
-          `Tab Google Maps bị đóng quá nhiều lần (${maxReopen}) — lưu kết quả đã tìm.`,
-          { chargePartial: true }
+        await pauseActiveSearch(
+          `Tab Google Maps bị đóng quá nhiều lần (${maxReopen}). Tiến độ đã được lưu; bấm Tiếp tục quét để thử lại.`
         );
         return;
       }
@@ -2622,17 +3305,13 @@ async function handleSearchMapsTabLost() {
       );
       const ok = await reopenMapsTabForSearch();
       if (!ok) {
-        await abortSearch(
-          "MAPS_REOPEN_FAILED",
-          "Tab Google Maps đã bị đóng — không mở lại được. Lưu kết quả đã tìm.",
-          { chargePartial: true }
+        await pauseActiveSearch(
+          "Tab Google Maps đã bị đóng và chưa mở lại được. Tiến độ đã được lưu để bạn tiếp tục sau."
         );
       }
     } else {
-      await abortSearch(
-        "TAB_MAPS_CLOSED",
-        "Tab Google Maps đã bị đóng. Kết quả đã tìm được lưu lại.",
-        { chargePartial: true }
+      await pauseActiveSearch(
+        "Tab Google Maps đã bị đóng. Tiến độ đã được lưu; bấm Tiếp tục quét để mở lại tab."
       );
     }
   } finally {
@@ -2640,10 +3319,77 @@ async function handleSearchMapsTabLost() {
   }
 }
 
+async function handleQuickEnrichTabLost(closedTabId = scrapeState.enrichTabId) {
+  if (
+    quickEnrichTabLossBusy ||
+    isAborting ||
+    !scrapeState.running ||
+    !(scrapeState.quickScan === true || scrapeState.searchParams?.quickScan === true) ||
+    scrapeState.enrichTabId == null ||
+    scrapeState.enrichTabId !== closedTabId
+  ) {
+    return;
+  }
+
+  quickEnrichTabLossBusy = true;
+  scrapeState.enrichTabId = null;
+  scrapeState.enrichWindowId = null;
+  scrapeState._activeEnrichOpId = "";
+  scrapeState._enrichGeneration = Number(scrapeState._enrichGeneration || 0) + 1;
+  quickEnrichRunPromise = null;
+  await persistScrapeCheckpoint();
+
+  try {
+    if (!isMapsAutoReopenEnabled(scrapeState.searchParams)) {
+      await pauseActiveSearch(
+        "Tab Google Maps đọc chi tiết đã bị đóng. Tiến độ đã được lưu; bấm Tiếp tục quét để mở lại tab."
+      );
+      return;
+    }
+
+    const count = Number(scrapeState._enrichMapsReopenCount || 0) + 1;
+    scrapeState._enrichMapsReopenCount = count;
+    const maxReopen = getMapsAutoReopenMax();
+    if (count > maxReopen) {
+      await pauseActiveSearch(
+        `Tab Google Maps đọc chi tiết bị đóng quá nhiều lần (${maxReopen}). Tiến độ đã được lưu để tiếp tục sau.`
+      );
+      return;
+    }
+
+    notifyProgress(
+      calcProgressPercent(scrapeState.gridIndex, scrapeState.totalCells, 0.6),
+      `Tab đọc chi tiết đã bị đóng. Đang mở lại · Lần ${count}/${maxReopen}…`
+    );
+    const ready = await ensureQuickEnrichTab();
+    if (!ready) {
+      await pauseActiveSearch(
+        "Chưa mở lại được tab Google Maps đọc chi tiết. Tiến độ đã được lưu để bạn tiếp tục sau."
+      );
+      return;
+    }
+
+    scrapeState._enrichActivityAt = Date.now();
+    await persistScrapeCheckpoint();
+    runQuickEnrichPhase().catch(async (err) => {
+      if (scrapeState.running && !pointsFinalized) {
+        await abortSearch("QUICK_ENRICH_RECOVER_FAILED", err?.message || String(err), {
+          chargePartial: true
+        });
+      }
+    });
+  } finally {
+    quickEnrichTabLossBusy = false;
+  }
+}
+
 async function persistRescanCheckpoint() {
   if (!rescanState.running || !Array.isArray(rescanState.places) || !rescanState.places.length) return;
   const now = Date.now();
-  const durableParams = { ...(rescanState.params || {}) };
+  const durableParams = {
+    ...(rescanState.params || {}),
+    searchParams: toDurableSearchParams(rescanState.params?.searchParams || {})
+  };
   delete durableParams.authToken;
   delete durableParams.places;
   const checkpoint = {
@@ -2946,7 +3692,29 @@ async function handleRescanMapsTabLost() {
 
 chrome.windows.onRemoved.addListener((windowId) => {
   if (scrapeState.running && windowId === scrapeState.mapsWindowId && scrapeState.mapsTabId != null) {
-    handleSearchMapsTabLost().catch((err) => console.warn("handleSearchMapsTabLost:", err.message));
+    const closedMapsTabId = scrapeState.mapsTabId;
+    if (
+      (scrapeState.quickScan === true || scrapeState.searchParams?.quickScan === true) &&
+      windowId === scrapeState.enrichWindowId
+    ) {
+      scrapeState.enrichTabId = null;
+      scrapeState.enrichWindowId = null;
+    }
+    enqueueMapsTabRecovery(() => handleSearchMapsTabLost(closedMapsTabId)).catch((err) =>
+      console.warn("handleSearchMapsTabLost:", err.message)
+    );
+    return;
+  }
+  if (
+    scrapeState.running &&
+    (scrapeState.quickScan === true || scrapeState.searchParams?.quickScan === true) &&
+    windowId === scrapeState.enrichWindowId &&
+    scrapeState.enrichTabId != null
+  ) {
+    const closedEnrichTabId = scrapeState.enrichTabId;
+    enqueueMapsTabRecovery(() => handleQuickEnrichTabLost(closedEnrichTabId)).catch((err) =>
+      console.warn("handleQuickEnrichTabLost:", err.message)
+    );
     return;
   }
   if (rescanState.running && windowId === rescanState.mapsWindowId && rescanState.mapsTabId != null) {
@@ -2956,7 +3724,19 @@ chrome.windows.onRemoved.addListener((windowId) => {
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   if (scrapeState.running && tabId === scrapeState.mapsTabId) {
-    handleSearchMapsTabLost().catch((err) => console.warn("handleSearchMapsTabLost:", err.message));
+    enqueueMapsTabRecovery(() => handleSearchMapsTabLost(tabId)).catch((err) =>
+      console.warn("handleSearchMapsTabLost:", err.message)
+    );
+    return;
+  }
+  if (
+    scrapeState.running &&
+    (scrapeState.quickScan === true || scrapeState.searchParams?.quickScan === true) &&
+    tabId === scrapeState.enrichTabId
+  ) {
+    enqueueMapsTabRecovery(() => handleQuickEnrichTabLost(tabId)).catch((err) =>
+      console.warn("handleQuickEnrichTabLost:", err.message)
+    );
     return;
   }
   if (rescanState.running && tabId === rescanState.mapsTabId) {
@@ -3024,7 +3804,29 @@ function beginMapsCellWork(extraMs = 15 * 60 * 1000) {
 function endMapsCellWork(token) {
   mapsCellWorkTokens.delete(token);
   scrapeState._mapsCellWorkActive = mapsCellWorkTokens.size > 0;
-  if (mapsCellWorkTokens.size === 0 && mapsRescanWorkTokens.size === 0) {
+  if (
+    mapsCellWorkTokens.size === 0 &&
+    (typeof quickEnrichWorkTokens === "undefined" || quickEnrichWorkTokens.size === 0) &&
+    mapsRescanWorkTokens.size === 0
+  ) {
+    stopMapsContentWakePulse();
+  }
+}
+
+function beginQuickEnrichWork() {
+  const token = Symbol("quick-enrich-work");
+  quickEnrichWorkTokens.add(token);
+  startMapsContentWakePulse();
+  return token;
+}
+
+function endQuickEnrichWork(token) {
+  quickEnrichWorkTokens.delete(token);
+  if (
+    mapsCellWorkTokens.size === 0 &&
+    (typeof quickEnrichWorkTokens === "undefined" || quickEnrichWorkTokens.size === 0) &&
+    mapsRescanWorkTokens.size === 0
+  ) {
     stopMapsContentWakePulse();
   }
 }
@@ -3054,7 +3856,11 @@ function beginMapsRescanWork() {
 
 function endMapsRescanWork(token) {
   mapsRescanWorkTokens.delete(token);
-  if (mapsCellWorkTokens.size === 0 && mapsRescanWorkTokens.size === 0) {
+  if (
+    mapsCellWorkTokens.size === 0 &&
+    (typeof quickEnrichWorkTokens === "undefined" || quickEnrichWorkTokens.size === 0) &&
+    mapsRescanWorkTokens.size === 0
+  ) {
     stopMapsContentWakePulse();
   }
 }
@@ -3144,6 +3950,32 @@ async function handleMapsTabReloaded() {
     );
 
     const idx = scrapeState.gridIndex;
+    if (scrapeState.quickScan === true || scrapeState.searchParams?.quickScan === true) {
+      runQuickEnrichPhase().catch(async (err) => {
+        if ((scrapeState.running || hasResults) && !pointsFinalized) {
+          await abortSearch("QUICK_ENRICH_RECOVER_FAILED", err?.message || String(err), {
+            chargePartial: true
+          });
+        }
+      });
+      if (scrapeState.quickProducerDone) return;
+      const resumeAt = scrapeState.completedCells.has(idx) ? idx + 1 : idx;
+      if (resumeAt >= scrapeState.totalCells) {
+        scrapeState.quickProducerDone = true;
+        scrapeState.phase = "enrich";
+        await persistScrapeCheckpoint();
+        await runQuickEnrichPhase();
+        return;
+      }
+      runGridCell(resumeAt).catch(async (err) => {
+        if ((scrapeState.running || hasResults) && !pointsFinalized) {
+          await abortSearch("RECOVER_FAILED", err?.message || String(err), {
+            chargePartial: true
+          });
+        }
+      });
+      return;
+    }
     if (scrapeState.phase === "enrich") {
       runEnrichPhase().catch(async (err) => {
         if ((scrapeState.running || hasResults) && !pointsFinalized) {
@@ -3180,7 +4012,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   scheduleMapsReloadRecovery();
 });
 
-const REQUIRED_CONTENT_VERSION = 74;
+const REQUIRED_CONTENT_VERSION = 75;
 
 async function sendTabMessageWithTimeout(tabId, message, timeoutMs = 3000) {
   let timer;
@@ -3555,6 +4387,8 @@ async function runGridCell(cellIndex) {
     return;
   }
 
+  scrapeState.gridIndex = cellIndex;
+
   const params = scrapeState.searchParams;
   const cell = scrapeState.gridPoints[cellIndex];
   const url = buildMapsUrl(params.keyword, cell.lat, cell.lng, scrapeState.viewportM);
@@ -3587,9 +4421,26 @@ async function runGridCell(cellIndex) {
       throw new Error(`Không mở được Google Maps. ${err.message}`);
     }
     scrapeState.mapsTabId = tab.id;
+    if (
+      (scrapeState.quickScan === true || scrapeState.searchParams?.quickScan === true) &&
+      !scrapeState.enrichTabId
+    ) {
+      try {
+        await openQuickEnrichTab(url);
+      } catch (err) {
+        throw new Error(`Không mở được tab Google Maps đọc chi tiết. ${err.message}`);
+      }
+    }
+    const tabCheckpointSaved = await persistScrapeCheckpoint({ forceRecoverable: true });
+    if (!tabCheckpointSaved) {
+      throw new Error("Không lưu được tab Google Maps để khôi phục lượt quét.");
+    }
     markMapsControlledActivity(120000);
     await chrome.tabs.update(scrapeState.mapsTabId, { autoDiscardable: false }).catch(() => {});
     await waitTabComplete(scrapeState.mapsTabId);
+    if (scrapeState.enrichTabId) {
+      await waitTabComplete(scrapeState.enrichTabId);
+    }
     await sleep(1200);
     const ready = await ensureMapsContentReady(scrapeState.mapsTabId);
     if (!ready) {
@@ -3598,6 +4449,12 @@ async function runGridCell(cellIndex) {
         reason: "initial_renderer_unavailable"
       });
       return;
+    }
+    if (scrapeState.quickScan === true || scrapeState.searchParams?.quickScan === true) {
+      const enrichReady = await ensureMapsContentReady(scrapeState.enrichTabId);
+      if (!enrichReady) {
+        throw new Error("Không kết nối được tab Google Maps đọc chi tiết cho chế độ quét nhanh.");
+      }
     }
     notifyProgress(
       5,
@@ -3676,6 +4533,13 @@ async function runGridCell(cellIndex) {
   }
   scrapeState._pendingGridContinuation = -1;
   if (scrapeState._cellRestartFlags) delete scrapeState._cellRestartFlags[cellIndex];
+
+  // Persist the new lease/generation before the long Maps request so a worker
+  // restart cannot revive an older lease or lose the tabs that were just opened.
+  const launchCheckpointSaved = await persistScrapeCheckpoint({ forceRecoverable: true });
+  if (!launchCheckpointSaved) {
+    throw new Error("Không lưu được tiến độ trước khi cuộn Google Maps.");
+  }
 
   let result;
   const cellStartedAt = Date.now();
@@ -3867,6 +4731,7 @@ function preserveEnrichMetadata(enriched, source) {
 
 async function persistEnrichAttemptProgress(cellIndex, processed, totalEnrich) {
   scrapeState._enrichActivityAt = Date.now();
+  scrapeState._lastEnrichRecoveryFocusDataAt = 0;
   scheduleLiveSearchBackup(true);
   const ratio = totalEnrich > 0 ? Math.min(processed / totalEnrich, 1) : 1;
   const pct = calcProgressPercent(cellIndex, scrapeState.totalCells, 0.5 + ratio * 0.48);
@@ -4106,6 +4971,323 @@ async function enrichPlacesInCell(
   return done;
 }
 
+function getQuickPendingEnrichPlaces() {
+  if (!(scrapeState.quickScan === true || scrapeState.searchParams?.quickScan === true)) return [];
+  const pending = [];
+  for (const place of scrapeState.mergedPlaces.values()) {
+    const key = getEnrichCheckpointKey(place);
+    if (scrapeState.enrichedPlaceKeys.has(key) || scrapeState.failedEnrichKeys.has(key)) continue;
+    pending.push(place);
+  }
+  return pending;
+}
+
+async function ensureQuickEnrichTab(fallbackUrl = "") {
+  if (
+    !(scrapeState.quickScan === true || scrapeState.searchParams?.quickScan === true) ||
+    !scrapeState.running
+  ) {
+    return false;
+  }
+  if (Number.isInteger(scrapeState.enrichTabId)) {
+    try {
+      await chrome.tabs.get(scrapeState.enrichTabId);
+      return true;
+    } catch {
+      scrapeState.enrichTabId = null;
+      scrapeState.enrichWindowId = null;
+    }
+  }
+
+  const firstPendingUrl = getPlaceDetailUrl(getQuickPendingEnrichPlaces()[0]);
+  const cell = scrapeState.gridPoints[Math.min(scrapeState.gridIndex, scrapeState.totalCells - 1)];
+  const searchUrl = cell
+    ? buildMapsUrl(
+        scrapeState.searchParams.keyword,
+        cell.lat,
+        cell.lng,
+        scrapeState.viewportM
+      )
+    : "https://www.google.com/maps";
+  const tab = await openQuickEnrichTab(firstPendingUrl || fallbackUrl || searchUrl);
+  await waitTabComplete(tab.id, 30000);
+  await sleep(900);
+  return ensureMapsContentReady(tab.id);
+}
+
+async function cancelQuickEnrichOperation(tabId, { timeoutMs = ENRICH_ABORT_TIMEOUT_MS } = {}) {
+  const opId = String(scrapeState._activeEnrichOpId || "");
+  if (!opId || !Number.isInteger(tabId)) return { settled: true, reloaded: false };
+
+  let timer = null;
+  let response = null;
+  try {
+    response = await Promise.race([
+      chrome.tabs.sendMessage(tabId, { action: "ENRICH_ABORT", data: { opId } }),
+      new Promise((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error("Tab đọc chi tiết không xác nhận thao tác cũ đã dừng.")),
+          timeoutMs
+        );
+      })
+    ]);
+  } catch (err) {
+    bgLog(`Không xác nhận được ENRICH_ABORT ${opId} ở tab đọc chi tiết: ${err.message}`);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+
+  const settled =
+    response?.success === true && response?.opId === opId && response?.settled === true;
+  if (!settled) await reloadMapsAfterUnsettledEnrich(tabId);
+  if (scrapeState._activeEnrichOpId === opId) scrapeState._activeEnrichOpId = "";
+  return { settled, reloaded: !settled };
+}
+
+async function enrichQuickPlaceByUrl(
+  place,
+  params,
+  progressText,
+  pct,
+  attempt,
+  enrichGeneration
+) {
+  const href = getPlaceDetailUrl(place);
+  const tabId = scrapeState.enrichTabId;
+  if (!href || !Number.isInteger(tabId)) return null;
+  const opId = `${scrapeState.runId}:quick:${attempt}:${crypto.randomUUID()}`;
+  let operationStarted = false;
+  const workToken = beginQuickEnrichWork();
+
+  try {
+    await cancelQuickEnrichOperation(tabId);
+    if (Number(enrichGeneration) !== Number(scrapeState._enrichGeneration || 0)) return null;
+    scrapeState._activeEnrichOpId = opId;
+    scrapeState._enrichActivityAt = Date.now();
+    await persistScrapeCheckpoint();
+    operationStarted = true;
+
+    try {
+      await chrome.tabs.update(tabId, { url: href, autoDiscardable: false });
+    } catch (err) {
+      await focusMapsTabAfterFailure(
+        tabId,
+        "Tab Google Maps đọc chi tiết không nhận được URL. Findmap đã đưa tab lên trước để thử lại."
+      );
+      await chrome.tabs.update(tabId, { url: href, autoDiscardable: false });
+    }
+    await waitTabComplete(tabId, 30000);
+    await sleep(650);
+
+    const result = await sendMapsMessageToTab(
+      tabId,
+      "ENRICH_PLACE",
+      {
+        searchParams: params,
+        listData: place,
+        progressText,
+        percent: pct,
+        thorough: true,
+        opId
+      },
+      50000
+    );
+
+    if (Number(enrichGeneration) !== Number(scrapeState._enrichGeneration || 0)) return null;
+    if (result?.opId === opId && result?.settled === false) {
+      await reloadMapsAfterUnsettledEnrich(tabId);
+      operationStarted = false;
+      throw new Error("Thao tác chi tiết cũ chưa dừng; tab đọc chi tiết đã được tải lại.");
+    }
+    if (result?.opId !== opId || result?.success !== true) return null;
+    return result.place || null;
+  } catch (err) {
+    if (operationStarted && scrapeState._activeEnrichOpId === opId) {
+      await cancelQuickEnrichOperation(tabId);
+    }
+    throw err;
+  } finally {
+    if (scrapeState._activeEnrichOpId === opId) scrapeState._activeEnrichOpId = "";
+    endQuickEnrichWork(workToken);
+  }
+}
+
+async function completeQuickScanIfReady(enrichGeneration) {
+  if (
+    !scrapeState.running ||
+    !(scrapeState.quickScan === true || scrapeState.searchParams?.quickScan === true) ||
+    !scrapeState.quickProducerDone ||
+    Number(enrichGeneration) !== Number(scrapeState._enrichGeneration || 0) ||
+    getQuickPendingEnrichPlaces().length > 0
+  ) {
+    return false;
+  }
+
+  const total = getFinalResultsList().length;
+  if (total === 0) {
+    await handleScrapeComplete({ searchParams: scrapeState.searchParams });
+    return true;
+  }
+
+  notifyProgress(95, `Đã lấy hết danh sách và đọc xong ${total} điểm bán…`);
+  await Promise.all(
+    [scrapeState.mapsTabId, scrapeState.enrichTabId]
+      .filter(Number.isInteger)
+      .map((tabId) =>
+        chrome.tabs.sendMessage(tabId, { action: "SCRAPE_FINISH", data: {} }).catch(() => null)
+      )
+  );
+  await handleScrapeComplete({ searchParams: scrapeState.searchParams });
+  return true;
+}
+
+async function runQuickEnrichPhaseInternal(
+  enrichGeneration = Number(scrapeState._enrichGeneration || 0)
+) {
+  const params = scrapeState.searchParams;
+  if (
+    !params ||
+    !(scrapeState.quickScan === true || scrapeState.searchParams?.quickScan === true)
+  ) return false;
+  if (!(await ensureQuickEnrichTab())) {
+    throw new Error("Không kết nối được tab Google Maps đọc chi tiết.");
+  }
+
+  while (
+    scrapeState.running &&
+    Number(enrichGeneration) === Number(scrapeState._enrichGeneration || 0)
+  ) {
+    const pending = getQuickPendingEnrichPlaces();
+    if (!pending.length) break;
+
+    const place = pending[0];
+    const cellIndex = Math.max(0, Number(place._enrichCellIndex || 0));
+    const totalEnrich = Math.max(scrapeState.mergedPlaces.size, scrapeState.enrichTotal || 0);
+    scrapeState.enrichTotal = totalEnrich;
+    const processed = Math.max(0, totalEnrich - pending.length) + 1;
+    const pct = Math.min(
+      94,
+      Math.max(
+        5,
+        Math.round(
+          ((scrapeState.gridIndex + 1) / Math.max(scrapeState.totalCells, 1)) * 55 +
+            (processed / Math.max(totalEnrich, 1)) * 38
+        )
+      )
+    );
+    const progressText =
+      `Quét nhanh · Tab danh sách vùng ${Math.min(scrapeState.gridIndex + 1, scrapeState.totalCells)}` +
+      `/${scrapeState.totalCells} · Tab chi tiết ${processed}/${totalEnrich}: ${place.name || "địa điểm"}`;
+    notifyProgress(pct, progressText);
+
+    const href = getPlaceDetailUrl(place);
+    if (!href) {
+      await markEnrichFailure(
+        place,
+        cellIndex,
+        processed,
+        totalEnrich,
+        new Error("Thiếu URL chi tiết Google Maps hợp lệ.")
+      );
+      continue;
+    }
+
+    let enriched = null;
+    let lastError = null;
+    for (let attempt = 1; attempt <= MAX_DIRECT_URL_RETRIES; attempt++) {
+      if (
+        !scrapeState.running ||
+        Number(enrichGeneration) !== Number(scrapeState._enrichGeneration || 0)
+      ) {
+        break;
+      }
+      try {
+        enriched = preserveEnrichMetadata(
+          await enrichQuickPlaceByUrl(
+            place,
+            params,
+            progressText,
+            pct,
+            attempt,
+            enrichGeneration
+          ),
+          place
+        );
+        if (enriched) break;
+        lastError = new Error("Trang chi tiết không trả về dữ liệu hợp lệ.");
+      } catch (err) {
+        lastError = err;
+        if (Number(enrichGeneration) !== Number(scrapeState._enrichGeneration || 0)) break;
+        console.warn(
+          `Tab đọc chi tiết thất bại (${attempt}/${MAX_DIRECT_URL_RETRIES}):`,
+          place.name,
+          err.message
+        );
+      }
+      if (!enriched && attempt < MAX_DIRECT_URL_RETRIES) {
+        await sleep(Math.min(4000, 900 * attempt));
+      }
+    }
+
+    if (
+      !scrapeState.running ||
+      Number(enrichGeneration) !== Number(scrapeState._enrichGeneration || 0)
+    ) {
+      break;
+    }
+    if (!enriched) {
+      await markEnrichFailure(
+        place,
+        cellIndex,
+        processed,
+        totalEnrich,
+        lastError || new Error("Google Maps không trả dữ liệu.")
+      );
+      continue;
+    }
+
+    upsertMergedPlace(enriched);
+    sendItemToWeb(params.webUrl, enriched, params);
+    await markEnrichAttemptComplete(place, cellIndex, processed, totalEnrich);
+  }
+
+  return completeQuickScanIfReady(enrichGeneration);
+}
+
+function runQuickEnrichPhase() {
+  if (!(scrapeState.quickScan === true || scrapeState.searchParams?.quickScan === true)) {
+    return Promise.resolve(false);
+  }
+  if (quickEnrichRunPromise) return quickEnrichRunPromise;
+  const enrichGeneration = Number(scrapeState._enrichGeneration || 0);
+  const task = runQuickEnrichPhaseInternal(enrichGeneration);
+  quickEnrichRunPromise = task;
+  task.finally(() => {
+    if (quickEnrichRunPromise === task) quickEnrichRunPromise = null;
+  }).catch(() => {});
+  return task;
+}
+
+async function waitForQuickQueueCapacity() {
+  let warned = false;
+  while (
+    scrapeState.running &&
+    (scrapeState.quickScan === true || scrapeState.searchParams?.quickScan === true) &&
+    getQuickPendingEnrichPlaces().length >= QUICK_SCAN_QUEUE_LIMIT
+  ) {
+    if (!warned) {
+      warned = true;
+      notifyProgress(
+        calcProgressPercent(scrapeState.gridIndex, scrapeState.totalCells, 0.75),
+        `Quét nhanh · Đã lưu ${getQuickPendingEnrichPlaces().length} URL. ` +
+          "Tạm chờ tab đọc chi tiết xử lý bớt trước khi cuộn vùng tiếp theo…"
+      );
+    }
+    runQuickEnrichPhase().catch(() => {});
+    await sleep(1200);
+  }
+}
+
 function pushLiveItemsToWeb(items, meta = {}) {
   if (!items.length || !currentSearch?.webUrl) return;
   const params = scrapeState.searchParams;
@@ -4122,6 +5304,60 @@ function pushLiveItemsToWeb(items, meta = {}) {
   });
 }
 
+async function handleQuickCellListComplete(data) {
+  const { places, cellIndex, totalCells, skippedCount = 0 } = data;
+  const beforeCount = scrapeState.mergedPlaces.size;
+  bgLog(`Ô ${cellIndex + 1} đã xác nhận CUỐI DANH SÁCH · nhận ${places.length} điểm từ content`);
+  scrapeState.gridIndex = cellIndex;
+  mergePlaces(places);
+  clearPendingCellPlaces(cellIndex);
+  if (scrapeState._cellContinueFlags) delete scrapeState._cellContinueFlags[cellIndex];
+  if (scrapeState._cellRestartFlags) delete scrapeState._cellRestartFlags[cellIndex];
+  if (scrapeState._cellResumeLeases) delete scrapeState._cellResumeLeases[cellIndex];
+  scrapeState.phase = "grid";
+  const newUnique = scrapeState.mergedPlaces.size - beforeCount;
+  scheduleLiveSearchBackup(true);
+
+  const cell = scrapeState.gridPoints[cellIndex];
+  const total = getFinalResultsList().length;
+  const pct = calcProgressPercent(cellIndex, totalCells, 0.48);
+  const progressText = buildProgressText(cell, cellIndex, totalCells, {
+    newCount: newUnique,
+    skipped: skippedCount,
+    total,
+    action: `Quét nhanh · Tab danh sách đã lưu ${places.length} URL chi tiết`
+  });
+  scheduleSyncSnapshot(progressText, pct, true);
+  notifyProgress(pct, progressText);
+
+  scrapeState.completedCells.add(cellIndex);
+  clearCellListProgress(cellIndex);
+  scrapeState.enrichTotal = Math.max(scrapeState.enrichTotal, scrapeState.mergedPlaces.size);
+  const nextIndex = cellIndex + 1;
+  scrapeState.quickProducerDone = nextIndex >= scrapeState.totalCells;
+  if (scrapeState.quickProducerDone) scrapeState.phase = "enrich";
+  await persistScrapeCheckpoint();
+
+  runQuickEnrichPhase().catch(async (err) => {
+    if (scrapeState.running && !pointsFinalized) {
+      await abortSearch("QUICK_ENRICH_FAILED", err?.message || String(err), {
+        chargePartial: true
+      });
+    }
+  });
+
+  if (scrapeState.quickProducerDone) {
+    await runQuickEnrichPhase();
+    return;
+  }
+
+  await waitForQuickQueueCapacity();
+  if (!scrapeState.running || pointsFinalized) return;
+  scrapeState.gridIndex = nextIndex;
+  await persistScrapeCheckpoint();
+  return runGridCell(nextIndex);
+}
+
 async function handleCellListComplete(data) {
   const {
     places,
@@ -4133,6 +5369,9 @@ async function handleCellListComplete(data) {
   if (!reachedEnd) {
     await retryIncompleteGridCell(cellIndex, "missing_end_marker");
     return;
+  }
+  if (scrapeState.quickScan === true || scrapeState.searchParams?.quickScan === true) {
+    return handleQuickCellListComplete(data);
   }
 
   const beforeCount = scrapeState.mergedPlaces.size;
@@ -4203,18 +5442,7 @@ async function completeCellAfterEnrich(
   }
 
   if (total === 0) {
-    const transitionToken = beginOperationTransition("complete-empty-search");
-    try {
-      chrome.runtime.sendMessage({
-        action: "SCRAPE_ERROR",
-        error: "Không tìm thấy điểm bán phù hợp trong khu vực đã chọn."
-      });
-      scrapeState.running = false;
-      await closeMapsTabSafely();
-      await resetScrapeState();
-    } finally {
-      endOperationTransition(transitionToken);
-    }
+    await handleScrapeComplete({ searchParams: scrapeState.searchParams });
     return null;
   }
 
@@ -4328,14 +5556,14 @@ async function runEnrichPhaseInternal(enrichGeneration = Number(scrapeState._enr
 }
 
 async function closeMapsTabSafely() {
-  const tabId = scrapeState.mapsTabId;
+  const tabIds = [...new Set([scrapeState.mapsTabId, scrapeState.enrichTabId].filter(Number.isInteger))];
   clearMapsCellWorkTokens();
   scrapeState.mapsTabId = null;
   scrapeState.mapsWindowId = null;
-  if (!tabId) return;
-  try {
-    await chrome.tabs.remove(tabId);
-  } catch {}
+  scrapeState.enrichTabId = null;
+  scrapeState.enrichWindowId = null;
+  if (!tabIds.length) return;
+  await Promise.all(tabIds.map((tabId) => chrome.tabs.remove(tabId).catch(() => {})));
 }
 
 async function handleScrapeComplete(data) {
@@ -4421,7 +5649,58 @@ async function handleScrapeComplete(data) {
   }
 }
 
+const PRIVILEGED_WEB_ACTIONS = new Set([
+  "START_SEARCH",
+  "CANCEL_SEARCH",
+  "PAUSE_SEARCH",
+  "ABANDON_SEARCH",
+  "REQUEST_SEARCH_SYNC",
+  "GET_SEARCH_STATUS",
+  "SET_MAPS_AUTO_FOCUS",
+  "SET_MAPS_AUTO_REOPEN",
+  "RESUME_SEARCH",
+  "START_RESCAN",
+  "GET_RESCAN_STATUS",
+  "GET_SESSION",
+  "GET_MAPS_CENTER",
+  "SAVE_SESSION"
+]);
+
+function getRuntimeSenderOrigin(sender) {
+  for (const raw of [sender?.origin, sender?.url, sender?.tab?.url]) {
+    try {
+      const url = new URL(String(raw || ""));
+      if (url.protocol === "http:" || url.protocol === "https:") return url.origin;
+    } catch {}
+  }
+  return "";
+}
+
+function isOwnExtensionPageSender(sender) {
+  if (!sender?.id || sender.id !== chrome.runtime.id) return false;
+  const extensionOrigin = `chrome-extension://${chrome.runtime.id}`;
+  return [sender?.origin, sender?.url].some((raw) =>
+    String(raw || "").startsWith(extensionOrigin)
+  );
+}
+
+function isTrustedFindmapSender(sender) {
+  if (isOwnExtensionPageSender(sender)) return true;
+  if (!sender?.id || sender.id !== chrome.runtime.id) return false;
+  const origin = getRuntimeSenderOrigin(sender);
+  return !!origin && getConfiguredWebOrigins().includes(origin);
+}
+
 function dispatchRuntimeMessage(message, sender, sendResponse) {
+  if (PRIVILEGED_WEB_ACTIONS.has(message?.action) && !isTrustedFindmapSender(sender)) {
+    sendResponse({
+      ok: false,
+      success: false,
+      error: "Nguồn yêu cầu không thuộc Findmap."
+    });
+    return;
+  }
+
   if (message.action === "PING_BG") {
     const manifest = chrome.runtime.getManifest();
     sendResponse({ ok: true, version: manifest.version, name: manifest.name });
@@ -4485,6 +5764,13 @@ function dispatchRuntimeMessage(message, sender, sendResponse) {
 
   if (message.action === "CANCEL_SEARCH") {
     cancelActiveSearch(message.data?.reason)
+      .then(sendResponse)
+      .catch((err) => sendResponse({ success: false, error: err.message }));
+    return true;
+  }
+
+  if (message.action === "PAUSE_SEARCH") {
+    pauseActiveSearch(message.data?.reason)
       .then(sendResponse)
       .catch((err) => sendResponse({ success: false, error: err.message }));
     return true;
@@ -4588,7 +5874,11 @@ function dispatchRuntimeMessage(message, sender, sendResponse) {
 
   if (message.action === "RESUME_SEARCH") {
     handleResumeSearch()
-      .then((ok) => sendResponse({ success: ok }))
+      .then(async (ok) => {
+        const status = await getSearchStatus();
+        await pushSearchStatusToWeb(status);
+        sendResponse({ success: ok, status });
+      })
       .catch((err) => sendResponse({ success: false, error: err.message }));
     return true;
   }
@@ -4687,15 +5977,6 @@ function dispatchRuntimeMessage(message, sender, sendResponse) {
     notifyProgress(message.percent, message.text);
   }
 
-  if (message.action === "SCRAPE_LOG") {
-    if (!scrapeState.running || !acceptsActiveCellMessage(message, sender)) return;
-    const line = message.line;
-    chrome.runtime.sendMessage({ action: "SEARCH_LOG", line }).catch(() => {});
-    if (currentSearch?.webUrl) {
-      sendToWebPage(currentSearch.webUrl, "log", { line });
-    }
-  }
-
   if (message.action === "SCRAPE_ITEM") {
     if (!scrapeState.running || !acceptsActiveCellMessage(message, sender)) return;
     markMapsDataActivity();
@@ -4774,6 +6055,8 @@ async function handleStartSearch(params) {
   const transitionToken = claimOperationStart("search");
   try {
 
+  params.quickScan = params?.quickScan === true;
+
   await ensureReadyForNewSearch();
   await clearRescanCheckpoint();
   // Chắc chắn không còn tab Maps cũ trước khi mở tab mới
@@ -4802,6 +6085,8 @@ async function handleStartSearch(params) {
     scrapeState.gridIndex = 0;
     scrapeState.totalCells = 0;
     scrapeState.phase = "grid";
+    scrapeState.quickScan = false;
+    scrapeState.quickProducerDone = false;
     scrapeState._cellRetryCounts = {};
     scrapeState._cellRecoveryCounts = {};
     scrapeState._cellContinueFlags = {};
@@ -4851,11 +6136,18 @@ async function handleStartSearch(params) {
   pointsFinalized = false;
   markMapsDataActivity();
   scrapeState.running = true;
+  scrapeState.paused = false;
+  scrapeState.pausedAt = 0;
+  scrapeState.pauseReason = "";
+  scrapeState.resumeRequestedAt = 0;
   scrapeState.runId = params.searchId;
   scrapeState.cellGeneration = 0;
   scrapeState.searchParams = params;
   scrapeState.webTabId = webTab.id;
   scrapeState.mapsTabId = null;
+  scrapeState.mapsWindowId = null;
+  scrapeState.enrichTabId = null;
+  scrapeState.enrichWindowId = null;
   scrapeState.gridPoints = grid.points;
   scrapeState.gridIndex = 0;
   scrapeState.totalCells = grid.totalCells;
@@ -4869,6 +6161,8 @@ async function handleStartSearch(params) {
   scrapeState.failedEnrichKeys = new Set();
   scrapeState.enrichTotal = 0;
   scrapeState.phase = "grid";
+  scrapeState.quickScan = params.quickScan === true;
+  scrapeState.quickProducerDone = false;
   scrapeState._retriedCells = new Set();
   scrapeState._cellRetryCounts = {};
   scrapeState._cellRecoveryCounts = {};
@@ -4879,6 +6173,11 @@ async function handleStartSearch(params) {
   scrapeState._cellListProgress = {};
   scrapeState._mapsReopenCount = 0;
   scrapeState._mapsUserReloadCount = 0;
+  scrapeState._enrichMapsReopenCount = 0;
+  scrapeState._activeEnrichOpId = "";
+  scrapeState._enrichActivityAt = Date.now();
+  scrapeState._enrichGeneration = 0;
+  quickEnrichRunPromise = null;
   activeMapsCellListToken = null;
   scrapeState._mapsCellListActive = false;
   scrapeState._mapsCellListLease = null;
@@ -4965,7 +6264,7 @@ async function handleStartSearch(params) {
 async function handleResumeSearch() {
   const transitionToken = claimOperationStart("resume-search");
   try {
-    return await tryResumeFromCheckpoint({ allowReopen: true });
+    return await tryResumeFromCheckpoint({ allowReopen: true, allowPaused: true });
   } finally {
     endOperationTransition(transitionToken);
   }
@@ -5008,6 +6307,10 @@ async function sendMapsMessageToTab(tabId, action, data, timeoutMs = 45000) {
     if (isSuccessfulMapsResponse(action, result)) {
       if (tabId === rescanState.mapsTabId) markRescanDataActivity();
       else if (tabId === scrapeState.mapsTabId) markMapsDataActivity();
+      else if (tabId === scrapeState.enrichTabId) {
+        scrapeState._enrichActivityAt = Date.now();
+        scrapeState._lastEnrichRecoveryFocusDataAt = 0;
+      }
     } else {
       await maybeFocusMapsTabAfterStall(tabId);
     }
@@ -5030,6 +6333,11 @@ async function handleStartRescan(params) {
       throw new Error("Mỗi lượt quét lại hỗ trợ tối đa 5.000 điểm bán.");
     }
 
+    const pausedSearch = await getScrapeCheckpoint();
+    if (pausedSearch?.paused && DurableLifecycle.isRecoverableScrapeCheckpoint(pausedSearch)) {
+      throw new Error("Có lượt tìm kiếm đang tạm dừng. Hãy tiếp tục hoặc dừng hẳn trước khi quét lại.");
+    }
+
   const pendingComplete = await flushPendingComplete("before_rescan");
   if (pendingComplete.pending) {
     throw new Error(
@@ -5042,7 +6350,10 @@ async function handleStartRescan(params) {
 
   await clearRescanCheckpoint();
   resetRescanState();
-  const durableParams = { ...params };
+  const durableParams = {
+    ...params,
+    searchParams: toDurableSearchParams(params.searchParams || {})
+  };
   delete durableParams.authToken;
   delete durableParams.places;
   rescanState.running = true;
@@ -5301,13 +6612,18 @@ async function recoverDurableWork(reason = "service_wake") {
     if (pendingComplete.pending) return false;
 
     const scrapeCheckpoint = await getScrapeCheckpoint();
-    if (DurableLifecycle.isRecoverableScrapeCheckpoint(scrapeCheckpoint)) {
+    if (DurableLifecycle.shouldAutoResumeScrapeCheckpoint(scrapeCheckpoint)) {
       const resumed = await tryResumeFromCheckpoint();
       if (resumed) bgLog(`Đã khôi phục phiên tìm kiếm (${reason}).`);
-      if (resumed) return true;
+      if (resumed) {
+        await pushSearchStatusToWeb();
+        return true;
+      }
       // Main search may have lost Maps; still continue recovery of an independent rescan.
       await ensureDurableWorkAlarm();
       await resetScrapeState({ preserveCheckpoint: true });
+    } else if (DurableLifecycle.isRecoverableScrapeCheckpoint(scrapeCheckpoint)) {
+      bgLog("Phiên tìm kiếm đang tạm dừng; chờ người dùng bấm Tiếp tục quét.");
     }
 
     const rescanCheckpoint = await getRescanCheckpoint();

@@ -141,6 +141,29 @@ test("chỉ nhớ origin sau khi bridge Findmap đã xác thực", () => {
   assert.ok(rememberAt > pingAt, "không được nhớ origin trước khi bridge xác thực");
 });
 
+test("background khóa lệnh nhạy cảm theo đúng origin Findmap", () => {
+  const background = read("extension", "background.js");
+
+  assert.match(background, /const PRIVILEGED_WEB_ACTIONS = new Set/);
+  for (const action of [
+    "START_SEARCH",
+    "CANCEL_SEARCH",
+    "PAUSE_SEARCH",
+    "RESUME_SEARCH",
+    "START_RESCAN",
+    "GET_SESSION",
+    "SAVE_SESSION"
+  ]) {
+    assert.match(background, new RegExp(`["']${action}["']`));
+  }
+  assert.match(background, /sender\.id !== chrome\.runtime\.id/);
+  assert.match(background, /getConfiguredWebOrigins\(\)\.includes\(origin\)/);
+  assert.match(
+    background,
+    /PRIVILEGED_WEB_ACTIONS\.has\(message\?\.action\)\s*&&\s*!isTrustedFindmapSender\(sender\)/
+  );
+});
+
 test("build release khóa đúng allowlist quyền và production hosts", () => {
   const build = read("scripts", "build-extension-release.js");
 
@@ -158,6 +181,9 @@ test("build release khóa đúng allowlist quyền và production hosts", () => 
   ]);
   assert.match(build, /!allowedReleasePermissions\.has\(permission\)/);
   assert.match(build, /!allowedReleaseHosts\.has\(pattern\)/);
+  assert.match(build, /importScripts/);
+  assert.match(build, /remote dynamic import/);
+  assert.match(build, /remote WebAssembly/);
 });
 
 test("release cho phép giữ hệ thống thức có phạm vi và vẫn chặn quyền mạnh", () => {

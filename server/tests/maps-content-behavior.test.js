@@ -883,6 +883,139 @@ test("feed-content wait honors the caller's absolute deadline", async () => {
   );
 });
 
+test("visible feed scroll uses one 55-85% viewport rhythm split into smooth steps", async () => {
+  const source = section(
+    "function updateEndMarkerConfirmation",
+    "async function enrichAllWithDetails"
+  );
+  let now = 0;
+  let resultCount = 10;
+  const pauses = [];
+  const settleCalls = [];
+  const scrollCalls = [];
+  const feed = {
+    isConnected: true,
+    clientHeight: 1000,
+    scrollHeight: 5000,
+    scrollTop: 0,
+    style: {},
+    scrollBy({ top, behavior }) {
+      this.scrollTop = Math.max(
+        0,
+        Math.min(this.scrollHeight - this.clientHeight, this.scrollTop + Number(top || 0))
+      );
+      if (scrollCalls.length === 0) {
+        this.scrollHeight += 400;
+        resultCount += 3;
+      }
+      scrollCalls.push({ top, behavior, after: this.scrollTop });
+    }
+  };
+  const context = vm.createContext({
+    CELL_SCROLL_CHUNK_MS: 220000,
+    T: { scroll: 150, scrollInit: 100 },
+    Date: { now: () => now },
+    document: { hidden: false },
+    isAborted: false,
+    getFeedPanel: () => feed,
+    getResultItems: () => Array.from({ length: resultCount }, () => ({})),
+    waitForFeed: async () => feed,
+    waitForFeedContentReady: async (_feed, maxMs) => {
+      settleCalls.push(maxMs);
+      return true;
+    },
+    isFeedLoading: () => false,
+    hasEndMarker: () => false,
+    feedScrollStep: (panel, ratio, minPx) =>
+      Math.max(panel.clientHeight * ratio, minPx),
+    sleep: async (ms) => {
+      pauses.push(ms);
+      now += ms;
+    },
+    tbLog: () => {}
+  });
+  vm.runInContext("Math.random = () => 0.5", context);
+  vm.runInContext(`${source}\nthis.scrollFeed = scrollFeed;`, context);
+
+  const outcome = await context.scrollFeed(
+    feed,
+    async () => ({ total: resultCount }),
+    { safetyMax: 1, maxMs: 20000 }
+  );
+
+  assert.equal(outcome.reason, "safety_limit");
+  assert.ok(scrollCalls.length >= 4 && scrollCalls.length <= 6);
+  assert.ok(scrollCalls.every((call) => call.behavior === "smooth"));
+  const totalDistance = scrollCalls.reduce((sum, call) => sum + call.top, 0);
+  assert.ok(totalDistance >= 550 && totalDistance <= 850);
+  assert.equal(feed.scrollTop, totalDistance);
+  assert.ok(
+    scrollCalls.every((call) => call.top > 0 && call.top < totalDistance),
+    "một nhịp cuộn phải được chia thành nhiều chuyển động nhỏ"
+  );
+  assert.ok(
+    pauses.filter((ms) => ms >= 80 && ms <= 155).length >= scrollCalls.length,
+    "mỗi chuyển động nhỏ phải có nhịp nghỉ jitter"
+  );
+  assert.ok(
+    pauses.some((ms) => ms >= 650 && ms <= 1050),
+    "DOM/result tăng phải có thêm thời gian settle"
+  );
+  assert.ok(
+    settleCalls.includes(8000),
+    "sau khi danh sách tăng phải dùng cửa sổ settle dài hơn"
+  );
+});
+
+test("visible smooth scroll falls back when scrollTop does not move", async () => {
+  const source = section(
+    "function updateEndMarkerConfirmation",
+    "async function enrichAllWithDetails"
+  );
+  let scrollTop = 100;
+  const smoothCalls = [];
+  const directAssignments = [];
+  const feed = {
+    isConnected: true,
+    clientHeight: 800,
+    scrollHeight: 4000,
+    style: {},
+    get scrollTop() {
+      return scrollTop;
+    },
+    set scrollTop(value) {
+      scrollTop = Math.max(0, Math.min(3200, Number(value) || 0));
+      directAssignments.push(scrollTop);
+    },
+    scrollBy(options) {
+      smoothCalls.push(options);
+      // Mô phỏng renderer tab nền bỏ qua smooth scroll.
+    }
+  };
+  const context = vm.createContext({
+    document: { hidden: false },
+    isAborted: false,
+    getResultItems: () => Array.from({ length: 8 }, () => ({}))
+  });
+  vm.runInContext("Math.random = () => 0.5", context);
+  vm.runInContext(`${source}\nthis.scrollFeedLikeUser = scrollFeedLikeUser;`, context);
+
+  const outcome = await context.scrollFeedLikeUser(
+    feed,
+    600,
+    async () => true,
+    false
+  );
+
+  assert.ok(smoothCalls.length >= 4 && smoothCalls.length <= 6);
+  assert.ok(smoothCalls.every((call) => call.behavior === "smooth"));
+  assert.equal(outcome.target, 700);
+  assert.equal(outcome.after.scrollTop, 700);
+  assert.equal(outcome.moved, true);
+  assert.equal(outcome.usedDirectFallback, true);
+  assert.ok(directAssignments.length > 0, "phải fallback setter khi smooth không di chuyển");
+});
+
 test("hidden-tab feed scrolling is immediate and still nudges the loaded bottom", async () => {
   const source = section(
     "function updateEndMarkerConfirmation",

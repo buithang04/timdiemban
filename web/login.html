@@ -192,14 +192,14 @@
         Chào mừng bạn đến với Findmap.Chatplus! Trước khi bắt đầu sử dụng các dịch vụ tìm kiếm điểm bán, định vị và xem đánh giá, bạn vui lòng đọc kỹ và xác nhận đồng ý với các điều khoản dưới đây. Việc bạn nhấn nút "Tôi đồng ý" đồng nghĩa với việc bạn đã đọc, hiểu rõ và cam kết tuân thủ toàn bộ các quy định này.<br><br>
         <strong>PHẦN I: ĐIỀU KHOẢN SỬ DỤNG DỊCH VỤ (TERMS OF USE)</strong><br>
         <strong>1. Chấp thuận Điều khoản và Tích hợp dịch vụ của Bên thứ ba</strong><br>
-        Phần mềm Findmap.Chatplus cung cấp giải pháp tìm kiếm điểm bán dựa trên việc tích hợp giao diện lập trình ứng dụng (API) của Google Maps Platform.<br>
+        Findmap.Chatplus hỗ trợ người dùng điều khiển một tab Google Maps chuyên dụng và xử lý các thông tin điểm bán công khai đang hiển thị theo truy vấn do người dùng chủ động khởi tạo. Findmap.Chatplus là sản phẩm độc lập, không đại diện và không được Google bảo trợ.<br>
         Bằng việc sử dụng ứng dụng này, ngoài việc tuân thủ các điều khoản tại đây, bạn đồng ý bị ràng buộc pháp lý bởi:<br>
         Điều khoản dịch vụ bổ sung của Google Maps/Google Earth (có thể truy cập tại địa chỉ do Google cung cấp).<br>
         Chính sách bảo mật của Google.<br>
         <strong>2. Bản quyền và Sở hữu trí tuệ</strong><br>
         Mọi thông tin bản đồ, dữ liệu vị trí, hình ảnh gạch bản đồ (map tiles), nhãn địa điểm, tên doanh nghiệp, số điện thoại và ý kiến đánh giá hiển thị trên ứng dụng được cung cấp bởi Google Maps Platform và các đối tác cấp phép của Google. Google bảo lưu toàn bộ quyền sở hữu trí tuệ đối với các nội dung này.<br>
         Bạn cam kết KHÔNG thực hiện các hành vi sau:<br>
-        Sử dụng bất kỳ công cụ tự động, robot, hoặc công nghệ nào để quét (scraping), tải xuống hàng loạt (bulk download), lưu trữ trái phép hoặc trích xuất dữ liệu địa điểm từ ứng dụng nhằm xây dựng cơ sở dữ liệu riêng hoặc sử dụng ngoài phạm vi ứng dụng.<br>
+        Lạm dụng tính năng tự động hóa để vượt qua biện pháp bảo vệ kỹ thuật, tạo tải bất thường, thu thập dữ liệu không được phép truy cập, bán lại dữ liệu trái phép hoặc sử dụng dịch vụ theo cách vi phạm pháp luật và điều khoản của nền tảng bên thứ ba.<br>
         Che giấu, xóa bỏ hoặc thay đổi bất kỳ logo, chỉ dẫn bản quyền, nhãn hiệu hoặc thông báo pháp lý nào của ${named} và Google hiển thị trên giao diện.<br>
         <strong>3. Tuân thủ Quy định về Bản đồ và Chủ quyền Quốc gia Việt Nam</strong><br>
         Bản đồ sử dụng trong phần mềm tuân thủ nghiêm ngặt Luật Đo đạc và Bản đồ Việt Nam cũng như Nghị định 18/2020/NĐ-CP.<br>
@@ -218,17 +218,17 @@
         Hiển thị đúng ngôn ngữ, khu vực và cải thiện trải nghiệm giao diện người dùng.<br>
         Đảm bảo an toàn hệ thống, phòng ngừa các hành vi giả mạo hoặc tấn công bảo mật ứng dụng.<br>
         <strong>3. Cách thức và Tổ chức liên quan đến việc xử lý dữ liệu</strong><br>
-        Cách thức xử lý: Dữ liệu vị trí (GPS) của bạn được ứng dụng ghi nhận theo thời gian thực khi được cấp quyền. Chúng tôi không lưu trữ tĩnh dữ liệu vị trí này trên máy chủ của chúng tôi mà chỉ truyền gửi an toàn dưới dạng các tham số mã hóa để gọi API của Google Maps nhằm trả về danh sách điểm bán.<br>
-        Tổ chức có liên quan: Để cung cấp tính năng bản đồ, dữ liệu tọa độ định vị của bạn sẽ được gửi đến đối tác cung cấp hạ tầng là Google LLC (Google Maps Platform) để xử lý kỹ thuật theo đúng chính sách bảo mật của Google.<br><br>
+        Cách thức xử lý: Khi bạn cấp quyền GPS hoặc tự chọn tâm, tọa độ được dùng làm tham số cho lượt tìm và để mở khu vực tương ứng trên Google Maps. Findmap có thể lưu tọa độ, bán kính và từ khóa trong checkpoint kỹ thuật để khôi phục lượt quét đang dở.<br>
+        Tổ chức có liên quan: Trình duyệt sẽ gửi yêu cầu đến Google Maps khi mở khu vực hoặc địa điểm tương ứng; việc xử lý đó tuân theo chính sách của Google. Kết quả được đồng bộ về tài khoản Findmap theo yêu cầu của người dùng.<br><br>
         <strong>4. Thời gian xử lý và lưu trữ dữ liệu</strong><br>
-        Dữ liệu vị trí nhạy cảm (GPS) chỉ được xử lý tạm thời trong phiên làm việc của ứng dụng và sẽ tự động xóa ngay khi bạn tắt ứng dụng.<br>
+        Bạn có thể xóa dữ liệu tìm kiếm trên Findmap, đăng xuất hoặc gỡ tiện ích để xóa dữ liệu cục bộ liên quan trên thiết bị.<br>
         Các dữ liệu cá nhân cơ bản khác (tài khoản, cài đặt) sẽ được lưu trữ và xử lý kể từ thời điểm bạn đồng ý cho đến khi bạn yêu cầu xóa tài khoản hoặc khi ứng dụng chấm dứt hoạt động hoàn toàn theo quy định pháp luật.<br><br>
         <strong>5. Rủi ro, thiệt hại không mong muốn có thể xảy ra</strong><br>
         Mặc dù chúng tôi áp dụng các biện pháp kỹ thuật và an ninh mạng tối đa, việc truyền tải dữ liệu trên môi trường internet luôn tiềm ẩn những rủi ro bất khả kháng như: sự cố đường truyền internet quốc tế gây gián đoạn dịch vụ định vị, hoặc các nguy cơ bị tấn công mạng ngoài tầm kiểm soát. Trong trường hợp phát sinh sự cố, chúng tôi cam kết phối hợp với các cơ quan chức năng để khắc phục và giảm thiểu tối đa thiệt hại cho bạn.<br><br>
         <strong>6. Quyền và nghĩa vụ của bạn (Chủ thể dữ liệu)</strong><br>
         Theo quy định pháp luật Việt Nam, bạn có các quyền và nghĩa vụ sau:<br>
         Quyền của bạn: Quyền được biết, quyền đồng ý hoặc không đồng ý xử lý dữ liệu; quyền truy cập, chỉnh sửa hoặc yêu cầu xóa dữ liệu cá nhân của mình; quyền rút lại sự đồng ý; quyền hạn chế xử lý dữ liệu và quyền khiếu nại, tố cáo theo quy định của pháp luật.<br>
-        Cách thức thực hiện quyền: Bạn có thể tự bật/tắt quyền truy cập vị trí (GPS) trong phần cài đặt thiết bị của mình, hoặc liên hệ trực tiếp với bộ phận chăm sóc khách hàng của chúng tôi qua Email: [Email hỗ trợ của bạn] để yêu cầu xóa dữ liệu cá nhân. Chúng tôi sẽ phản hồi và giải quyết yêu cầu xóa dữ liệu của bạn trong vòng 72 giờ làm việc.<br>
+        Cách thức thực hiện quyền: Bạn có thể tự bật/tắt quyền truy cập vị trí (GPS) trong phần cài đặt thiết bị của mình, hoặc liên hệ trực tiếp với bộ phận chăm sóc khách hàng qua Email: business@chatplus.vn để yêu cầu xóa dữ liệu cá nhân. Chúng tôi sẽ phản hồi và giải quyết yêu cầu xóa dữ liệu của bạn trong vòng 72 giờ làm việc.<br>
         Nghĩa vụ của bạn: Cung cấp đầy đủ, chính xác dữ liệu cá nhân khi đồng ý cho phép xử lý và tự bảo vệ dữ liệu cá nhân của mình.<br>
         <strong>PHẦN III: XÁC NHẬN ĐỒNG Ý CỦA NGƯỜI DÙNG</strong><br>
         Bằng cách tích chọn vào các ô dưới đây và nhấn nút "Tôi đồng ý", bạn xác nhận rằng bạn đã trên 15 tuổi (hoặc có sự đồng ý của cha mẹ/người giám hộ hợp pháp), đã đọc, hiểu rõ toàn bộ nội dung của Điều khoản sử dụng và Chính sách bảo mật dữ liệu nêu trên.

@@ -96,6 +96,17 @@ function assertSafeReleaseManifest(manifest) {
 }
 
 function assertNoRemoteCode(directory) {
+  const forbidden = [
+    [/<script\b[^>]*\bsrc=["']https?:\/\//i, "remote script"],
+    [/\bimportScripts\s*\(\s*["']https?:\/\//i, "remote importScripts"],
+    [/\bimport\s*\(\s*["']https?:\/\//i, "remote dynamic import"],
+    [/\.src\s*=\s*["']https?:\/\//i, "remote script source"],
+    [
+      /WebAssembly\.(?:instantiateStreaming|compileStreaming)\s*\(\s*fetch\s*\(\s*["']https?:\/\//i,
+      "remote WebAssembly"
+    ],
+    [/\beval\s*\(|\bnew\s+Function\s*\(/, "dynamic code"]
+  ];
   const pending = [directory];
   while (pending.length) {
     const current = pending.pop();
@@ -107,11 +118,9 @@ function assertNoRemoteCode(directory) {
       }
       if (!/\.(?:js|html)$/i.test(entry.name)) continue;
       const source = fs.readFileSync(fullPath, "utf8");
-      if (/<script\b[^>]*\bsrc=["']https?:\/\//i.test(source)) {
-        throw new Error(`Remote script không được phép: ${path.relative(directory, fullPath)}`);
-      }
-      if (/\beval\s*\(|\bnew\s+Function\s*\(/.test(source)) {
-        throw new Error(`Dynamic code không được phép: ${path.relative(directory, fullPath)}`);
+      for (const [pattern, label] of forbidden) {
+        if (!pattern.test(source)) continue;
+        throw new Error(`${label} không được phép: ${path.relative(directory, fullPath)}`);
       }
     }
   }

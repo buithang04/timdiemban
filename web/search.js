@@ -8,6 +8,7 @@
   const MAPS_AUTO_FOCUS_KEY = "timdiemban_maps_auto_focus";
   const MAPS_AUTO_REOPEN_KEY = "timdiemban_maps_auto_reopen";
   const SEARCH_OPTIONS_OPEN_KEY = "timdiemban_search_options_open";
+  const SEARCH_BATCH_RECOVERY_KEY = "timdiemban_search_batch_recovery_v1";
 
   const els = {
     form: document.getElementById("searchForm"),
@@ -20,12 +21,13 @@
     btnFromGps: document.getElementById("btnFromGps"),
     btnPickCenter: document.getElementById("btnPickCenter"),
     startBtn: document.getElementById("startSearchBtn"),
+    pauseSearchBtn: document.getElementById("pauseSearchBtn"),
+    resumeSearchBtn: document.getElementById("resumeSearchBtn"),
     cancelSearchBtn: document.getElementById("cancelSearchBtn"),
     searchStatus: document.getElementById("searchStatus"),
     searchProgress: document.getElementById("searchProgress"),
     searchProgressBar: document.getElementById("searchProgressBar"),
     searchProgressText: document.getElementById("searchProgressText"),
-    scrapeLog: document.getElementById("scrapeLog"),
     extHint: document.getElementById("extHint"),
     mapsFocusModal: document.getElementById("mapsFocusModal"),
     mapsFocusModalTitle: document.getElementById("mapsFocusModalTitle"),
@@ -43,7 +45,7 @@
     searchOptionsToggle: document.getElementById("searchOptionsToggle"),
     searchOptionsBody: document.getElementById("searchOptionsBody"),
     searchOptionsHint: document.getElementById("searchOptionsHint"),
-    fastMode: document.getElementById("searchFastMode")
+    quickScan: document.getElementById("searchQuickScan")
   };
 
   function getMapsAutoFocusMinutes() {
@@ -155,7 +157,7 @@
   function updateSearchOptionsHint() {
     if (!els.searchOptionsHint) return;
     const tags = [];
-    if (els.fastMode?.checked) tags.push("Nhanh");
+    if (els.quickScan?.checked) tags.push("Quét nhanh: 2 tab");
     if (els.mapsAutoFocus?.checked) tags.push("Khôi phục Maps khi treo");
     if (els.mapsAutoReopen?.checked) tags.push("Mở lại tab");
     els.searchOptionsHint.textContent = tags.length ? tags.join(" · ") : "Chưa bật";
@@ -290,14 +292,167 @@
   /** Một promise GPS duy nhất — tránh autoDetect + Tìm kiếm chạy song song */
   let centerDetectPromise = null;
   let searchRunning = false;
+  let searchPaused = false;
   let formBusy = false;
   let busyOperation = "";
   let submitting = false;
   /** Đang chạy chuỗi nhiều từ khóa (khóa form tới khi xong hết) */
   let multiKeywordBatch = false;
   let multiKeywordAbort = false;
+  let pendingBatchResume = null;
+  let batchRecoveryStarting = false;
+  let workspaceReady = false;
+  let latestSearchStatus = null;
+  let activeSearchEndWaiter = null;
+
+  function getBatchAccountScope() {
+    const token = String(localStorage.getItem("timdiemban_token") || "");
+    if (!token) return "";
+    let hash = 2166136261;
+    for (let i = 0; i < token.length; i++) {
+      hash ^= token.charCodeAt(i);
+      hash = Math.imul(hash, 16777619);
+    }
+    return `session-${(hash >>> 0).toString(16).padStart(8, "0")}`;
+  }
+
+  function readBatchRecovery() {
+    try {
+      const value = JSON.parse(localStorage.getItem(SEARCH_BATCH_RECOVERY_KEY) || "null");
+      if (!value || ![1, 2].includes(value.version) || !Array.isArray(value.keywords)) return null;
+      if (!value.keywords.length || value.keywords.length > 10) return null;
+      if (!Number.isSafeInteger(value.nextIndex) || value.nextIndex < 0) return null;
+      if (!value.baseParams || typeof value.baseParams !== "object") return null;
+      const accountScope = getBatchAccountScope();
+      if (!accountScope) return null;
+      if (value.version === 2 && value.accountScope !== accountScope) {
+        localStorage.removeItem(SEARCH_BATCH_RECOVERY_KEY);
+        return null;
+      }
+      return value.version === 2 ? value : { ...value, version: 2, accountScope };
+    } catch {
+      return null;
+    }
+  }
+
+  function writeBatchRecovery(value) {
+    try {
+      const baseParams = { ...(value.baseParams || {}) };
+      delete baseParams.authToken;
+      localStorage.setItem(
+        SEARCH_BATCH_RECOVERY_KEY,
+        JSON.stringify({
+          ...value,
+          version: 2,
+          accountScope: getBatchAccountScope(),
+          baseParams,
+          savedAt: Date.now()
+        })
+      );
+    } catch {}
+  }
+
+  function clearBatchRecovery() {
+    try {
+      localStorage.removeItem(SEARCH_BATCH_RECOVERY_KEY);
+    } catch {}
+  }
+
+  function launchRecoveredBatch(state) {
+    if (!state || batchRecoveryStarting || multiKeywordBatch || searchRunning || searchPaused) return;
+    if (!workspaceReady) return;
+    if (state.nextIndex >= state.keywords.length) {
+      clearBatchRecovery();
+      return;
+    }
+    batchRecoveryStarting = true;
+    pendingBatchResume = state;
+    if (els.keyword) els.keyword.value = state.keywords.join(", ");
+    if (els.radius) els.radius.value = String(state.baseParams.radius || "");
+    if (els.lat) els.lat.value = String(state.baseParams.lat ?? "");
+    if (els.lng) els.lng.value = String(state.baseParams.lng ?? "");
+    if (els.quickScan) els.quickScan.checked = state.baseParams.quickScan === true;
+    if (els.mapsAutoFocus) els.mapsAutoFocus.checked = state.baseParams.mapsAutoFocus === true;
+    if (els.mapsAutoReopen) els.mapsAutoReopen.checked = state.baseParams.mapsAutoReopen === true;
+    updateSearchOptionsHint();
+    queueMicrotask(() => {
+      handleSubmit({ preventDefault() {} }).finally(() => {
+        batchRecoveryStarting = false;
+        updateFormControls();
+      });
+    });
+  }
+
+  function continueRecoveredBatchAfterTerminal(payload = {}) {
+    const state = readBatchRecovery();
+    if (!state) return false;
+    const completedSearchId =
+      payload.searchParams?.searchId || payload.searchId || payload.search?.searchId || "";
+    if (!completedSearchId || state.activeSearchId !== completedSearchId) return false;
+    const terminalType = payload.type || "complete";
+    const end = { type: terminalType, payload };
+    if (isUserCancelEnd(end)) {
+      clearBatchRecovery();
+      return true;
+    }
+    if (terminalType === "error" || terminalType === "tab_closed") {
+      clearBatchRecovery();
+      return true;
+    }
+    const nextIndex = Math.max(state.nextIndex, Number(state.currentIndex || 0) + 1);
+    const nextState = { ...state, nextIndex, phase: "between", activeSearchId: "" };
+    writeBatchRecovery(nextState);
+    if (nextIndex >= state.keywords.length) {
+      clearBatchRecovery();
+      updateSearchProgress(100, "Hoàn tất");
+      showSearchStatus(
+        `Hoàn tất ${state.keywords.length} từ khóa — xem các tab kết quả bên dưới.`,
+        "success"
+      );
+      return true;
+    }
+    showSearchStatus(
+      `Đã khôi phục chuỗi tìm kiếm — chuẩn bị từ khóa ${nextIndex + 1}/${state.keywords.length}…`,
+      "info"
+    );
+    launchRecoveredBatch(nextState);
+    return true;
+  }
+
+  function reconcileBatchRecovery(status = {}) {
+    const state = readBatchRecovery();
+    if (!state || !workspaceReady) return;
+    const active = !!(status.running || status.stalled || status.paused || status.canResume);
+    const sameSearch = !!status.searchId && status.searchId === state.activeSearchId;
+
+    if (sameSearch && active) {
+      const phase = status.paused || (!status.running && status.canResume) ? "paused" : "running";
+      if (state.phase !== phase) writeBatchRecovery({ ...state, phase });
+      return;
+    }
+
+    if (active) return;
+    if (state.phase === "between" || state.phase === "starting") {
+      launchRecoveredBatch(state);
+    }
+  }
+
+  function resetSearchRecovery({ abandon = false } = {}) {
+    multiKeywordAbort = true;
+    pendingBatchResume = null;
+    batchRecoveryStarting = false;
+    clearBatchRecovery();
+    activeSearchEndWaiter?.cancel?.({ type: "cancelled", payload: { partialCode: "ABANDON" } });
+    activeSearchEndWaiter = null;
+    clearSearchWatchdog();
+    setSearchPaused(false);
+    setSearchRunning(false);
+    if (abandon) abandonExtensionSearch();
+    resetFormLock();
+  }
 
   function busyMessage() {
+    if (searchPaused) return "Lượt quét đang tạm dừng — hãy tiếp tục hoặc dừng hẳn trước.";
     if (multiKeywordBatch || searchRunning) return "Đang tìm kiếm — vui lòng đợi hoàn tất.";
     if (submitting || busyOperation === "search") return "Đang chuẩn bị tìm kiếm — vui lòng đợi.";
     if (busyOperation === "gps") return "Đang lấy GPS — vui lòng đợi xong.";
@@ -307,7 +462,14 @@
   }
 
   function isFormLocked() {
-    return formBusy || searchRunning || submitting || multiKeywordBatch;
+    return (
+      formBusy ||
+      searchRunning ||
+      searchPaused ||
+      submitting ||
+      multiKeywordBatch ||
+      batchRecoveryStarting
+    );
   }
 
   /** Tách "tạp hóa, phòng khám, quán ăn" → ["tạp hóa", "phòng khám", "quán ăn"] */
@@ -320,14 +482,19 @@
       .slice(0, 10);
   }
 
-  function waitForSearchEnd(expectedSearchId, timeoutMs = 45 * 60 * 1000) {
-    return new Promise((resolve) => {
+  function waitForSearchEnd(expectedSearchId, inactiveTimeoutMs = 12 * 60 * 1000) {
+    let markStarted = () => {};
+    let cancel = () => {};
+    const promise = new Promise((resolve) => {
       let done = false;
-      let timer = null;
+      let started = false;
+      let pollTimer = null;
+      let pollBusy = false;
+      let lastConfirmedAliveAt = 0;
       const finish = (result) => {
         if (done) return;
         done = true;
-        if (timer) clearTimeout(timer);
+        if (pollTimer) clearInterval(pollTimer);
         window.removeEventListener("message", onMsg);
         window.removeEventListener("timdiemban:search-finished", onFinished);
         resolve(result);
@@ -343,12 +510,19 @@
         // Bắt buộc khớp searchId — tránh lượt trước kết thúc sớm làm nhảy từ khóa
         return !!sid && sid === expectedSearchId;
       };
+      const confirmAlive = () => {
+        if (!started) return;
+        lastConfirmedAliveAt = Date.now();
+      };
       function onMsg(event) {
         if (event.origin !== window.location.origin) return;
         if (event.data?.source !== "timdiemban-ext") return;
         const t = event.data.type;
+        const payload = event.data.payload || {};
+        if ((t === "start" || t === "progress") && matchesSearch(payload)) {
+          confirmAlive();
+        }
         if (t === "complete" || t === "error" || t === "tab_closed") {
-          const payload = event.data.payload || {};
           if (!matchesSearch(payload)) return;
           finish({ type: t, payload });
         }
@@ -357,17 +531,52 @@
         const sid = ev?.detail?.searchId;
         // Chỉ nhận finished khi có searchId khớp (bỏ qua finished mồ côi)
         if (!expectedSearchId || !sid || sid !== expectedSearchId) return;
-        finish({ type: "finished", payload: ev?.detail || {} });
+        const payload = ev?.detail || {};
+        finish({ type: payload.type || "finished", payload });
       }
-      timer = setTimeout(() => {
-        finish({
-          type: "timeout",
-          payload: { error: "Hết thời gian chờ kết thúc lượt tìm — dừng chuỗi từ khóa." }
-        });
-      }, timeoutMs);
+
+      const pollStatus = async () => {
+        if (!started || done || pollBusy) return;
+        pollBusy = true;
+        try {
+          const status = await requestSearchStatusAsync(6000);
+          if (done) return;
+          const sameSearch = !expectedSearchId || status?.searchId === expectedSearchId;
+          if (
+            sameSearch &&
+            (status?.running || status?.stalled || status?.paused || status?.canResume)
+          ) {
+            confirmAlive();
+            if (status?.mergedCount != null) {
+              lastKnownMergedCount = Math.max(lastKnownMergedCount, Number(status.mergedCount) || 0);
+            }
+            return;
+          }
+          if (Date.now() - lastConfirmedAliveAt >= inactiveTimeoutMs) {
+            lastConfirmedAliveAt = Date.now();
+            showSearchStatus(
+              "Tạm thời chưa xác nhận được trạng thái extension. Findmap vẫn giữ lượt quét và tiếp tục chờ; bạn có thể tải lại trang để kết nối lại.",
+              "info"
+            );
+          }
+        } finally {
+          pollBusy = false;
+        }
+      };
+
       window.addEventListener("message", onMsg);
       window.addEventListener("timdiemban:search-finished", onFinished);
+      pollTimer = setInterval(pollStatus, 15000);
+      markStarted = () => {
+        if (done || started) return;
+        started = true;
+        lastConfirmedAliveAt = Date.now();
+        pollStatus();
+      };
+      cancel = (result = { type: "cancelled", payload: {} }) => finish(result);
     });
+
+    return { promise, markStarted, cancel };
   }
 
   /** Chờ extension thật sự rảnh trước khi START từ khóa tiếp */
@@ -376,11 +585,11 @@
     while (Date.now() - started < timeoutMs) {
       const status = await requestSearchStatusAsync(4000);
       // Chỉ coi bận khi đang quét thật — không dùng mapsTabId từ checkpoint cũ (tab có thể đã đóng)
-      const busy = !!(status?.running || status?.stalled);
+      const busy = !!(status?.running || status?.stalled || status?.paused);
       if (!busy) {
         await new Promise((r) => setTimeout(r, 400));
         const again = await requestSearchStatusAsync(3000);
-        if (!(again?.running || again?.stalled)) return true;
+        if (!(again?.running || again?.stalled || again?.paused)) return true;
       }
       await new Promise((r) => setTimeout(r, 600));
     }
@@ -426,13 +635,22 @@
   function updateFormControls() {
     const locked = isFormLocked();
     if (els.startBtn) {
-      els.startBtn.disabled = false;
+      els.startBtn.disabled = locked;
       els.startBtn.title = locked ? busyMessage() : "";
       els.startBtn.classList.toggle("is-busy", locked);
-      els.startBtn.classList.toggle("hidden", searchRunning || multiKeywordBatch);
+      els.startBtn.classList.toggle("hidden", searchRunning || searchPaused || multiKeywordBatch);
+    }
+    if (els.pauseSearchBtn) {
+      const canPause = searchRunning && !searchPaused;
+      els.pauseSearchBtn.classList.toggle("hidden", !canPause);
+      els.pauseSearchBtn.disabled = !canPause;
+    }
+    if (els.resumeSearchBtn) {
+      els.resumeSearchBtn.classList.toggle("hidden", !searchPaused);
+      els.resumeSearchBtn.disabled = !searchPaused;
     }
     if (els.cancelSearchBtn) {
-      const canCancel = searchRunning || multiKeywordBatch;
+      const canCancel = searchRunning || searchPaused || multiKeywordBatch;
       els.cancelSearchBtn.classList.toggle("hidden", !canCancel);
       els.cancelSearchBtn.disabled = !canCancel;
     }
@@ -448,20 +666,36 @@
       els.form.querySelectorAll("input, select").forEach((el) => {
         if (
           el.id === "searchMapsAutoFocus" ||
-          el.id === "searchMapsAutoReopen" ||
-          el.id === "searchFastMode"
+          el.id === "searchMapsAutoReopen"
         ) {
           return;
         }
         el.disabled = locked;
       });
       els.form.querySelectorAll('button:not([type="submit"])').forEach((el) => {
-        if (el.id === "cancelSearchBtn" || el.id === "searchOptionsToggle") return;
+        if (
+          el.id === "cancelSearchBtn" ||
+          el.id === "pauseSearchBtn" ||
+          el.id === "resumeSearchBtn" ||
+          el.id === "searchOptionsToggle"
+        ) return;
         el.disabled = locked;
       });
     }
     if (els.cancelSearchBtn && searchRunning) {
       els.cancelSearchBtn.disabled = false;
+    }
+    if (els.cancelSearchBtn && searchPaused) {
+      els.cancelSearchBtn.disabled = false;
+    }
+    for (const buttonId of ["resetBtn", "clearBtn"]) {
+      const button = document.getElementById(buttonId);
+      if (!button) continue;
+      if (!button.dataset.defaultTitle) button.dataset.defaultTitle = button.title || "";
+      button.disabled = locked;
+      button.title = locked
+        ? "Hãy tạm dừng rồi dừng hẳn lượt quét trước khi xóa kết quả."
+        : button.dataset.defaultTitle;
     }
   }
 
@@ -624,21 +858,6 @@
     els.searchProgress.classList.remove("hidden");
     if (els.searchProgressBar) els.searchProgressBar.style.width = `${percent}%`;
     if (els.searchProgressText) els.searchProgressText.textContent = text || `${percent}%`;
-    if (els.scrapeLog) els.scrapeLog.classList.remove("hidden");
-  }
-
-  function clearScrapeLog() {
-    if (els.scrapeLog) {
-      els.scrapeLog.textContent = "";
-      els.scrapeLog.classList.add("hidden");
-    }
-  }
-
-  function appendScrapeLog(line) {
-    if (!els.scrapeLog || !line) return;
-    els.scrapeLog.classList.remove("hidden");
-    els.scrapeLog.textContent = (els.scrapeLog.textContent ? els.scrapeLog.textContent + "\n" : "") + line;
-    els.scrapeLog.scrollTop = els.scrapeLog.scrollHeight;
   }
 
   function showMapsFocusModal(status = {}) {
@@ -684,12 +903,25 @@
 
   function setSearchRunning(running) {
     searchRunning = running;
+    if (running) searchPaused = false;
     if (!running) {
       clearSearchWatchdog();
       clearSearchSyncPoll();
       hideMapsFocusModal();
     } else {
       startSearchSyncPoll();
+    }
+    updateBackgroundSearchHint();
+    updateFormControls();
+  }
+
+  function setSearchPaused(paused) {
+    searchPaused = paused;
+    if (paused) {
+      searchRunning = false;
+      clearSearchWatchdog();
+      clearSearchSyncPoll();
+      hideMapsFocusModal();
     }
     updateBackgroundSearchHint();
     updateFormControls();
@@ -986,6 +1218,50 @@
     });
   }
 
+  function requestPauseSearch(reason) {
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        window.removeEventListener("message", onMsg);
+        reject(new Error("Chưa nhận được xác nhận tạm dừng. Tiến trình vẫn có thể đang chạy."));
+      }, 30000);
+
+      function onMsg(event) {
+        if (event.origin !== window.location.origin) return;
+        if (event.data?.source !== "timdiemban-ext" || event.data?.type !== "pause_ack") return;
+        clearTimeout(timeout);
+        window.removeEventListener("message", onMsg);
+        const p = event.data.payload || {};
+        if (p.success) resolve(p);
+        else reject(new Error(p.error || "Không tạm dừng được lượt quét"));
+      }
+
+      window.addEventListener("message", onMsg);
+      postToExt("PAUSE_SEARCH", { reason });
+    });
+  }
+
+  function requestResumeSearch() {
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        window.removeEventListener("message", onMsg);
+        reject(new Error("Chưa mở lại được tiến trình. Hãy kiểm tra extension và thử lại."));
+      }, 45000);
+
+      function onMsg(event) {
+        if (event.origin !== window.location.origin) return;
+        if (event.data?.source !== "timdiemban-ext" || event.data?.type !== "resume_ack") return;
+        clearTimeout(timeout);
+        window.removeEventListener("message", onMsg);
+        const p = event.data.payload || {};
+        if (p.success) resolve(p);
+        else reject(new Error(p.error || "Không tiếp tục được lượt quét"));
+      }
+
+      window.addEventListener("message", onMsg);
+      postToExt("RESUME_SEARCH");
+    });
+  }
+
   function requestSearchStatus() {
     postToExt("GET_SEARCH_STATUS");
   }
@@ -1012,7 +1288,29 @@
     if (!status) return;
     window.dispatchEvent(new CustomEvent("timdiemban:search-status", { detail: status }));
     if (status.mergedCount != null) lastKnownMergedCount = status.mergedCount;
+    const pausedOrRecoverable = !!(
+      status.paused ||
+      (!status.running && !status.stalled && status.canResume)
+    );
+    if (pausedOrRecoverable) {
+      setSearchPaused(true);
+      if (status.mapsAutoFocus != null) syncMapsAutoFocusCheckbox(!!status.mapsAutoFocus);
+      if (status.mapsAutoReopen != null) syncMapsAutoReopenCheckbox(!!status.mapsAutoReopen);
+      hideMapsFocusModal();
+      if (status.totalCells) {
+        updateSearchProgress(
+          Math.round(((status.gridIndex || 0) / status.totalCells) * 95),
+          `Đã tạm dừng tại khu vực ${(status.gridIndex || 0) + 1}/${status.totalCells} · ${status.mergedCount || 0} điểm bán`
+        );
+      }
+      showSearchStatus(
+        status.pauseReason || "Tiến độ đang được giữ an toàn. Bấm 'Tiếp tục quét' để chạy tiếp đúng chỗ đang dở.",
+        "info"
+      );
+      return;
+    }
     if (status.running || status.stalled) {
+      setSearchPaused(false);
       setSearchRunning(true);
       if (status.mapsAutoFocus != null) syncMapsAutoFocusCheckbox(!!status.mapsAutoFocus);
       if (status.mapsAutoReopen != null) syncMapsAutoReopenCheckbox(!!status.mapsAutoReopen);
@@ -1040,7 +1338,8 @@
           `Khu vực ${(status.gridIndex || 0) + 1}/${status.totalCells} · Đã thu thập ${status.mergedCount || 0} điểm bán`
         );
       }
-    } else if (!status.running && searchRunning) {
+    } else if (!status.running && (searchRunning || searchPaused)) {
+      setSearchPaused(false);
       setSearchRunning(false);
     }
   }
@@ -1074,7 +1373,9 @@
   async function handleSubmit(e) {
     e.preventDefault();
 
-    if (isFormLocked()) {
+    const recoveredBatch = pendingBatchResume;
+    pendingBatchResume = null;
+    if (isFormLocked() && !recoveredBatch) {
       showSearchStatus(busyMessage(), "error");
       return;
     }
@@ -1091,7 +1392,7 @@
       return;
     }
 
-    const keywords = parseSearchKeywords(els.keyword.value);
+    const keywords = recoveredBatch?.keywords || parseSearchKeywords(els.keyword.value);
     enforceRadiusInput();
     const radiusKm = radiusKmFromInput();
     if (!keywords.length) {
@@ -1157,7 +1458,6 @@
       multiKeywordAbort = false;
       setSearchRunning(true);
       armSearchWatchdog();
-      clearScrapeLog();
       lastKnownMergedCount = 0;
       updateFormControls();
 
@@ -1168,22 +1468,41 @@
         { fit: true }
       );
 
-      const baseParams = {
-        radius: radiusKm,
-        lat: center.lat,
-        lng: center.lng,
-        centerSource,
-        webUrl: window.location.origin,
-        authToken: token,
-        fastMode: document.getElementById("searchFastMode")?.checked || false,
-        mapsAutoFocus: isMapsAutoFocusChecked(),
-        mapsAutoReopen: isMapsAutoReopenChecked(),
-        keywords,
-        keywordTotal: keywords.length
-      };
+      const baseParams = recoveredBatch
+        ? {
+            ...recoveredBatch.baseParams,
+            webUrl: window.location.origin,
+            authToken: token,
+            keywords,
+            keywordTotal: keywords.length
+          }
+        : {
+            radius: radiusKm,
+            lat: center.lat,
+            lng: center.lng,
+            centerSource,
+            webUrl: window.location.origin,
+            authToken: token,
+            quickScan: !!els.quickScan?.checked,
+            mapsAutoFocus: isMapsAutoFocusChecked(),
+            mapsAutoReopen: isMapsAutoReopenChecked(),
+            keywords,
+            keywordTotal: keywords.length
+          };
 
-      const batchId = Date.now();
+      const batchId = recoveredBatch?.batchId || Date.now();
+      const startIndex = recoveredBatch?.nextIndex || 0;
       let stoppedEarly = false;
+
+      writeBatchRecovery({
+        batchId,
+        keywords,
+        baseParams,
+        currentIndex: Math.max(0, startIndex),
+        nextIndex: Math.max(0, startIndex),
+        activeSearchId: "",
+        phase: "between"
+      });
 
       if (keywords.length > 1) {
         showSearchStatus(
@@ -1195,7 +1514,7 @@
       // Đảm bảo không còn lượt cũ / tab Maps trước khi bắt đầu chuỗi
       showSearchStatus(
         keywords.length > 1
-          ? `Đang kiểm tra tiện ích — chuẩn bị từ khóa 1/${keywords.length}…`
+          ? `Đang kiểm tra tiện ích — chuẩn bị từ khóa ${startIndex + 1}/${keywords.length}…`
           : "Đang kiểm tra tiện ích sẵn sàng…",
         "info"
       );
@@ -1206,7 +1525,7 @@
         );
       }
 
-      for (let i = 0; i < keywords.length; i++) {
+      for (let i = startIndex; i < keywords.length; i++) {
         if (multiKeywordAbort) {
           stoppedEarly = true;
           break;
@@ -1219,6 +1538,16 @@
           keywordIndex: i,
           searchId: `search_${batchId}_${i}`
         };
+
+        writeBatchRecovery({
+          batchId,
+          keywords,
+          baseParams,
+          currentIndex: i,
+          nextIndex: i,
+          activeSearchId: searchParams.searchId,
+          phase: "starting"
+        });
 
         // Trước mỗi từ khóa (trừ đầu): chờ idle tuyệt đối — 1 tab Maps / 1 lúc
         if (i > 0) {
@@ -1264,14 +1593,36 @@
 
         try {
           // Gắn listener TRƯỚC START — và chỉ nhận đúng searchId này
-          const endPromise = waitForSearchEnd(searchParams.searchId);
-          await startSearchExclusive(searchParams);
+          const endWaiter = waitForSearchEnd(searchParams.searchId);
+          activeSearchEndWaiter = endWaiter;
+          try {
+            await startSearchExclusive(searchParams);
+            writeBatchRecovery({
+              batchId,
+              keywords,
+              baseParams,
+              currentIndex: i,
+              nextIndex: i,
+              activeSearchId: searchParams.searchId,
+              phase: "running"
+            });
+            endWaiter.markStarted();
+          } catch (err) {
+            endWaiter.cancel();
+            throw err;
+          }
+          const scanModeHint = searchParams.quickScan
+            ? "Quét nhanh dùng 2 tab: tab 1 lấy danh sách URL, tab 2 liên tục đọc chi tiết địa điểm."
+            : "Quét thường dùng 1 tab: lấy xong danh sách URL của từng khu vực rồi mới đọc chi tiết.";
           const autoFocusHint = searchParams.mapsAutoFocus
-            ? "Khi lấy danh sách từng khu vực, hãy giữ Maps ở phía trước; khi đọc chi tiết URL bạn có thể dùng tab khác. Maps chỉ tự quay lại nếu không có dữ liệu mới trong 5 phút."
+            ? searchParams.quickScan
+              ? "Khi tab 1 đang lấy danh sách, hãy giữ tab đó ở phía trước; tab 2 vẫn đọc chi tiết ở nền. Maps chỉ tự quay lại nếu không có dữ liệu mới trong 5 phút."
+              : "Khi lấy danh sách từng khu vực, hãy giữ Maps ở phía trước; khi đọc chi tiết URL bạn có thể dùng tab khác. Maps chỉ tự quay lại nếu không có dữ liệu mới trong 5 phút."
             : "Đang tắt tự khôi phục tab Maps khi tiến trình không phản hồi.";
-          showSearchStatus(`${stepLabel} — ${autoFocusHint}`, "info");
+          showSearchStatus(`${stepLabel} — ${scanModeHint} ${autoFocusHint}`, "info");
 
-          const end = await endPromise;
+          const end = await endWaiter.promise;
+          if (activeSearchEndWaiter === endWaiter) activeSearchEndWaiter = null;
           clearSearchWatchdog();
           setSearchRunning(false);
 
@@ -1286,7 +1637,8 @@
             break;
           }
 
-          // Lỗi cứng / đóng tab / timeout → dừng chuỗi
+          // Lỗi cứng / timeout mất kết nối thật sự → dừng chuỗi.
+          // Đóng tab Maps được background tự mở lại hoặc chuyển sang paused, không gửi terminal giả.
           if (end.type === "error" || end.type === "tab_closed" || end.type === "timeout") {
             stoppedEarly = true;
             showSearchStatus(
@@ -1315,7 +1667,17 @@
               `Đồng bộ kết quả "${keyword}"`
             );
           } catch {}
+          writeBatchRecovery({
+            batchId,
+            keywords,
+            baseParams,
+            currentIndex: i,
+            nextIndex: i + 1,
+            activeSearchId: "",
+            phase: "between"
+          });
         } catch (err) {
+          activeSearchEndWaiter = null;
           showSearchStatus(err.message, "error");
           stoppedEarly = true;
           await waitForExtensionIdle(20000).catch(() => false);
@@ -1324,6 +1686,7 @@
       }
 
       if (!stoppedEarly) {
+        clearBatchRecovery();
         updateSearchProgress(100, "Hoàn tất");
         showSearchStatus(
           keywords.length > 1
@@ -1332,10 +1695,12 @@
           "success"
         );
       } else if (keywords.length > 1) {
+        clearBatchRecovery();
         // Giữ thông báo đã set ở trên; bổ sung nếu vòng lặp thoát vì idle
         /* no-op */
       }
     } catch (err) {
+      clearBatchRecovery();
       if (isGeoDeniedError(err)) {
         notifyGpsDenied(err);
       } else {
@@ -1349,6 +1714,7 @@
       multiKeywordAbort = false;
       submitting = false;
       setFormBusy(false);
+      setSearchPaused(false);
       setSearchRunning(false);
       updateFormControls();
     }
@@ -1377,14 +1743,13 @@
       return;
     }
 
-    if (event.data.type === "log") {
-      appendScrapeLog(event.data.payload?.line);
-      return;
-    }
-
     if (event.data.type === "start") {
-      const cells = event.data.payload?.searchParams?.gridCells;
-      updateSearchProgress(2, cells ? `Lưới ${cells} ô — đang mở Google Maps...` : "Đang mở Google Maps...");
+      const startedParams = event.data.payload?.searchParams || {};
+      const cells = startedParams.gridCells;
+      const openingText = startedParams.quickScan
+        ? "Đang mở 2 tab Google Maps — tab 1 lấy URL, tab 2 đọc chi tiết..."
+        : "Đang mở Google Maps — lấy danh sách rồi đọc chi tiết trên cùng 1 tab...";
+      updateSearchProgress(2, cells ? `Lưới ${cells} ô — ${openingText}` : openingText);
       setSearchRunning(true);
       hideMapsFocusModal();
       armSearchWatchdog();
@@ -1403,7 +1768,10 @@
     }
 
     if (event.data.type === "search_status") {
-      applySearchStatus(event.data.payload);
+      const status = event.data.payload || {};
+      latestSearchStatus = status;
+      applySearchStatus(status);
+      reconcileBatchRecovery(status);
       return;
     }
 
@@ -1412,7 +1780,9 @@
     }
 
     if (event.data.type === "error") {
+      clearBatchRecovery();
       clearSearchWatchdog();
+      setSearchPaused(false);
       setSearchRunning(false);
       showSearchStatus(event.data.payload?.error || "Lỗi tìm kiếm", "error");
       return;
@@ -1420,10 +1790,17 @@
 
     if (event.data.type === "complete" || event.data.type === "tab_closed") {
       clearSearchWatchdog();
+      setSearchPaused(false);
       setSearchRunning(false);
       // Chuỗi nhiều từ khóa: handleSubmit tự cập nhật trạng thái từng bước
       if (multiKeywordBatch) return;
       if (event.data.type === "complete") {
+        if (
+          continueRecoveredBatchAfterTerminal({
+            ...(event.data.payload || {}),
+            type: "complete"
+          })
+        ) return;
         const partial = event.data.payload?.partial;
         updateSearchProgress(100, partial ? "Dừng sớm" : "Hoàn tất");
         showSearchStatus(
@@ -1433,6 +1810,7 @@
           partial ? "info" : "success"
         );
       } else {
+        clearBatchRecovery();
         showSearchStatus(
           event.data.payload?.error || "Tìm kiếm bị gián đoạn — mở lại trang và thử lại.",
           "error"
@@ -1441,8 +1819,16 @@
     }
   });
 
-  window.addEventListener("timdiemban:search-finished", () => {
+  window.addEventListener("timdiemban:search-finished", (event) => {
+    setSearchPaused(false);
     setSearchRunning(false);
+    if (!multiKeywordBatch) continueRecoveredBatchAfterTerminal(event.detail || {});
+  });
+
+  window.addEventListener("timdiemban:workspace-ready", () => {
+    workspaceReady = true;
+    requestSearchStatus();
+    if (latestSearchStatus) reconcileBatchRecovery(latestSearchStatus);
   });
 
   if (els.mapsFocusModalOk) {
@@ -1463,8 +1849,8 @@
     });
   }
 
-  if (els.fastMode) {
-    els.fastMode.addEventListener("change", onSearchOptionChange);
+  if (els.quickScan) {
+    els.quickScan.addEventListener("change", onSearchOptionChange);
   }
 
   if (els.mapsAutoFocus) {
@@ -1630,13 +2016,58 @@
 
   els.form?.addEventListener("submit", handleSubmit);
 
+  els.pauseSearchBtn?.addEventListener("click", async () => {
+    if (!searchRunning || searchPaused) return;
+    els.pauseSearchBtn.disabled = true;
+    showSearchStatus("Đang lưu tiến độ để tạm dừng an toàn...", "info");
+    try {
+      const result = await requestPauseSearch("Người dùng tạm dừng quét");
+      const status = result.status || {};
+      if (result.status) applySearchStatus(result.status);
+      else setSearchPaused(true);
+      showSearchStatus(
+        status.pauseReason || "Đã tạm dừng. Toàn bộ ô, URL và kết quả hiện tại đã được lưu.",
+        "info"
+      );
+    } catch (err) {
+      showSearchStatus(err.message, "error");
+      requestSearchStatus();
+    } finally {
+      updateFormControls();
+    }
+  });
+
+  els.resumeSearchBtn?.addEventListener("click", async () => {
+    if (!searchPaused) return;
+    els.resumeSearchBtn.disabled = true;
+    showSearchStatus("Đang mở lại Google Maps và khôi phục đúng tiến độ...", "info");
+    try {
+      const result = await requestResumeSearch();
+      const status = result.status || (await requestSearchStatusAsync(8000).catch(() => null));
+      if (status) applySearchStatus(status);
+      else {
+        setSearchPaused(false);
+        setSearchRunning(true);
+      }
+      touchSearchProgress();
+      armSearchWatchdog();
+      showSearchStatus("Đã tiếp tục quét từ khu vực và URL đang dở.", "success");
+      requestSearchSync("Đồng bộ sau khi tiếp tục quét");
+    } catch (err) {
+      setSearchPaused(true);
+      showSearchStatus(err.message, "error");
+    } finally {
+      updateFormControls();
+    }
+  });
+
   els.cancelSearchBtn?.addEventListener("click", async () => {
-    if (!searchRunning && !multiKeywordBatch) return;
+    if (!searchRunning && !searchPaused && !multiKeywordBatch) return;
     multiKeywordAbort = true;
     els.cancelSearchBtn.disabled = true;
     showSearchStatus("Đang dừng quét...", "info");
     try {
-      if (searchRunning) {
+      if (searchRunning || searchPaused) {
         await requestCancelSearch("Người dùng dừng tìm kiếm");
         showSearchStatus("Đã dừng — đang tổng hợp kết quả...", "info");
       }
@@ -1684,6 +2115,8 @@
     resetFormLock,
     isMapsAutoReopenChecked,
     abandonExtensionSearch,
-    requestSearchSync
+    requestSearchSync,
+    clearBatchRecovery,
+    resetSearchRecovery
   };
 })();

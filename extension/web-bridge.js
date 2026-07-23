@@ -117,9 +117,6 @@
         if (message?.action === "TIMDIEMBAN_DATA") {
           toPage(message.type, message.payload);
         }
-        if (message?.action === "SEARCH_LOG") {
-          toPage("log", { line: message.line });
-        }
       } catch {
         kill();
       }
@@ -182,6 +179,10 @@
       }
       if (type === "CANCEL_SEARCH") {
         reply("CANCEL_SEARCH", "cancel_ack", { success: true });
+        return;
+      }
+      if (type === "PAUSE_SEARCH") {
+        reply("PAUSE_SEARCH", "pause_ack", { success: false });
         return;
       }
       if (type === "ABANDON_SEARCH") {
