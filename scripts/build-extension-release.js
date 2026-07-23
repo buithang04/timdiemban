@@ -13,7 +13,7 @@ const version = sourceManifest.version;
 const releaseName = `findmap-extension-${version}`;
 const releaseDir = path.join(distDir, releaseName);
 const zipPath = path.join(distDir, `${releaseName}.zip`);
-const allowedReleasePermissions = new Set(["storage", "scripting", "alarms"]);
+const allowedReleasePermissions = new Set(["storage", "scripting", "alarms", "power"]);
 const allowedReleaseHosts = new Set([
   "https://www.google.com/maps/*",
   "https://findmap.vn/*",

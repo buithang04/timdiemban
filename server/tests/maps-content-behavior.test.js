@@ -71,6 +71,47 @@ test("visibilitychange báo hidden đúng pha list kèm lease và vẫn báo vis
   assert.deepEqual(sent, [], "hidden ngoài pha list không được phát cảnh báo");
 });
 
+test("list checkpoint gửi URL mới kèm lease và vị trí cuộn bền", () => {
+  const source = section("function sendListCheckpoint", "function sendItem");
+  const sent = [];
+  const context = vm.createContext({
+    activeCellLease: { runId: "run-checkpoint", cellGeneration: 9 },
+    safeSend: (message) => sent.push(message)
+  });
+  vm.runInContext(`${source}\nthis.sendListCheckpoint = sendListCheckpoint;`, context);
+
+  context.sendListCheckpoint(
+    2,
+    [{ name: "A", href: "https://www.google.com/maps/place/A" }],
+    {
+      totalNewPlaces: 17,
+      scrollTop: 1234,
+      scrollHeight: 5678,
+      lastItemKey: "cid:chij-a"
+    }
+  );
+
+  assert.deepEqual(plain(sent), [
+    {
+      action: "SCRAPE_CELL_LIST_CHECKPOINT",
+      runId: "run-checkpoint",
+      cellGeneration: 9,
+      data: {
+        cellIndex: 2,
+        places: [{ name: "A", href: "https://www.google.com/maps/place/A" }],
+        newPlacesCount: 1,
+        totalNewPlaces: 17,
+        scrollTop: 1234,
+        scrollHeight: 5678,
+        lastItemKey: "cid:chij-a"
+      }
+    }
+  ]);
+
+  context.sendListCheckpoint(2, [], { totalNewPlaces: 18 });
+  assert.equal(sent.length, 1, "không gửi checkpoint rỗng");
+});
+
 test("getFeedPanel chọn result feed khi trang có nhiều role=feed", () => {
   const source = section("function sendItem", "/** Text trong button contact Maps");
   const placeLink = { href: "https://www.google.com/maps/place/Correct" };
@@ -924,6 +965,10 @@ test("hidden-tab feed scrolling is immediate and still nudges the loaded bottom"
   assert.equal(context.document.hidden, true);
   assert.equal(outcome.reachedEnd, true);
   assert.equal(outcome.reason, "end_marker");
+  assert.equal(outcome.newPlacesCount, 5);
+  assert.equal(outcome.scrollHeight, 2000);
+  assert.equal(outcome.suspendDetected, false);
+  assert.equal(outcome.continuationRecommended, false);
   assert.equal(loadingTriggered, true, "an instant nudge at the loaded bottom must trigger loading");
   assert.ok(
     scrollAssignments.some(
@@ -951,6 +996,73 @@ test("hidden-tab feed scrolling is immediate and still nudges the loaded bottom"
   }
 });
 
+test("renderer thức lại trả continuation và final-collect URL trước khi hết chunk", async () => {
+  const source = section(
+    "function updateEndMarkerConfirmation",
+    "async function enrichAllWithDetails"
+  );
+  let now = 0;
+  let injectedSuspend = false;
+  let collectCalls = 0;
+  const feed = {
+    isConnected: true,
+    clientHeight: 500,
+    scrollHeight: 1800,
+    scrollTop: 640,
+    style: {},
+    scrollBy({ top }) {
+      this.scrollTop = Math.max(
+        0,
+        Math.min(this.scrollHeight - this.clientHeight, this.scrollTop + Number(top || 0))
+      );
+    }
+  };
+  const context = vm.createContext({
+    CELL_SCROLL_CHUNK_MS: 220000,
+    T: { scroll: 150, scrollInit: 100 },
+    Date: { now: () => now },
+    document: { hidden: true },
+    isAborted: false,
+    getFeedPanel: () => feed,
+    waitForFeed: async () => feed,
+    waitForFeedContentReady: async () => true,
+    isFeedLoading: () => false,
+    hasEndMarker: () => false,
+    feedScrollStep: (panel, ratio, minPx) =>
+      Math.max(panel.clientHeight * ratio, minPx),
+    sleep: async (ms) => {
+      now += ms;
+      if (!injectedSuspend) {
+        injectedSuspend = true;
+        now += 30000;
+      }
+    },
+    tbLog: () => {}
+  });
+  vm.runInContext(`${source}\nthis.scrollFeed = scrollFeed;`, context);
+
+  const outcome = await context.scrollFeed(
+    feed,
+    async () => {
+      collectCalls++;
+      return { total: 4, lastItemKey: "cid:after-wake" };
+    },
+    { safetyMax: 20, maxMs: 200000 }
+  );
+
+  assert.equal(outcome.reachedEnd, false);
+  assert.equal(outcome.reason, "renderer_suspended");
+  assert.equal(outcome.continuationRecommended, true);
+  assert.equal(outcome.suspendDetected, true);
+  assert.equal(outcome.suspendCount, 1);
+  assert.ok(outcome.suspendGapMs >= 30000);
+  assert.equal(outcome.newPlacesCount, 4);
+  assert.equal(outcome.lastItemKey, "cid:after-wake");
+  assert.equal(outcome.scrollTop, feed.scrollTop);
+  assert.equal(outcome.scrollHeight, feed.scrollHeight);
+  assert.equal(collectCalls, 1, "phải đọc DOM một lần sau wake để giữ URL vừa lazy-load");
+});
+
 test("chunk tiếp theo giữ vị trí cuộn và trả URL đã gom dù chưa tới cuối", () => {
   const scroll = section("function updateEndMarkerConfirmation", "async function enrichAllWithDetails");
   const collect = section("async function scrollAndScrapePlaces", "async function waitForFeed");
@@ -960,6 +1072,10 @@ test("chunk tiếp theo giữ vị trí cuộn và trả URL đã gom dù chưa 
   assert.match(scroll, /reason = "chunk_budget"/);
   assert.match(collect, /maxMs: CELL_SCROLL_CHUNK_MS/);
   assert.match(collect, /resumeFromCurrent/);
+  assert.match(collect, /sendListCheckpoint\(cellIndex, checkpointPlaces/);
+  assert.match(collect, /newPlacesCount: results\.length/);
+  assert.match(collect, /lastItemKey: scrollOutcome\.lastItemKey/);
+  assert.match(collect, /continuationRecommended: scrollOutcome\.continuationRecommended/);
   assert.match(readiness, /if \(!resumeFromCurrent\) \{\s*feed\.scrollTop = 0/);
   assert.match(readiness, /if \(!resumeFromCurrent\) feed\.scrollTop = 0/);
   assert.ok(

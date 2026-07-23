@@ -147,7 +147,8 @@ test("build release khóa đúng allowlist quyền và production hosts", () => 
   assert.deepEqual(readSetLiteral(build, "allowedReleasePermissions"), [
     "storage",
     "scripting",
-    "alarms"
+    "alarms",
+    "power"
   ]);
   assert.deepEqual(readSetLiteral(build, "allowedReleaseHosts"), [
     "https://www.google.com/maps/*",
@@ -157,4 +158,14 @@ test("build release khóa đúng allowlist quyền và production hosts", () => 
   ]);
   assert.match(build, /!allowedReleasePermissions\.has\(permission\)/);
   assert.match(build, /!allowedReleaseHosts\.has\(pattern\)/);
+});
+
+test("release cho phép giữ hệ thống thức có phạm vi và vẫn chặn quyền mạnh", () => {
+  const build = read("scripts", "build-extension-release.js");
+
+  assert.equal(manifest.permissions.includes("power"), true);
+  assert.equal(manifest.permissions.includes("debugger"), false);
+  assert.equal(manifest.permissions.includes("offscreen"), false);
+  assert.equal(manifest.permissions.includes("nativeMessaging"), false);
+  assert.match(build, /allowedReleasePermissions[\s\S]*["']power["']/);
 });

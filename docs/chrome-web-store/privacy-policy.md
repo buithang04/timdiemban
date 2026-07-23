@@ -1,6 +1,6 @@
 # Chính sách quyền riêng tư của tiện ích Findmap
 
-Cập nhật lần cuối: 22/07/2026
+Cập nhật lần cuối: 23/07/2026
 
 Tiện ích Findmap giúp người dùng thu thập thông tin điểm bán công khai từ Google Maps và đồng bộ
 kết quả về tài khoản Findmap của họ.
@@ -31,6 +31,9 @@ bên thứ ba ngoài các tích hợp mà người dùng chủ động cấu hì
 Findmap chỉ truy cập Google Maps và các domain Findmap được khai báo trong manifest. Tiện ích
 không yêu cầu quyền `debugger`, không đọc lịch sử duyệt web và không truy cập các website ngoài
 phạm vi đã khai báo. Tab Google Maps chuyên dụng chỉ được mở khi người dùng chủ động bắt đầu quét.
+Trong đúng thời gian quét, tiện ích có thể yêu cầu Chrome giữ hệ thống thức để tránh mất tiến trình
+khi khóa màn hình; yêu cầu này được nhả khi hoàn tất, hủy hoặc dừng công việc Maps và không thu thập
+thêm dữ liệu cá nhân.
 
 ## Xóa dữ liệu
 

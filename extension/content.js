@@ -1,6 +1,6 @@
 (function () {
   // Bump version mỗi lần sửa content — background sẽ reinject nếu Maps còn bản cũ
-  const CONTENT_VERSION = 73;
+  const CONTENT_VERSION = 74;
   if (window.__timDiemBanLoaded && window.__timDiemBanVersion === CONTENT_VERSION) return;
   if (typeof window.__timDiemBanCleanup === "function") {
     try {
@@ -313,6 +313,23 @@
       text,
       dataActivity: options.dataActivity === true,
       ...(activeCellLease || {})
+    });
+  }
+
+  function sendListCheckpoint(cellIndex, places, progress = {}) {
+    if (!Array.isArray(places) || places.length === 0) return;
+    safeSend({
+      action: "SCRAPE_CELL_LIST_CHECKPOINT",
+      ...(activeCellLease || {}),
+      data: {
+        cellIndex,
+        places,
+        newPlacesCount: places.length,
+        totalNewPlaces: Math.max(places.length, Number(progress.totalNewPlaces) || 0),
+        scrollTop: Math.max(0, Number(progress.scrollTop) || 0),
+        scrollHeight: Math.max(0, Number(progress.scrollHeight) || 0),
+        lastItemKey: String(progress.lastItemKey || "")
+      }
     });
   }
 
@@ -4073,6 +4090,35 @@
     return { confirmations: next, reachedEnd: next >= 2 };
   }
 
+  const RENDERER_SUSPEND_GAP_MS = 15000;
+
+  function createRendererSuspendTracker(now = () => Date.now()) {
+    let lastObservedAt = Number(now()) || 0;
+    let suspendGapMs = 0;
+    let suspendCount = 0;
+
+    return {
+      observe() {
+        const current = Number(now()) || lastObservedAt;
+        const gapMs = Math.max(0, current - lastObservedAt);
+        lastObservedAt = current;
+        if (gapMs >= RENDERER_SUSPEND_GAP_MS) {
+          suspendGapMs += gapMs;
+          suspendCount++;
+          return true;
+        }
+        return false;
+      },
+      snapshot() {
+        return {
+          suspendDetected: suspendCount > 0,
+          suspendGapMs,
+          suspendCount
+        };
+      }
+    };
+  }
+
   function scrollFeedInstantly(feed, delta) {
     if (!feed) return { before: 0, after: 0 };
     const before = Number(feed.scrollTop || 0);
@@ -4127,14 +4173,28 @@
     let reachedEnd = false;
     let reason = "safety_limit";
     let rounds = 0;
+    let lastItemKey = "";
     const scrollStart = Date.now();
+    const suspendTracker = createRendererSuspendTracker();
+    let suspendDetected = false;
     const scrollDeadline =
       scrollStart + Math.min(Math.max(0, Number(maxMs) || 0), CELL_SCROLL_CHUNK_MS);
+    const initialScrollTop = Math.max(0, Number(feed?.scrollTop) || 0);
+    const initialScrollHeight = Math.max(0, Number(feed?.scrollHeight) || 0);
+    const observeSuspend = () => {
+      if (suspendTracker.observe()) suspendDetected = true;
+      return suspendDetected;
+    };
+    const rememberFound = (found) => {
+      if (!found) return;
+      if (found.lastItemKey) lastItemKey = String(found.lastItemKey);
+    };
     const pauseBeforeDeadline = async (ms) => {
       const remainingMs = Math.max(0, scrollDeadline - Date.now());
       if (!remainingMs) return false;
       await sleep(Math.min(ms, remainingMs));
-      return Date.now() < scrollDeadline;
+      observeSuspend();
+      return !suspendDetected && Date.now() < scrollDeadline;
     };
     feed = getFeedPanel() || feed;
     if (feed && !resumeFromCurrent) {
@@ -4147,6 +4207,10 @@
       rounds = round + 1;
       if (isAborted) {
         reason = "aborted";
+        break;
+      }
+      if (observeSuspend()) {
+        reason = "renderer_suspended";
         break;
       }
       if (Date.now() >= scrollDeadline) {
@@ -4163,7 +4227,7 @@
             scrollDeadline
           );
         } catch {
-          reason = "feed_missing";
+          reason = observeSuspend() ? "renderer_suspended" : "feed_missing";
           break;
         }
       }
@@ -4173,12 +4237,17 @@
       }
 
       await waitForFeedContentReady(feed, settleMs, scrollDeadline);
+      if (observeSuspend()) {
+        reason = "renderer_suspended";
+        break;
+      }
       if (Date.now() >= scrollDeadline) {
         reason = "chunk_budget";
         break;
       }
 
       const found = await onItems(feed, round);
+      rememberFound(found);
       if (typeof onProgress === "function") onProgress(found.total, round);
 
       const maxScroll = Math.max(0, feed.scrollHeight - feed.clientHeight);
@@ -4213,12 +4282,17 @@
         }
         await pauseBeforeDeadline(scrollPause + 120);
         await waitForFeedContentReady(feed, settleMs, scrollDeadline);
+        if (observeSuspend()) {
+          reason = "renderer_suspended";
+          break;
+        }
         if (Date.now() >= scrollDeadline) {
           reason = "chunk_budget";
           break;
         }
 
         const afterNudge = await onItems(feed, round);
+        rememberFound(afterNudge);
         const grew =
           afterNudge.total > beforeTotal ||
           feed.scrollHeight > beforeHeight + 30;
@@ -4269,13 +4343,46 @@
       scrollFeedInstantly(feed, step);
       await pauseBeforeDeadline(scrollPause);
     }
+
+    // Sau khi renderer thức lại, đọc DOM hiện tại một lần trước khi trả về để không
+    // làm mất các URL Maps đã lazy-load trong lúc service worker/tab bị treo.
+    if (suspendDetected && !isAborted && !reachedEnd) {
+      feed = getFeedPanel() || feed;
+      if (feed?.isConnected) {
+        try {
+          const finalFound = await onItems(feed, rounds);
+          rememberFound(finalFound);
+          lastTotal = Math.max(lastTotal, Math.max(0, Number(finalFound.total) || 0));
+          if (typeof onProgress === "function") onProgress(finalFound.total, rounds);
+        } catch {}
+      }
+      reason = "renderer_suspended";
+    }
+
+    const finalScrollTop = Math.max(0, Number(feed?.scrollTop) || 0);
+    const finalScrollHeight = Math.max(0, Number(feed?.scrollHeight) || 0);
+    const suspendState = suspendTracker.snapshot();
     return {
       feed,
       reachedEnd,
       reason,
       total: lastTotal,
+      newPlacesCount: lastTotal,
+      startScrollTop: initialScrollTop,
+      startScrollHeight: initialScrollHeight,
+      scrollTop: finalScrollTop,
+      scrollHeight: finalScrollHeight,
+      lastItemKey,
+      progressed:
+        lastTotal > 0 ||
+        finalScrollTop > initialScrollTop + 1 ||
+        finalScrollHeight > initialScrollHeight + 1,
+      continuationRecommended:
+        !reachedEnd && (reason === "chunk_budget" || reason === "renderer_suspended"),
+      ...suspendState,
       rounds,
-      elapsedMs: Date.now() - scrollStart
+      elapsedMs: Date.now() - scrollStart,
+      activeElapsedMs: Math.max(0, Date.now() - scrollStart - suspendState.suspendGapMs)
     };
   }
 
@@ -4447,29 +4554,45 @@
     };
 
     const pending = new Map();
+    let lastObservedItemKey = "";
 
     const collectOnly = async (panel) => {
       let newInRound = 0;
+      const checkpointPlaces = [];
       for (const item of getResultItems(panel)) {
         if (isAborted) break;
 
         const listData = extractListItemData(item);
         if (!listData?.name) continue;
+        const track = getItemTrackKey(listData);
+        if (track) lastObservedItemKey = track;
         if (isAlreadyCollected(listData, seenTrack, seenKeys, seenCanonical, results)) {
           skippedCount++;
           continue;
         }
 
-        const track = getItemTrackKey(listData);
         if (pending.has(track)) continue;
 
         const place = buildPlaceFromList(listData);
         if (!place) continue;
 
         pending.set(track, { listData, place });
+        checkpointPlaces.push(place);
         newInRound++;
       }
-      return { newCount: newInRound, total: pending.size };
+      if (checkpointPlaces.length) {
+        sendListCheckpoint(cellIndex, checkpointPlaces, {
+          totalNewPlaces: pending.size,
+          scrollTop: panel.scrollTop,
+          scrollHeight: panel.scrollHeight,
+          lastItemKey: lastObservedItemKey
+        });
+      }
+      return {
+        newCount: newInRound,
+        total: pending.size,
+        lastItemKey: lastObservedItemKey
+      };
     };
 
     let lastScrollProgressTotal = 0;
@@ -4531,6 +4654,18 @@
       reason: scrollOutcome.reason,
       rounds: scrollOutcome.rounds,
       elapsedMs: scrollOutcome.elapsedMs,
+      activeElapsedMs: scrollOutcome.activeElapsedMs,
+      newPlacesCount: results.length,
+      startScrollTop: scrollOutcome.startScrollTop,
+      startScrollHeight: scrollOutcome.startScrollHeight,
+      scrollTop: scrollOutcome.scrollTop,
+      scrollHeight: scrollOutcome.scrollHeight,
+      lastItemKey: scrollOutcome.lastItemKey,
+      progressed: scrollOutcome.progressed,
+      continuationRecommended: scrollOutcome.continuationRecommended,
+      suspendDetected: scrollOutcome.suspendDetected,
+      suspendGapMs: scrollOutcome.suspendGapMs,
+      suspendCount: scrollOutcome.suspendCount,
       earlyExit: !scrollOutcome.reachedEnd
     };
   }
@@ -4614,6 +4749,18 @@
       reason: outcome.reason,
       rounds: outcome.rounds,
       elapsedMs: outcome.elapsedMs,
+      activeElapsedMs: outcome.activeElapsedMs,
+      newPlacesCount: outcome.newPlacesCount,
+      startScrollTop: outcome.startScrollTop,
+      startScrollHeight: outcome.startScrollHeight,
+      scrollTop: outcome.scrollTop,
+      scrollHeight: outcome.scrollHeight,
+      lastItemKey: outcome.lastItemKey,
+      progressed: outcome.progressed,
+      continuationRecommended: outcome.continuationRecommended,
+      suspendDetected: outcome.suspendDetected,
+      suspendGapMs: outcome.suspendGapMs,
+      suspendCount: outcome.suspendCount,
       error: outcome.reachedEnd
         ? null
         : "Google Maps chưa hiển thị điểm cuối danh sách. Findmap sẽ thử lại khu vực này.",

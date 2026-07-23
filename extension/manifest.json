@@ -9,7 +9,8 @@
   "permissions": [
     "storage",
     "scripting",
-    "alarms"
+    "alarms",
+    "power"
   ],
   "host_permissions": [
     "https://www.google.com/maps/*",
