@@ -1,6 +1,6 @@
 (function () {
   // Bump version mỗi lần sửa content — background sẽ reinject nếu Maps còn bản cũ
-  const CONTENT_VERSION = 75;
+  const CONTENT_VERSION = 76;
   if (window.__timDiemBanLoaded && window.__timDiemBanVersion === CONTENT_VERSION) return;
   if (typeof window.__timDiemBanCleanup === "function") {
     try {
@@ -2469,6 +2469,17 @@
     return itemCount === 0 && !!findDetailPaneH1();
   }
 
+  /**
+   * Google sập /maps/search/ thành /maps/place/ khi từ khóa đọc như tên riêng của
+   * đúng một địa điểm — trang không còn danh sách nào để cuộn. Hành vi này tất định:
+   * cùng URL thì lần nào cũng sập, nên điều hướng lại không cứu được.
+   */
+  function isCollapsedToPlacePage() {
+    if (!/^\/maps\/place\//i.test(String(globalThis.location?.pathname || ""))) return false;
+    const feed = getFeedPanel();
+    return !feed || getResultItems(feed).length === 0;
+  }
+
   // Hook giữ lại để không đổi flow, nhưng tuyệt đối không xóa DOM do Google Maps sở hữu.
   function cleanupStaleDom() {
     // Google Maps owns these panes; removing host nodes can corrupt SPA navigation state.
@@ -3480,11 +3491,30 @@
     previousFeedSignature = "",
     requireFeedChange = cellIndex > 0,
     previousFeedInstanceId = "",
-    resumeFromCurrent = false
+    resumeFromCurrent = false,
+    options = {}
   ) {
     const start = Date.now();
     const deadline = start + Math.min(Math.max(0, Number(maxMs) || 0), CELL_FEED_WAIT_MS);
     const needsFeedChange = !!requireFeedChange;
+    // Chỉ lối vào ô mới bật cờ này. Luồng enrich cố tình đứng ở trang địa điểm nên
+    // không được coi đó là "Google sập trang".
+    const detectCollapse = options.detectCollapse === true;
+    let collapsedRounds = 0;
+    const throwIfCollapsed = () => {
+      if (!detectCollapse) return;
+      if (!isCollapsedToPlacePage()) {
+        collapsedRounds = 0;
+        return;
+      }
+      // Chờ ổn định ~1 giây để loại trừ trạng thái trung gian lúc Maps còn đang dựng trang.
+      if (++collapsedRounds < 5) return;
+      const err = new Error(
+        "Google Maps mở thẳng trang địa điểm thay vì danh sách kết quả cho khu vực này."
+      );
+      err.code = "COLLAPSED_TO_PLACE";
+      throw err;
+    };
     const baselineSignature =
       needsFeedChange ? previousFeedSignature || getFeedSignature(getFeedPanel()) : "";
     const instanceChanged =
@@ -3510,6 +3540,7 @@
     while (Date.now() < deadline) {
       if (isAborted) throw new Error("Đã hủy");
       heartbeat();
+      throwIfCollapsed();
       if (urlCenterMatchesCell(window.location.href, cellLat, cellLng)) break;
       await sleep(Math.min(200, Math.max(0, deadline - Date.now())));
     }
@@ -3522,6 +3553,7 @@
     while (Date.now() < deadline) {
       if (isAborted) throw new Error("Đã hủy");
       heartbeat();
+      throwIfCollapsed();
 
       const feed = getFeedPanel();
       if (isFeedLoading(feed)) {
@@ -4870,6 +4902,83 @@
     throw new Error("Không tìm thấy danh sách kết quả trên Google Maps");
   }
 
+  /**
+   * Ô bị Google sập thẳng sang trang địa điểm. Background đã khẳng định lại đúng URL
+   * search của ô trước khi gọi vào đây, nên đây là hành vi tất định của Google chứ không
+   * phải tab bị lệch trạng thái — điều hướng lại chỉ sập tiếp. Vớt luôn địa điểm đang mở
+   * để không mất dữ liệu, rồi báo ô hoàn tất để lưới đi tiếp.
+   */
+  async function harvestCollapsedPlaceCell(data, label) {
+    const { searchParams, cellIndex, totalCells } = data;
+    const startedAt = Date.now();
+    const lease = RunLease.normalize(data) || {};
+    const href = window.location.href;
+    const name = cleanPlaceName(findDetailPaneH1()?.textContent || "");
+
+    tbLog(
+      `Khu vực ${cellIndex + 1}: Google mở thẳng trang địa điểm "${name || "?"}" ` +
+        "thay vì danh sách. Đang vớt điểm này rồi chuyển khu vực.",
+      "warn"
+    );
+    sendProgress(
+      calcProgressPercent(cellIndex, totalCells, 0.5),
+      `Khu vực ${cellIndex + 1}/${totalCells} · Google mở thẳng một địa điểm · Đang đọc điểm đó…`
+    );
+
+    const places = [];
+    if (name) {
+      const listData = { name, href, mapsUrl: href };
+      try {
+        const record = await enrichPlaceOnPage(
+          listData,
+          searchParams,
+          `Khu vực ${cellIndex + 1}/${totalCells} · Đang đọc địa điểm Google mở sẵn`,
+          calcProgressPercent(cellIndex, totalCells, 0.7),
+          { fast: true, needAddress: true, needPhone: true }
+        );
+        if (record?.name) {
+          record._phase = "detail";
+          record.href = record.href || href;
+          record.mapsUrl = record.mapsUrl || href;
+          places.push(record);
+        }
+      } catch (err) {
+        tbLog(`Không đọc được địa điểm Google mở sẵn: ${err.message}`, "warn");
+      }
+    }
+
+    const elapsedMs = Date.now() - startedAt;
+    return {
+      success: true,
+      ...lease,
+      places,
+      skippedCount: 0,
+      clickAttempts: 0,
+      reachedEnd: true,
+      reason: "collapsed_to_place",
+      collapsedToPlace: true,
+      collapsedPlaceName: name,
+      rounds: 0,
+      elapsedMs,
+      activeElapsedMs: elapsedMs,
+      newPlacesCount: places.length,
+      startScrollTop: 0,
+      startScrollHeight: 0,
+      scrollTop: 0,
+      scrollHeight: 0,
+      lastItemKey: "",
+      progressed: places.length > 0,
+      continuationRecommended: false,
+      suspendDetected: false,
+      suspendGapMs: 0,
+      suspendCount: 0,
+      error: null,
+      cellIndex,
+      totalCells,
+      cellLabel: label
+    };
+  }
+
   async function scrapeCellList(data) {
     const {
       searchParams,
@@ -4884,7 +4993,8 @@
       previousFeedSignature,
       requireFeedChange,
       previousFeedInstanceId,
-      resumeFromCurrent
+      resumeFromCurrent,
+      detectCollapse
     } = data;
     isAborted = false;
     if (totalCells > 0) _lastKnownTotalCells = totalCells;
@@ -4897,18 +5007,25 @@
       `Khu vực ${cellIndex + 1}/${totalCells} · ${label} · Đang chờ Google Maps tải danh sách…`
     );
 
-    const feed = await waitForCellFeedReady(
-      searchUrl,
-      cellLat,
-      cellLng,
-      cellIndex,
-      28000,
-      totalCells,
-      previousFeedSignature,
-      requireFeedChange,
-      previousFeedInstanceId,
-      resumeFromCurrent
-    );
+    let feed;
+    try {
+      feed = await waitForCellFeedReady(
+        searchUrl,
+        cellLat,
+        cellLng,
+        cellIndex,
+        28000,
+        totalCells,
+        previousFeedSignature,
+        requireFeedChange,
+        previousFeedInstanceId,
+        resumeFromCurrent,
+        { detectCollapse: detectCollapse === true }
+      );
+    } catch (err) {
+      if (err?.code !== "COLLAPSED_TO_PLACE") throw err;
+      return harvestCollapsedPlaceCell(data, label);
+    }
     const outcome = await scrollAndScrapePlaces(
       feed,
       searchParams,
