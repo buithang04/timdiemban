@@ -3585,6 +3585,34 @@ setInterval(() => {
   if (currentUser && !jobsSyncBusy) loadJobsIntegrationStatus().catch(() => {});
 }, 60000);
 
+/** Heartbeat giữ session khi đang tìm / tab còn mở — gọi /api/auth/me để sliding +7 ngày */
+const SESSION_KEEPALIVE_MS = 10 * 60 * 1000;
+let _sessionKeepaliveTimer = null;
+
+function startSessionKeepalive() {
+  if (_sessionKeepaliveTimer) return;
+  _sessionKeepaliveTimer = setInterval(() => {
+    if (!getAuthToken()) return;
+    // Chỉ ping khi tab đang hiện hoặc đang có lượt tìm — tránh spam khi bỏ không
+    const searching = currentSearch?.status === "running";
+    if (document.visibilityState === "hidden" && !searching) return;
+    refreshUserPoints()
+      .then((user) => {
+        if (user) {
+          window.FindmapSessionCookie?.setSessionCookie?.();
+          syncSessionToExtension();
+        }
+      })
+      .catch((err) => {
+        if (err?.status === 401) {
+          setConnStatus("Phiên đăng nhập đã hết — hãy đăng nhập lại để tiếp tục nhận kết quả", "error");
+        }
+      });
+  }, SESSION_KEEPALIVE_MS);
+}
+
+startSessionKeepalive();
+
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "hidden") {
     writeResultsLocalCache();
@@ -3592,7 +3620,11 @@ document.addEventListener("visibilitychange", () => {
     return;
   }
   if (getAuthToken()) {
-    refreshUserPoints().catch(() => {});
+    refreshUserPoints()
+      .then((user) => {
+        if (user) window.FindmapSessionCookie?.setSessionCookie?.();
+      })
+      .catch(() => {});
   }
 });
 

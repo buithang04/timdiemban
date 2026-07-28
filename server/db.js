@@ -319,6 +319,8 @@ function newToken() {
 
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const RESET_TTL_MS = 60 * 60 * 1000;
+/** Gia hạn session khi còn dưới nửa TTL (tránh ghi DB mỗi request) */
+const SESSION_TOUCH_IF_REMAINING_MS = Math.floor(SESSION_TTL_MS / 2);
 
 async function purgeExpiredTokens() {
   await pool.execute("DELETE FROM tokens WHERE expires_at <= ?", [Date.now()]);
@@ -335,6 +337,25 @@ async function createSessionToken(userId) {
   return token;
 }
 
+/**
+ * Gia hạn phiên đăng nhập (sliding) — mỗi lần dùng gần hết hạn sẽ +7 ngày nữa.
+ * Không đổi giá trị token; chỉ đẩy expires_at.
+ */
+async function touchSessionToken(token, currentExpiresAt) {
+  if (!token) return;
+  const exp = Number(currentExpiresAt) || 0;
+  const now = Date.now();
+  if (exp - now > SESSION_TOUCH_IF_REMAINING_MS) return;
+  try {
+    await getPool().execute(
+      "UPDATE tokens SET expires_at = ? WHERE token = ? AND type = 'session' AND expires_at > ?",
+      [now + SESSION_TTL_MS, token, now]
+    );
+  } catch (err) {
+    console.warn("[auth] touchSessionToken:", err.message);
+  }
+}
+
 async function getTokenRow(token) {
   if (!token) return null;
   await purgeExpiredTokens();
@@ -347,7 +368,12 @@ async function getTokenRow(token) {
      WHERE t.token = ? AND t.expires_at > ?`,
     [token, Date.now()]
   );
-  return rows[0] || null;
+  const row = rows[0] || null;
+  if (row && row.type === "session") {
+    // Fire-and-forget — không chặn request
+    touchSessionToken(token, row.expires_at).catch(() => {});
+  }
+  return row;
 }
 
 function sanitizeUser(row) {

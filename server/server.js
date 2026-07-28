@@ -310,6 +310,8 @@ async function requireAuth(req, res, next) {
     const user = await getUserFromToken(getToken(req));
     if (!user) return res.status(401).json({ error: "Chưa đăng nhập hoặc phiên hết hạn" });
     req.user = user;
+    // Gia hạn cookie routing khi còn hoạt động
+    attachSessionCookie(req, res);
     next();
   } catch (err) {
     next(err);
@@ -576,6 +578,8 @@ app.post("/api/auth/logout", authWriteRateLimit, async (req, res) => {
 app.get("/api/auth/me", async (req, res) => {
   const user = await getUserFromToken(getToken(req));
   if (!user) return res.status(401).json({ error: "Chưa đăng nhập" });
+  // Gia hạn cookie routing + sliding token (touch trong getTokenRow)
+  attachSessionCookie(req, res);
   res.json({ user });
 });
 
