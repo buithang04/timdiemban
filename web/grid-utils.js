@@ -136,3 +136,211 @@ function squareBounds(lat, lng, sideKm) {
     [lat + halfLat, lng + halfLng]
   ];
 }
+
+/* — Ward polygon helpers (mirrors extension/grid.js) — */
+
+function extractPolygonRings(geojson) {
+  if (!geojson) return [];
+  const features = geojson.features || (geojson.type === "Feature" ? [geojson] : []);
+  const rings = [];
+  for (const feat of features) {
+    const geom = feat?.geometry;
+    if (!geom) continue;
+    if (geom.type === "Polygon") rings.push(...(geom.coordinates || []));
+    else if (geom.type === "MultiPolygon") {
+      for (const poly of geom.coordinates || []) rings.push(...poly);
+    }
+  }
+  return rings;
+}
+
+function pointInPolygon(lat, lng, polygonCoords) {
+  if (!polygonCoords?.length) return true;
+  let inside = false;
+  const x = lng, y = lat;
+  for (const ring of polygonCoords) {
+    const len = ring.length;
+    for (let i = 0, j = len - 1; i < len; j = i++) {
+      const xi = ring[i][0], yi = ring[i][1];
+      const xj = ring[j][0], yj = ring[j][1];
+      const intersect = yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi;
+      if (intersect) inside = !inside;
+    }
+  }
+  return inside;
+}
+
+/**
+ * Estimate grid cell count from ward boundary GeoJSON.
+ * Used for UI preview (ward hint) — does not run full PIP.
+ */
+/** Ô quét phường/xã — kích thước tự chỉnh theo diện tích (nhỏ → ô nhỏ, lớn → ô lớn). */
+const MIN_POLYGON_VIEWPORT_M = 300;
+const MAX_POLYGON_VIEWPORT_M = 1000;
+/** Mục tiêu ~số ô trên bbox trước khi lọc PIP (khu vực vừa). */
+const TARGET_POLYGON_GRID_CELLS = 48;
+/** Fallback / tương thích cũ khi không tính được bbox. */
+const DEFAULT_POLYGON_VIEWPORT_M = 400;
+const MAX_POLYGON_GRID_CELLS = 220;
+
+/**
+ * Chọn cạnh ô (mét) theo kích thước khu vực.
+ * viewportM số → dùng giá trị đó (đã clamp). null/"auto"/bỏ trống → tự động.
+ */
+function resolvePolygonViewportM(widthKm, heightKm, viewportM) {
+  const w = Math.max(Number(widthKm) || 0, 0.05);
+  const h = Math.max(Number(heightKm) || 0, 0.05);
+  const explicit = Number(viewportM);
+  let sideM;
+  if (Number.isFinite(explicit) && explicit > 0) {
+    sideM = Math.round(explicit);
+  } else {
+    const area = w * h;
+    let sideKm = Math.sqrt(area / TARGET_POLYGON_GRID_CELLS);
+    // Phường nhỏ: ưu tiên chia ít nhất ~3–4 ô theo cạnh ngắn
+    const shortKm = Math.max(Math.min(w, h), 0.2);
+    sideKm = Math.min(sideKm, shortKm / 3.5);
+    sideM = Math.round(sideKm * 1000);
+  }
+  sideM = Math.max(MIN_POLYGON_VIEWPORT_M, Math.min(sideM, MAX_POLYGON_VIEWPORT_M));
+
+  // Phình ô nếu lưới bbox vượt ngân sách (PIP sẽ lọc bớt ~30%)
+  const budget = Math.floor(MAX_POLYGON_GRID_CELLS * 1.35);
+  for (let i = 0; i < 12; i++) {
+    const sideKm = sideM / 1000;
+    const cols = Math.max(1, Math.ceil(w / sideKm));
+    const rows = Math.max(1, Math.ceil(h / sideKm));
+    if (cols * rows <= budget) break;
+    sideM = Math.min(MAX_POLYGON_VIEWPORT_M, Math.round(sideM * 1.12));
+  }
+  return sideM;
+}
+
+function estimateGridCellsFromBoundary(geojson) {
+  if (!geojson?.bbox) return 0;
+  const [minLng, minLat, maxLng, maxLat] = geojson.bbox;
+  const kmPerDegLat = 111.32;
+  const kmPerDegLng = 111.32 * Math.cos((minLat * Math.PI) / 180);
+  const heightKm = (maxLat - minLat) * kmPerDegLat;
+  const widthKm = (maxLng - minLng) * kmPerDegLng;
+  const sideKm = resolvePolygonViewportM(widthKm, heightKm, null) / 1000;
+  const cols = Math.ceil(widthKm / sideKm) || 1;
+  const rows = Math.ceil(heightKm / sideKm) || 1;
+  return cols * rows;
+}
+
+/** Ô giao polygon nếu tâm / góc / điểm giữa cạnh nằm trong biên. */
+function cellIntersectsPolygon(lat, lng, halfLat, halfLng, rings) {
+  const samples = [
+    [lat, lng],
+    [lat - halfLat, lng - halfLng],
+    [lat - halfLat, lng + halfLng],
+    [lat + halfLat, lng - halfLng],
+    [lat + halfLat, lng + halfLng],
+    [lat - halfLat, lng],
+    [lat + halfLat, lng],
+    [lat, lng - halfLng],
+    [lat, lng + halfLng]
+  ];
+  for (const [a, b] of samples) {
+    if (pointInPolygon(a, b, rings)) return true;
+  }
+  return false;
+}
+
+/**
+ * Lưới ô vuông xếp sát phủ toàn bộ polygon.
+ * viewportM: số mét cố định, hoặc null/"auto" để tự chỉnh theo diện tích.
+ */
+function generateGridFromPolygon(boundaryGeoJSON, viewportM = null) {
+  const rings = extractPolygonRings(boundaryGeoJSON);
+  if (!rings.length) {
+    return generateSearchGrid(21.0285, 105.8542, 1);
+  }
+
+  let minLat = 90, maxLat = -90, minLng = 180, maxLng = -180;
+  for (const ring of rings) {
+    for (const [lng, lat] of ring) {
+      if (lat < minLat) minLat = lat;
+      if (lat > maxLat) maxLat = lat;
+      if (lng < minLng) minLng = lng;
+      if (lng > maxLng) maxLng = lng;
+    }
+  }
+
+  const midLat = (minLat + maxLat) / 2;
+  const heightKm = Math.max((maxLat - minLat) * 111.32, 0.05);
+  const widthKm = Math.max(
+    (maxLng - minLng) * 111.32 * Math.cos((midLat * Math.PI) / 180),
+    0.05
+  );
+  const resolvedVm = resolvePolygonViewportM(widthKm, heightKm, viewportM);
+
+  const sideKm = resolvedVm / 1000;
+  const latDegPerKm = 1 / 111.32;
+  const lngDegPerKm = 1 / (111.32 * Math.cos((midLat * Math.PI) / 180));
+  const stepLat = sideKm * latDegPerKm;
+  const stepLng = sideKm * lngDegPerKm;
+  const halfLat = stepLat / 2;
+  const halfLng = stepLng / 2;
+
+  // Tâm ô lệch nửa bước → các ô ghép kín bbox, phủ hết vùng
+  const latSteps = Math.max(1, Math.ceil((maxLat - minLat) / stepLat));
+  const lngSteps = Math.max(1, Math.ceil((maxLng - minLng) / stepLng));
+  const centerLat = midLat;
+  const centerLng = (minLng + maxLng) / 2;
+
+  let points = [];
+
+  for (let row = 0; row < latSteps; row++) {
+    for (let col = 0; col < lngSteps; col++) {
+      const lat = minLat + halfLat + row * stepLat;
+      const lng = minLng + halfLng + col * stepLng;
+      if (!cellIntersectsPolygon(lat, lng, halfLat, halfLng, rings)) continue;
+      points.push({
+        lat,
+        lng,
+        distFromCenter: haversineKm(centerLat, centerLng, lat, lng),
+        searchOrder: 0,
+        cellId: `g${row}_${col}`,
+        cellLabel: "",
+        gridRow: row,
+        gridCol: col
+      });
+    }
+  }
+
+  if (!points.length) {
+    points.push({
+      lat: centerLat,
+      lng: centerLng,
+      distFromCenter: 0,
+      searchOrder: 1,
+      cellId: "center",
+      cellLabel: "Tâm",
+      gridRow: 0,
+      gridCol: 0
+    });
+  } else {
+    points.sort((a, b) => a.distFromCenter - b.distFromCenter);
+    if (points.length > MAX_POLYGON_GRID_CELLS) {
+      points = points.slice(0, MAX_POLYGON_GRID_CELLS);
+    }
+    points.forEach((p, i) => {
+      p.searchOrder = i + 1;
+      p.cellLabel = `Ô ${i + 1}`;
+    });
+  }
+
+  return {
+    points,
+    cellSizeKm: sideKm,
+    viewportM: resolvedVm,
+    totalCells: points.length,
+    gridSteps: 0,
+    gridMode: "polygon",
+    stepKm: sideKm,
+    capped: points.length >= MAX_POLYGON_GRID_CELLS,
+    adaptive: !(Number(viewportM) > 0)
+  };
+}

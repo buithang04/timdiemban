@@ -35,7 +35,8 @@ async function initDb() {
     database: process.env.MYSQL_DATABASE || "timdiemban",
     waitForConnections: true,
     connectionLimit: 10,
-    charset: "utf8mb4"
+    charset: "utf8mb4",
+    authPlugin: process.env.MYSQL_AUTH_PLUGIN || "mysql_native_password"
   });
 
   // Tự động tạo database nếu chưa có

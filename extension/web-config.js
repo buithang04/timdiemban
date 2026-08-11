@@ -37,7 +37,25 @@ function getConfiguredWebOrigins() {
   // Alias prod luôn có — popup extension vẫn mở đúng kể cả đang sync local
   origins.add("https://findmap.vn");
   origins.add("https://www.findmap.vn");
+  // Local dev — service worker không có location trang web nên APP_ORIGIN fallback findmap.vn
+  for (const host of ["localhost", "127.0.0.1"]) {
+    for (const port of ["3000", "3001", "5173", "8080"]) {
+      origins.add(`http://${host}:${port}`);
+    }
+    origins.add(`http://${host}`);
+  }
   return [...origins];
+}
+
+/** http(s)://localhost|127.0.0.1(:port) — cho phép test local với extension */
+function isLocalDevWebOrigin(originOrUrl) {
+  try {
+    const u = new URL(String(originOrUrl || "").trim());
+    if (u.protocol !== "http:" && u.protocol !== "https:") return false;
+    return u.hostname === "localhost" || u.hostname === "127.0.0.1";
+  } catch {
+    return false;
+  }
 }
 
 function resolveWebUrlCandidates(webUrl) {

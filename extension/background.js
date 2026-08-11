@@ -8,6 +8,12 @@ importScripts(
   "grid.js"
 );
 
+/* grid-mode: polygon | spiral_tile
+ * Grid generation now uses ward boundary polygons (generateGridFromPolygon + pointInPolygon).
+ * Legacy circle-based generateSearchGrid is kept for backward compat.
+ * Version 1.8 — ward boundary search mode.
+ */
+
 /** URL search Maps — cạnh ô cố định (m), chỉ đổi tâm @lat,lng */
 function buildMapsUrl(keyword, lat, lng, viewportM) {
   const encoded = encodeURIComponent(keyword);
@@ -5835,7 +5841,11 @@ function isTrustedFindmapSender(sender) {
   if (isOwnExtensionPageSender(sender)) return true;
   if (!sender?.id || sender.id !== chrome.runtime.id) return false;
   const origin = getRuntimeSenderOrigin(sender);
-  return !!origin && getConfiguredWebOrigins().includes(origin);
+  if (!origin) return false;
+  if (getConfiguredWebOrigins().includes(origin)) return true;
+  // Localhost / 127.0.0.1 (mọi port) khi dev — APP_ORIGIN trong SW luôn fallback findmap.vn
+  if (typeof isLocalDevWebOrigin === "function" && isLocalDevWebOrigin(origin)) return true;
+  return false;
 }
 
 function dispatchRuntimeMessage(message, sender, sendResponse) {
@@ -6269,17 +6279,24 @@ async function handleStartSearch(params) {
   delete params.authToken;
   params.userPoints = authUser.points;
 
-  const center = normalizeCenterCoords(params.lat, params.lng);
-  if (!center) {
-    throw new Error(
-      "Tọa độ trung tâm không hợp lệ. Hãy chọn lại tâm trên bản đồ hoặc nhập đúng vĩ độ và kinh độ."
-    );
+  if (!params.wardCode) {
+    throw new Error("Chưa chọn Phường/Xã. Vui lòng chọn vùng tìm kiếm trên form.");
   }
-  params.lat = center.lat;
-  params.lng = center.lng;
 
-  params.radius = clampSearchRadiusKm(params.radius);
-  const grid = generateSearchGrid(params.lat, params.lng, params.radius);
+  if (!params.wardBoundary) {
+    throw new Error("Dữ liệu ranh giới Phường/Xã không có. Vui lòng chọn lại.");
+  }
+
+  const grid = generateGridFromPolygon(
+    params.wardBoundary,
+    Number(params.viewportM) > 0 ? Number(params.viewportM) : null
+  );
+
+  // Compute ward centroid for distance calculations
+  const wardCentroid = computeWardCentroid(params.wardBoundary);
+  params.lat = wardCentroid.lat;
+  params.lng = wardCentroid.lng;
+  params.radius = null; // ward mode: no radius
 
   params.searchId = String(params.searchId || `search_${Date.now()}_${crypto.randomUUID()}`);
   currentSearch = { ...params, gridCells: grid.totalCells };
@@ -6382,7 +6399,9 @@ async function handleStartSearch(params) {
 
   await notifyProgress(
     2,
-    `Đã tạo ${grid.totalCells} khu vực tìm kiếm trong bán kính ${params.radius} km. Đang mở Google Maps…`
+    params.wardFullName || params.wardName
+      ? `Đã tạo ${grid.totalCells} khu vực tìm kiếm trong ${params.wardFullName || params.wardName}. Đang mở Google Maps…`
+      : `Đã tạo ${grid.totalCells} khu vực tìm kiếm theo ranh giới phường/xã. Đang mở Google Maps…`
   );
 
   runGridCell(0).catch(async (err) => {

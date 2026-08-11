@@ -14,9 +14,11 @@ let currentPage = 1;
 function isSearchInProgress(search = currentSearch) {
   return search?.status === "running" || search?.status === "paused";
 }
-/** Danh sách từ khóa của lượt tìm (theo thứ tự nhập) */
+/** Danh sách từ khóa của lượt tìm (theo thứ tự nhập) — legacy + fallback */
 let plannedKeywords = [];
-/** Tab đang chọn: "all" | tên từ khóa */
+/** Tab contexts: { key, wardCode, wardName, keyword, label }[] */
+let plannedContexts = [];
+/** Tab đang chọn: "all" | context key `${wardCode}::${keyword}` | legacy keyword */
 let activeKeywordTab = "all";
 
 const AUTH_TOKEN_KEY = "timdiemban_token";
@@ -97,9 +99,14 @@ function buildResultsWorkspacePayload() {
   return {
     data: currentData,
     search: currentSearch
-      ? { ...currentSearch, keywords: plannedKeywords.length ? plannedKeywords : currentSearch.keywords }
+      ? {
+          ...currentSearch,
+          keywords: plannedKeywords.length ? plannedKeywords : currentSearch.keywords,
+          plannedContexts: plannedContexts.length ? plannedContexts : currentSearch.plannedContexts
+        }
       : null,
     plannedKeywords,
+    plannedContexts,
     activeKeywordTab,
     sentKeys: Array.from(sentKeys),
     jobsSyncResults: Array.from(jobsSyncResults.entries()),
@@ -127,10 +134,15 @@ function applyResultsWorkspace(payload) {
     : fromSearch.length
       ? fromSearch
       : fromRows;
+  plannedContexts = normalizePlannedContexts(
+    payload.plannedContexts || payload.search?.plannedContexts || []
+  );
+  if (!plannedContexts.length) {
+    plannedContexts = rebuildContextsFromRowsAndKeywords(plannedKeywords);
+  }
+  const tabIds = new Set(["all", ...plannedContexts.map((c) => c.key)]);
   activeKeywordTab =
-    payload.activeKeywordTab &&
-    (payload.activeKeywordTab === "all" ||
-      plannedKeywords.some((k) => k.toLowerCase() === String(payload.activeKeywordTab).toLowerCase()))
+    payload.activeKeywordTab && tabIds.has(String(payload.activeKeywordTab))
       ? payload.activeKeywordTab
       : "all";
   currentData.forEach((r) => ensureStableKey(r));
@@ -418,8 +430,7 @@ const els = {
   infoPointsHdr: document.getElementById("infoPointsHdr"),
   connStatus: document.getElementById("connStatus"),
   infoKeyword: document.getElementById("infoKeyword"),
-  infoRadius: document.getElementById("infoRadius"),
-  infoCoords: document.getElementById("infoCoords"),
+  infoWard: document.getElementById("infoWard"),
   infoStatus: document.getElementById("infoStatus"),
   infoTotal: document.getElementById("infoTotal"),
   infoPoints: document.getElementById("infoPoints"),
@@ -785,7 +796,9 @@ function markResultsRadiusFlags(rows, search) {
   const withDist = applyDistancesFromCenter(rows, search);
   return withDist.map((r) => ({
     ...r,
-    outOfRadius: search?.lat && search?.lng && search?.radius ? !isResultInRadius(r, search) : false
+    // Ward-based search: all results are "in" (outOfRadius = false)
+    // Legacy radius-based: keep original in/out logic
+    outOfRadius: search?.wardCode ? false : (search?.lat && search?.lng && search?.radius ? !isResultInRadius(r, search) : false)
   }));
 }
 
@@ -997,10 +1010,40 @@ function mergeSearchKeywordTags(row, extraKw) {
   };
 }
 
+function mergeSearchAreaKeys(row, extraKey, extraMeta = {}) {
+  const set = new Set();
+  const add = (k) => {
+    const s = String(k || "").trim();
+    if (s) set.add(s);
+  };
+  if (Array.isArray(row?.searchAreaKeys)) row.searchAreaKeys.forEach(add);
+  add(row?.searchAreaKey);
+  add(extraKey);
+  const list = [...set];
+  return {
+    searchAreaKey: list[list.length - 1] || extraKey || row?.searchAreaKey || "",
+    searchAreaKeys: list,
+    searchWardCode: extraMeta.wardCode || row?.searchWardCode || "",
+    searchWardName: extraMeta.wardName || row?.searchWardName || "",
+    searchWardFullName: extraMeta.wardFullName || row?.searchWardFullName || ""
+  };
+}
+
 function attachSearchKeyword(row, search = currentSearch) {
   const kw = String(search?.keyword || "").trim();
   const tags = mergeSearchKeywordTags(row, kw);
-  return { ...row, ...tags };
+  const wardCode = String(search?.wardCode || "").trim();
+  const wardName = String(search?.wardName || search?.wardFullName || "").trim();
+  const wardFullName = String(search?.wardFullName || wardName).trim();
+  const areaKey =
+    String(search?.searchAreaKey || "").trim() ||
+    (wardCode && kw ? `${wardCode}::${kw}` : "");
+  const areaTags = mergeSearchAreaKeys(row, areaKey, {
+    wardCode,
+    wardName,
+    wardFullName
+  });
+  return { ...row, ...tags, ...areaTags };
 }
 
 function getRowKeywords(row) {
@@ -1011,25 +1054,106 @@ function getRowKeywords(row) {
   return single ? [single] : [];
 }
 
+function getRowAreaKeys(row) {
+  if (Array.isArray(row?.searchAreaKeys) && row.searchAreaKeys.length) {
+    return row.searchAreaKeys.map((k) => String(k || "").trim()).filter(Boolean);
+  }
+  const single = String(row?.searchAreaKey || "").trim();
+  return single ? [single] : [];
+}
+
+function normalizePlannedContexts(list) {
+  if (!Array.isArray(list)) return [];
+  const out = [];
+  const seen = new Set();
+  for (const raw of list) {
+    if (!raw || typeof raw !== "object") continue;
+    const keyword = String(raw.keyword || "").trim();
+    const wardCode = String(raw.wardCode || "").trim();
+    if (!keyword) continue;
+    const key = String(raw.key || (wardCode ? `${wardCode}::${keyword}` : keyword)).trim();
+    if (!key || seen.has(key.toLowerCase())) continue;
+    seen.add(key.toLowerCase());
+    const wardName = String(raw.wardName || raw.wardFullName || "").trim();
+    out.push({
+      key,
+      wardCode,
+      wardName,
+      wardFullName: String(raw.wardFullName || wardName).trim(),
+      keyword,
+      label: String(raw.label || (wardName ? `${wardName} · ${keyword}` : keyword)).trim()
+    });
+  }
+  return out;
+}
+
+function rebuildContextsFromRowsAndKeywords(keywords) {
+  const fromRows = [];
+  const seen = new Set();
+  for (const row of currentData) {
+    for (const key of getRowAreaKeys(row)) {
+      const lk = key.toLowerCase();
+      if (seen.has(lk)) continue;
+      seen.add(lk);
+      const sep = key.indexOf("::");
+      const wardCode = sep >= 0 ? key.slice(0, sep) : String(row.searchWardCode || "");
+      const keyword = sep >= 0 ? key.slice(sep + 2) : key;
+      const wardName = String(row.searchWardName || row.searchWardFullName || "").trim();
+      fromRows.push({
+        key,
+        wardCode,
+        wardName,
+        wardFullName: String(row.searchWardFullName || wardName).trim(),
+        keyword,
+        label: wardName ? `${wardName} · ${keyword}` : keyword
+      });
+    }
+  }
+  if (fromRows.length) return fromRows;
+  return normalizeKeywordList(keywords).map((keyword) => ({
+    key: keyword,
+    wardCode: "",
+    wardName: "",
+    wardFullName: "",
+    keyword,
+    label: keyword
+  }));
+}
+
 function rowMatchesKeywordTab(row, tab) {
   if (!tab || tab === "all") return true;
   const want = String(tab).trim().toLowerCase();
+  if (getRowAreaKeys(row).some((k) => k.toLowerCase() === want)) return true;
   return getRowKeywords(row).some((k) => k.toLowerCase() === want);
 }
 
 function getKeywordTabList() {
-  const ordered = normalizeKeywordList(plannedKeywords);
+  const ordered = plannedContexts.length
+    ? [...plannedContexts]
+    : rebuildContextsFromRowsAndKeywords(plannedKeywords);
   for (const row of currentData) {
-    for (const kw of getRowKeywords(row)) {
-      if (!ordered.some((x) => x.toLowerCase() === kw.toLowerCase())) ordered.push(kw);
+    for (const key of getRowAreaKeys(row)) {
+      if (ordered.some((c) => c.key.toLowerCase() === key.toLowerCase())) continue;
+      const sep = key.indexOf("::");
+      const wardCode = sep >= 0 ? key.slice(0, sep) : String(row.searchWardCode || "");
+      const keyword = sep >= 0 ? key.slice(sep + 2) : key;
+      const wardName = String(row.searchWardName || "").trim();
+      ordered.push({
+        key,
+        wardCode,
+        wardName,
+        wardFullName: String(row.searchWardFullName || wardName).trim(),
+        keyword,
+        label: wardName ? `${wardName} · ${keyword}` : keyword
+      });
     }
   }
   return ordered;
 }
 
-function countRowsForKeyword(kw) {
-  if (kw === "all") return currentData.length;
-  return currentData.filter((r) => rowMatchesKeywordTab(r, kw)).length;
+function countRowsForKeyword(tabId) {
+  if (tabId === "all") return currentData.length;
+  return currentData.filter((r) => rowMatchesKeywordTab(r, tabId)).length;
 }
 
 function renderKeywordTabs() {
@@ -1043,19 +1167,33 @@ function renderKeywordTabs() {
     return;
   }
 
-  if (activeKeywordTab !== "all" && !tabs.some((t) => t.toLowerCase() === String(activeKeywordTab).toLowerCase())) {
+  if (
+    activeKeywordTab !== "all" &&
+    !tabs.some((t) => t.key.toLowerCase() === String(activeKeywordTab).toLowerCase())
+  ) {
     activeKeywordTab = "all";
   }
 
-  const runningKw = isSearchInProgress() ? String(currentSearch.keyword || "").trim() : "";
-  const items = [{ id: "all", label: "Tất cả" }, ...tabs.map((t) => ({ id: t, label: t }))];
+  const runningKey = isSearchInProgress()
+    ? String(currentSearch?.searchAreaKey || "").trim() ||
+      (() => {
+        const ward = String(currentSearch?.wardCode || "").trim();
+        const kw = String(currentSearch?.keyword || "").trim();
+        return ward && kw ? `${ward}::${kw}` : kw;
+      })()
+    : "";
+
+  const items = [{ id: "all", label: "Tất cả" }, ...tabs.map((t) => ({ id: t.key, label: t.label }))];
 
   host.classList.remove("hidden");
   host.innerHTML = items
     .map((item) => {
       const count = countRowsForKeyword(item.id);
       const active = String(activeKeywordTab) === String(item.id);
-      const running = runningKw && item.id !== "all" && item.id.toLowerCase() === runningKw.toLowerCase();
+      const running =
+        runningKey &&
+        item.id !== "all" &&
+        item.id.toLowerCase() === runningKey.toLowerCase();
       return `<button type="button" class="wm-keyword-tab${active ? " is-active" : ""}${running ? " is-running" : ""}" role="tab" aria-selected="${active ? "true" : "false"}" data-keyword-tab="${escapeHtml(item.id)}">${escapeHtml(item.label)}<span class="wm-keyword-tab-count">${count}</span></button>`;
     })
     .join("");
@@ -1079,15 +1217,38 @@ function beginFreshSearchUi(searchParams) {
     };
     const batch = normalizeKeywordList(searchParams.keywords);
     const kw = String(searchParams.keyword || "").trim();
-    const idx = Number(searchParams.keywordIndex);
-    if (batch.length) {
-      if (!Number.isFinite(idx) || idx <= 0 || !plannedKeywords.length) {
-        plannedKeywords = batch;
+    const contexts = normalizePlannedContexts(searchParams.plannedContexts);
+    if (contexts.length) {
+      plannedContexts = contexts;
+      plannedKeywords = normalizeKeywordList(contexts.map((c) => c.keyword).concat(batch));
+    } else if (batch.length) {
+      plannedKeywords = batch;
+      if (!plannedContexts.length) {
+        plannedContexts = rebuildContextsFromRowsAndKeywords(batch);
       }
     } else if (kw) {
       plannedKeywords = [kw];
     }
-    if (kw) activeKeywordTab = kw;
+
+    const areaKey =
+      String(searchParams.searchAreaKey || "").trim() ||
+      (searchParams.wardCode && kw ? `${searchParams.wardCode}::${kw}` : kw);
+    if (areaKey) {
+      if (!plannedContexts.some((c) => c.key === areaKey)) {
+        const wardName = String(searchParams.wardName || searchParams.wardFullName || "").trim();
+        plannedContexts.push({
+          key: areaKey,
+          wardCode: String(searchParams.wardCode || "").trim(),
+          wardName,
+          wardFullName: String(searchParams.wardFullName || wardName).trim(),
+          keyword: kw,
+          label: wardName ? `${wardName} · ${kw}` : kw
+        });
+      }
+      activeKeywordTab = areaKey;
+    } else if (kw) {
+      activeKeywordTab = kw;
+    }
   }
   awaitingNewSearchResults = false;
   extensionMergedCount = 0;
@@ -1099,7 +1260,6 @@ function beginFreshSearchUi(searchParams) {
     els.loadingState?.classList.remove("hidden");
     els.emptyState?.classList.add("hidden");
   }
-  // Lưu meta phiên hiện tại; KHÔNG xóa data cũ
   saveResultsToStorage(true);
   renderKeywordTabs();
   updateView();
@@ -1634,15 +1794,38 @@ function upsertResult(result) {
     }
   }
 
-  const mergeKeywordFields = (prev, next) => mergeSearchKeywordTags({
-    searchKeyword: next.searchKeyword || prev.searchKeyword,
-    searchKeywords: [
-      ...(Array.isArray(prev.searchKeywords) ? prev.searchKeywords : []),
-      ...(Array.isArray(next.searchKeywords) ? next.searchKeywords : []),
-      prev.searchKeyword,
-      next.searchKeyword
-    ]
-  });
+  const mergeKeywordFields = (prev, next) => {
+    const kwTags = mergeSearchKeywordTags({
+      searchKeyword: next.searchKeyword || prev.searchKeyword,
+      searchKeywords: [
+        ...(Array.isArray(prev.searchKeywords) ? prev.searchKeywords : []),
+        ...(Array.isArray(next.searchKeywords) ? next.searchKeywords : []),
+        prev.searchKeyword,
+        next.searchKeyword
+      ]
+    });
+    const areaTags = mergeSearchAreaKeys(
+      {
+        searchAreaKey: next.searchAreaKey || prev.searchAreaKey,
+        searchAreaKeys: [
+          ...(Array.isArray(prev.searchAreaKeys) ? prev.searchAreaKeys : []),
+          ...(Array.isArray(next.searchAreaKeys) ? next.searchAreaKeys : []),
+          prev.searchAreaKey,
+          next.searchAreaKey
+        ],
+        searchWardCode: prev.searchWardCode,
+        searchWardName: prev.searchWardName,
+        searchWardFullName: prev.searchWardFullName
+      },
+      next.searchAreaKey,
+      {
+        wardCode: next.searchWardCode || prev.searchWardCode,
+        wardName: next.searchWardName || prev.searchWardName,
+        wardFullName: next.searchWardFullName || prev.searchWardFullName
+      }
+    );
+    return { ...kwTags, ...areaTags };
+  };
 
   const sourceKey = incoming._sourceKey || incoming.sourceKey;
   if (sourceKey) {
@@ -1850,7 +2033,7 @@ function updateSearchResultBox() {
   const total = currentData.length;
   const q = els.searchFilter?.value.trim().toLowerCase() || "";
   const keyword = currentSearch?.keyword || document.getElementById("searchKeyword")?.value || "";
-  const radius = currentSearch?.radius || document.getElementById("searchRadius")?.value || "";
+  const wardName = currentSearch?.wardFullName || currentSearch?.wardName || "";
 
   if (liveProgressText) {
     els.searchResultText.textContent = liveProgressText;
@@ -1864,16 +2047,16 @@ function updateSearchResultBox() {
 
   const visible = q ? currentData.filter((r) => matchesFilter(r, q)).length : total;
   const kw = keyword ? `"${keyword}"` : "từ khóa hiện tại";
-  const r = radius ? `${radius} km` : "khu vực đã chọn";
+  const area = wardName ? `Phường ${wardName}` : "khu vực đã chọn";
 
   if (currentSearch?.status === "paused") {
     els.searchResultText.textContent = `Đã tạm dừng ${kw} — tiến độ hiện tại vẫn được giữ nguyên.`;
   } else if (currentSearch?.status === "running") {
-    els.searchResultText.textContent = `Đang quét ${kw} trong phạm vi ${r}…`;
+    els.searchResultText.textContent = `Đang quét ${kw} tại ${area}…`;
   } else if (total) {
-    els.searchResultText.textContent = `Đang hiển thị ${visible}/${total} kết quả phù hợp nhất cho ${kw} trong phạm vi ${r}.`;
+    els.searchResultText.textContent = `Đang hiển thị ${visible}/${total} kết quả phù hợp nhất cho ${kw} tại ${area}.`;
   } else {
-    els.searchResultText.textContent = `Chưa tìm thấy kết quả cho ${kw} trong phạm vi ${r}.`;
+    els.searchResultText.textContent = `Chưa tìm thấy kết quả cho ${kw} tại ${area}.`;
   }
 }
 
@@ -1909,16 +2092,8 @@ function renderSearchInfo(search) {
       els.infoKeyword.textContent = search.keyword || multi[0] || "-";
     }
   }
-  if (els.infoRadius) {
-    const rKm = search.radius;
-    els.infoRadius.textContent = rKm
-      ? search.gridCells
-        ? `${rKm} km / ${search.gridCells} ô`
-        : `${rKm} km`
-      : "-";
-  }
-  if (els.infoCoords && search.lat != null && search.lng != null) {
-    els.infoCoords.textContent = `${Number(search.lat).toFixed(5)}, ${Number(search.lng).toFixed(5)}`;
+  if (els.infoWard) {
+    els.infoWard.textContent = search.wardFullName || "-";
   }
   const regions = (search.gridPoints || []).map((p) => p.cellLabel || p.cellId).filter(Boolean);
   if (els.infoRegions) {
@@ -2745,21 +2920,40 @@ function applyExtensionDataSync(type, payload = {}) {
     liveProgressText = "Bắt đầu tìm kiếm...";
     if (els.infoGridCells && sp.gridCells) {
       els.infoGridCells.textContent = String(sp.gridCells);
-    } else if (els.infoGridCells && sp.radius && typeof generateSearchGrid === "function") {
-      const grid = generateSearchGrid(sp.lat, sp.lng, sp.radius);
-      els.infoGridCells.textContent = String(grid.totalCells);
-      sp.gridCells = grid.totalCells;
+    } else if (sp.wardBoundary && typeof generateGridFromPolygon === "function") {
+      try {
+        const grid = generateGridFromPolygon(sp.wardBoundary);
+        const cells = Number(grid?.totalCells) || 0;
+        if (cells > 0) {
+          els.infoGridCells.textContent = String(cells);
+          sp.gridCells = cells;
+        }
+      } catch {}
     }
-    if (sp.lat && sp.lng && sp.radius) {
-      // Chỉ fit nếu tâm đổi; sync trước đó đã không vẽ map nữa
-      window.TimDiemBanMap?.setSearchArea(
-        { lat: sp.lat, lng: sp.lng },
-        sp.radius,
-        { gridPoints: sp.gridPoints, cellSizeKm: sp.cellSizeKm, fit: true }
-      );
-      window.TimDiemBanMap?.countInOut?.(currentData);
-      window.TimDiemBanMap?.refreshMarkers?.(currentData);
+    // Draw ALL batch/form areas — không xóa khu vực khác khi nhảy KV
+    if (typeof window.TimDiemBanSearch?.redrawAllAreaMaps === "function") {
+      window.TimDiemBanSearch.redrawAllAreaMaps({
+        activeAreaIndex: sp.areaIndex,
+        fit: true,
+        force: true
+      });
+    } else if (sp.wardBoundary && typeof window.TimDiemBanMap?.drawWardBoundary === "function") {
+      const gridPoints = Array.isArray(sp.gridPoints) ? sp.gridPoints : null;
+      window.TimDiemBanMap.drawWardBoundary(sp.wardBoundary, {
+        provinceName: sp.provinceName,
+        wardName: sp.wardName,
+        wardFullName: sp.wardFullName,
+        wardCode: sp.wardCode,
+        areaIndex: sp.areaIndex,
+        colorIndex: sp.areaIndex,
+        gridPoints,
+        cellSizeKm: sp.cellSizeKm,
+        fit: true,
+        force: true
+      });
     }
+    window.TimDiemBanMap?.countInOut?.(currentData);
+    window.TimDiemBanMap?.refreshMarkers?.(currentData);
     updateView();
     return;
   }
@@ -3186,6 +3380,7 @@ function clearAllData() {
   currentSearch = null;
   currentPage = 1;
   plannedKeywords = [];
+  plannedContexts = [];
   activeKeywordTab = "all";
   awaitingNewSearchResults = false;
   resetRescanUiState();
@@ -3214,6 +3409,7 @@ function exportExcel() {
     STT: i + 1,
     "Tên": r.name || "",
     "Từ khóa": getRowKeywords(r).join(", "),
+    "Khu vực": r.searchWardFullName || r.searchWardName || "",
     "Đánh giá": r.rating || "",
     "Số review": r.reviews || "",
     "Loại hình": r.category || "",
@@ -3470,8 +3666,22 @@ els.authForm.addEventListener("submit", async (e) => {
       if (currentSearch) {
         renderSearchInfo(currentSearch);
         const sp = currentSearch;
-        if (sp.lat && sp.lng && sp.radius) {
-          window.TimDiemBanMap?.setSearchArea({ lat: sp.lat, lng: sp.lng }, sp.radius, { fit: true });
+        if (typeof window.TimDiemBanSearch?.redrawAllAreaMaps === "function") {
+          window.TimDiemBanSearch.redrawAllAreaMaps({
+            activeAreaIndex: sp.areaIndex,
+            fit: true,
+            force: true
+          });
+        } else if (sp.wardBoundary) {
+          window.TimDiemBanMap?.drawWardBoundary?.(sp.wardBoundary, {
+            provinceName: sp.provinceName,
+            wardName: sp.wardName,
+            wardCode: sp.wardCode,
+            areaIndex: sp.areaIndex,
+            gridPoints: sp.gridPoints,
+            cellSizeKm: sp.cellSizeKm,
+            force: true
+          });
         }
       }
       window.TimDiemBanMap?.refreshMarkers(currentData);
@@ -3540,8 +3750,22 @@ loadCurrentUser().then(async () => {
     if (currentSearch) {
       renderSearchInfo(currentSearch);
       const sp = currentSearch;
-      if (sp.lat && sp.lng && sp.radius) {
-        window.TimDiemBanMap?.setSearchArea({ lat: sp.lat, lng: sp.lng }, sp.radius, { fit: true });
+      if (typeof window.TimDiemBanSearch?.redrawAllAreaMaps === "function") {
+        window.TimDiemBanSearch.redrawAllAreaMaps({
+          activeAreaIndex: sp.areaIndex,
+          fit: true,
+          force: true
+        });
+      } else if (sp.wardBoundary) {
+        window.TimDiemBanMap?.drawWardBoundary?.(sp.wardBoundary, {
+          provinceName: sp.provinceName,
+          wardName: sp.wardName,
+          wardCode: sp.wardCode,
+          areaIndex: sp.areaIndex,
+          gridPoints: sp.gridPoints,
+          cellSizeKm: sp.cellSizeKm,
+          force: true
+        });
       }
     }
     window.TimDiemBanMap?.refreshMarkers(currentData);
@@ -3637,17 +3861,4 @@ loadAvailablePackages();
 
 window.addEventListener("timdiemban:need-login", () => {
   showAuthModal();
-});
-
-window.addEventListener("timdiemban:map-preview", (e) => {
-  const { lat, lng, radius, fit } = e.detail || {};
-  const safeRadius =
-    typeof clampSearchRadiusKm === "function" ? clampSearchRadiusKm(radius) : radius;
-  if (lat != null && lng != null && safeRadius) {
-    if (typeof generateSearchGrid === "function" && els.infoGridCells) {
-      const grid = generateSearchGrid(lat, lng, safeRadius);
-      els.infoGridCells.textContent = String(grid.totalCells);
-    }
-    window.TimDiemBanMap?.setSearchArea({ lat, lng }, safeRadius, { fit: fit !== false });
-  }
 });

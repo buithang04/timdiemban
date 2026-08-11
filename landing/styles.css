@@ -17,8 +17,8 @@
   --shadow-sm: 0 8px 24px rgba(15, 23, 42, 0.06);
   --radius: 16px;
   --radius-lg: 24px;
-  --font: "Be Vietnam Pro", "Segoe UI", system-ui, sans-serif;
-  --display: "Manrope", "Be Vietnam Pro", system-ui, sans-serif;
+  --font: "Be Vietnam Pro", "Nunito Sans", "Quicksand", "Arial", system-ui, sans-serif;
+  --display: "Manrope", "Be Vietnam Pro", "Nunito Sans", "Arial", system-ui, sans-serif;
   --topbar-h: 72px;
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
 }

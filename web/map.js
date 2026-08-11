@@ -1,22 +1,26 @@
 /**
- * Bản đồ OpenStreetMap (Leaflet) — vòng tròn bán kính, lưới ô, marker trong/ngoài vùng.
- * Ổn định tầm nhìn: không fitBounds / không vẽ lại tâm+lưới khi không đổi.
+ * Bản đồ OpenStreetMap (Leaflet) — nhiều khu vực (ward polygon) + lưới ô quét + marker.
  */
 (function () {
   const MARKER_IN = "#1e3a8a";
   const MARKER_OUT = "#dc2626";
 
+  const AREA_PALETTE = [
+    { stroke: "#2563eb", fill: "#3b82f6", grid: "#f59e0b", gridFill: "#fbbf24" },
+    { stroke: "#059669", fill: "#10b981", grid: "#d97706", gridFill: "#f59e0b" },
+    { stroke: "#7c3aed", fill: "#8b5cf6", grid: "#ea580c", gridFill: "#fb923c" },
+    { stroke: "#db2777", fill: "#ec4899", grid: "#ca8a04", gridFill: "#eab308" },
+    { stroke: "#0891b2", fill: "#06b6d4", grid: "#c2410c", gridFill: "#f97316" }
+  ];
+
   let map = null;
-  let layerCircle = null;
-  let layerCenter = null;
+  let layerAreas = null;
   let layerGrids = null;
   let layerMarkers = null;
-  let searchCenter = null;
-  const MAX_RADIUS_KM = 20;
-  let searchRadiusKm = 0;
+  /** @type {Array<{wardCode:string, rings:any[]}>} */
+  let areaRingSets = [];
   let markerByKey = new Map();
-  let lastGridSig = "";
-  let lastFitSig = "";
+  let lastAreasSig = "";
   let resizeTimer = null;
 
   function makeIcon(color) {
@@ -30,12 +34,6 @@
 
   const iconIn = makeIcon(MARKER_IN);
   const iconOut = makeIcon(MARKER_OUT);
-  const iconCenter = L.divIcon({
-    className: "tdb-map-marker-center",
-    html: `<span style="background:#2563eb;width:14px;height:14px;border:3px solid #fff;border-radius:50%;display:block;box-shadow:0 2px 6px rgba(0,0,0,.4)"></span>`,
-    iconSize: [14, 14],
-    iconAnchor: [7, 7]
-  });
 
   function init() {
     const el = document.getElementById("map");
@@ -44,7 +42,6 @@
     map = L.map(el, {
       zoomControl: false,
       scrollWheelZoom: true,
-      // Giảm nháy khi setView/fitBounds
       fadeAnimation: false,
       zoomAnimation: true,
       markerZoomAnimation: false
@@ -54,16 +51,9 @@
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
     }).addTo(map);
 
+    layerAreas = L.featureGroup().addTo(map);
     layerGrids = L.featureGroup().addTo(map);
     layerMarkers = L.layerGroup().addTo(map);
-
-    map.on("click", (e) => {
-      window.dispatchEvent(
-        new CustomEvent("timdiemban:map-pick-center", {
-          detail: { lat: e.latlng.lat, lng: e.latlng.lng }
-        })
-      );
-    });
 
     setTimeout(() => map.invalidateSize({ animate: false }), 200);
     window.addEventListener("resize", () => {
@@ -72,47 +62,125 @@
     });
   }
 
-  function isInsideRadius(lat, lng) {
-    if (!searchCenter || !searchRadiusKm) return true;
-    return haversineKm(searchCenter.lat, searchCenter.lng, lat, lng) <= searchRadiusKm + 0.05;
+  function paletteFor(index) {
+    return AREA_PALETTE[Math.abs(Number(index) || 0) % AREA_PALETTE.length];
   }
 
-  function gridSignature(gridPoints, sideKm) {
-    if (!gridPoints?.length || !sideKm) return "";
-    const head = gridPoints
-      .slice(0, 3)
-      .map((p) => `${Number(p.lat).toFixed(5)},${Number(p.lng).toFixed(5)}`)
+  function areasSignature(areas) {
+    if (!Array.isArray(areas) || !areas.length) return "";
+    return areas
+      .map((a) => {
+        const code = a.wardCode || a.boundary?.features?.[0]?.id || "";
+        const n = a.gridPoints?.length || 0;
+        const side = Number(a.cellSizeKm || 0).toFixed(4);
+        return `${code}:${n}:${side}`;
+      })
       .join("|");
-    const tail = gridPoints[gridPoints.length - 1];
-    return `${gridPoints.length}:${Number(sideKm).toFixed(4)}:${head}:${Number(tail.lat).toFixed(5)},${Number(tail.lng).toFixed(5)}`;
   }
 
-  function drawGrid(gridPoints, sideKm) {
-    if (!layerGrids) return;
-    const sig = gridSignature(gridPoints, sideKm);
-    if (sig && sig === lastGridSig) return;
-    lastGridSig = sig;
+  function clearAreaLayers() {
+    layerAreas?.clearLayers();
+    layerGrids?.clearLayers();
+    areaRingSets = [];
+    lastAreasSig = "";
+  }
 
-    layerGrids.clearLayers();
-    if (!gridPoints?.length || !sideKm) return;
+  /**
+   * Vẽ nhiều khu vực + lưới ô quét.
+   * areas: [{ wardCode, wardName, boundary, gridPoints, cellSizeKm, colorIndex }]
+   */
+  function drawSearchAreas(areas, opts = {}) {
+    if (!map) init();
+    if (!map) return;
 
-    gridPoints.forEach((p, idx) => {
+    const list = Array.isArray(areas) ? areas.filter((a) => a?.boundary?.features?.length) : [];
+    const sig = areasSignature(list);
+    const force = opts.force === true;
+    if (!force && sig && sig === lastAreasSig) {
+      if (opts.fit !== false) fitToDrawnLayers();
+      return;
+    }
+    lastAreasSig = sig;
+
+    clearAreaLayers();
+    if (!list.length) return;
+
+    list.forEach((area, idx) => {
+      const colors = paletteFor(area.colorIndex != null ? area.colorIndex : idx);
+      const wardName = area.wardName || area.wardFullName || area.wardCode || `Khu vực ${idx + 1}`;
+      const activeIdx =
+        opts.activeAreaIndex != null && Number.isFinite(Number(opts.activeAreaIndex))
+          ? Number(opts.activeAreaIndex)
+          : null;
+      const isActive =
+        area.active === true || (activeIdx != null && activeIdx === idx);
+      const dimOthers = activeIdx != null;
+
+      const poly = L.geoJSON(area.boundary, {
+        style: {
+          color: colors.stroke,
+          weight: isActive ? 3.2 : dimOthers ? 1.6 : 2.5,
+          fillColor: colors.fill,
+          fillOpacity: isActive ? 0.22 : dimOthers ? 0.08 : 0.14,
+          dashArray: isActive ? "" : "6, 4",
+          opacity: isActive || !dimOthers ? 1 : 0.75
+        }
+      });
+      poly.bindTooltip(
+        dimOthers ? `${wardName}${isActive ? " · đang quét" : ""}` : wardName,
+        { sticky: true }
+      );
+      poly.addTo(layerAreas);
+
+      if (typeof extractPolygonRings === "function") {
+        const rings = extractPolygonRings(area.boundary);
+        if (rings?.length) {
+          areaRingSets.push({
+            wardCode: String(area.wardCode || ""),
+            rings
+          });
+        }
+      }
+
+      const points = Array.isArray(area.gridPoints) ? area.gridPoints : [];
+      const sideKm = Number(area.cellSizeKm) || 0.4;
+      // Hiện lưới mọi khu vực; khu vực đang chạy đậm hơn
+      drawGridCells(points, sideKm, colors, wardName, idx, {
+        emphasize: isActive || !dimOthers
+      });
+    });
+
+    if (opts.fit !== false) fitToDrawnLayers();
+  }
+
+  function drawGridCells(gridPoints, sideKm, colors, wardName, areaIdx, styleOpts = {}) {
+    if (!layerGrids || !gridPoints?.length || !sideKm) return;
+    if (typeof squareBounds !== "function") return;
+    const emphasize = styleOpts.emphasize !== false;
+
+    gridPoints.forEach((p, i) => {
       const bounds = squareBounds(p.lat, p.lng, sideKm);
       const isCenter = p.cellId === "center";
+      const label = p.cellLabel || `Ô ${p.searchOrder || i + 1}`;
+      const tip = `${wardName} · ${label}`;
+
       L.rectangle(bounds, {
-        color: isCenter ? "#2563eb" : "#f59e0b",
-        weight: isCenter ? 3 : 2,
-        fillColor: isCenter ? "#3b82f6" : "#fbbf24",
-        fillOpacity: isCenter ? 0.16 : 0.12,
-        dashArray: ""
+        color: isCenter ? colors.stroke : colors.grid,
+        weight: emphasize ? (isCenter ? 2.5 : 1.5) : 1,
+        fillColor: isCenter ? colors.fill : colors.gridFill,
+        fillOpacity: emphasize ? (isCenter ? 0.18 : 0.12) : 0.05,
+        dashArray: emphasize ? "" : "4, 4",
+        opacity: emphasize ? 1 : 0.55
       })
-        .bindTooltip(p.cellLabel || `Ô ${p.searchOrder || idx + 1}`, { sticky: true, direction: "center" })
+        .bindTooltip(tip, { sticky: true, direction: "center" })
         .addTo(layerGrids);
+
+      if (!emphasize) return;
 
       L.marker([p.lat, p.lng], {
         icon: L.divIcon({
           className: "tdb-grid-label",
-          html: `<span>${p.searchOrder || idx + 1}</span>`,
+          html: `<span style="background:${isCenter ? colors.stroke : colors.grid}">${p.searchOrder || i + 1}</span>`,
           iconSize: [22, 22],
           iconAnchor: [11, 11]
         }),
@@ -121,110 +189,77 @@
     });
   }
 
-  function sameSearchArea(center, radiusKm) {
-    if (!searchCenter) return false;
-    const lat = Number(center?.lat);
-    const lng = Number(center?.lng);
-    const r = Number(radiusKm) || 0;
-    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return false;
-    return (
-      Math.abs(searchCenter.lat - lat) < 1e-7 &&
-      Math.abs(searchCenter.lng - lng) < 1e-7 &&
-      Math.abs(searchRadiusKm - r) < 1e-9
+  function fitToDrawnLayers() {
+    if (!map) return;
+    try {
+      const parts = [];
+      if (layerAreas?.getLayers()?.length) parts.push(layerAreas.getBounds());
+      if (layerGrids?.getLayers()?.length) parts.push(layerGrids.getBounds());
+      if (!parts.length) return;
+      let bounds = parts[0];
+      for (let i = 1; i < parts.length; i++) bounds = bounds.extend(parts[i]);
+      if (bounds?.isValid?.()) {
+        map.fitBounds(bounds, { padding: [28, 28], maxZoom: 15, animate: false });
+      }
+    } catch {}
+  }
+
+  /** Tương thích cũ: 1 ward. Tự sinh lưới nếu có generateGridFromPolygon. */
+  function drawWardBoundary(geojson, opts = {}) {
+    if (!geojson?.features?.length) return;
+    let gridPoints = Array.isArray(opts.gridPoints) ? opts.gridPoints : null;
+    let cellSizeKm = Number(opts.cellSizeKm) || 0;
+    if ((!gridPoints || !gridPoints.length) && typeof generateGridFromPolygon === "function") {
+      try {
+        const grid = generateGridFromPolygon(
+          geojson,
+          Number(opts.viewportM) > 0 ? Number(opts.viewportM) : null
+        );
+        gridPoints = grid.points || [];
+        cellSizeKm = grid.cellSizeKm || 0.4;
+      } catch {
+        gridPoints = [];
+      }
+    }
+    drawSearchAreas(
+      [
+        {
+          wardCode: opts.wardCode || geojson.features[0]?.id || "",
+          wardName: opts.wardName || opts.provinceName || "",
+          wardFullName: opts.wardFullName || "",
+          boundary: geojson,
+          gridPoints: gridPoints || [],
+          cellSizeKm: cellSizeKm || 0.4,
+          colorIndex: Number(opts.colorIndex) || Number(opts.areaIndex) || 0
+        }
+      ],
+      { fit: opts.fit !== false, force: opts.force === true }
     );
   }
 
-  function areaSignature(lat, lng, radiusKm) {
-    return `${Number(lat).toFixed(6)},${Number(lng).toFixed(6)},${Number(radiusKm || 0).toFixed(3)}`;
+  function clearWardBoundary() {
+    clearAreaLayers();
   }
 
-  /**
-   * options.fit — chỉ zoom khung khi tâm/bán kính đổi (mặc định: fit nếu đổi)
-   * options.gridPoints / cellSizeKm — lưới (tuỳ chọn)
-   * options.forceGrid — buộc vẽ lại lưới
-   */
-  function setSearchArea(center, radiusKm, options = {}) {
+  function drawGrid(gridPoints, sideKm) {
+    // Legacy single-grid API — append onto current palette[0]
     if (!map) init();
-    if (!map || !center?.lat || !center?.lng) return;
+    if (!layerGrids) return;
+    layerGrids.clearLayers();
+    drawGridCells(gridPoints, sideKm, paletteFor(0), "Lưới", 0);
+    if (gridPoints?.length) fitToDrawnLayers();
+  }
 
-    const nextLat = Number(center.lat);
-    const nextLng = Number(center.lng);
-    const nextR = Math.min(MAX_RADIUS_KM, Math.max(0, Number(radiusKm) || 0));
-    if (!Number.isFinite(nextLat) || !Number.isFinite(nextLng)) return;
-
-    const unchanged = sameSearchArea({ lat: nextLat, lng: nextLng }, nextR);
-    const sig = areaSignature(nextLat, nextLng, nextR);
-    const wantFit =
-      options.fit === true || (options.fit !== false && !unchanged && sig !== lastFitSig);
-
-    searchCenter = { lat: nextLat, lng: nextLng };
-    searchRadiusKm = nextR;
-
-    // Cập nhật / tạo vòng + tâm (không remove/add → không nháy)
-    if (layerCircle) {
-      const cur = layerCircle.getLatLng();
-      if (Math.abs(cur.lat - nextLat) > 1e-8 || Math.abs(cur.lng - nextLng) > 1e-8) {
-        layerCircle.setLatLng([nextLat, nextLng]);
-      }
-      if (Math.abs(layerCircle.getRadius() - nextR * 1000) > 0.5) {
-        layerCircle.setRadius(nextR * 1000);
-      }
-    } else {
-      layerCircle = L.circle([nextLat, nextLng], {
-        radius: nextR * 1000,
-        color: "#2563eb",
-        weight: 2,
-        fillColor: "#3b82f6",
-        fillOpacity: 0.12
-      }).addTo(map);
+  function isInsideWard(lat, lng) {
+    if (areaRingSets.length && typeof pointInPolygon === "function") {
+      return areaRingSets.some((set) => pointInPolygon(lat, lng, set.rings));
     }
-
-    if (layerCenter) {
-      const cur = layerCenter.getLatLng();
-      if (Math.abs(cur.lat - nextLat) > 1e-8 || Math.abs(cur.lng - nextLng) > 1e-8) {
-        layerCenter.setLatLng([nextLat, nextLng]);
-      }
-    } else {
-      layerCenter = L.marker([nextLat, nextLng], {
-        icon: iconCenter,
-        interactive: false,
-        keyboard: false
-      })
-        .bindTooltip("Tâm tìm kiếm", { permanent: false })
-        .addTo(map);
-    }
-
-    let gridPoints = options.gridPoints;
-    let sideKm = options.cellSizeKm;
-    if ((!gridPoints?.length || options.forceGrid) && nextR > 0 && (!unchanged || options.forceGrid || !lastGridSig)) {
-      const grid = generateSearchGrid(nextLat, nextLng, nextR);
-      gridPoints = grid.points;
-      sideKm = grid.cellSizeKm;
-    }
-
-    if (gridPoints?.length) {
-      drawGrid(gridPoints, sideKm);
-    } else if (!unchanged) {
-      // Tâm đổi mà không có grid → xóa lưới cũ
-      lastGridSig = "";
-      layerGrids?.clearLayers();
-    }
-
-    if (!wantFit || !layerCircle) return;
-
-    lastFitSig = sig;
-    const bounds = layerCircle.getBounds();
+    if (!layerAreas?.getLayers()?.length) return true;
     try {
-      if (layerGrids?.getLayers().length) {
-        map.fitBounds(bounds.extend(layerGrids.getBounds()), {
-          padding: [24, 24],
-          maxZoom: 15,
-          animate: false
-        });
-      } else {
-        map.fitBounds(bounds, { padding: [24, 24], maxZoom: 15, animate: false });
-      }
-    } catch {}
+      return layerAreas.getBounds().contains(L.latLng(lat, lng));
+    } catch {
+      return true;
+    }
   }
 
   function rowKey(row) {
@@ -241,7 +276,7 @@
     if (isNaN(lat) || isNaN(lng)) return;
 
     const key = rowKey(row);
-    const inside = isInsideRadius(lat, lng);
+    const inside = isInsideWard(lat, lng);
     const icon = inside ? iconIn : iconOut;
     const label = inside ? "Trong vùng" : "Ngoài vùng";
     const popup = `<strong>${escapeHtml(row.name || "")}</strong><br>${escapeHtml(row.address || "")}<br>${escapeHtml(row.phone || "")}<br><em>${label}</em>`;
@@ -281,26 +316,9 @@
     markerByKey.clear();
   }
 
-  function clearSearchAreaOverlays() {
-    if (!map) return;
-    layerGrids?.clearLayers();
-    lastGridSig = "";
-    lastFitSig = "";
-    if (layerCircle) {
-      map.removeLayer(layerCircle);
-      layerCircle = null;
-    }
-    if (layerCenter) {
-      map.removeLayer(layerCenter);
-      layerCenter = null;
-    }
-    searchCenter = null;
-    searchRadiusKm = 0;
-  }
-
   function clearAll() {
     if (!map) return;
-    clearSearchAreaOverlays();
+    clearWardBoundary();
     clearMarkers();
   }
 
@@ -324,14 +342,13 @@
       const lat = Number(row.lat);
       const lng = Number(row.lng);
       if (isNaN(lat) || isNaN(lng)) continue;
-      if (isInsideRadius(lat, lng)) inC++;
+      if (isInsideWard(lat, lng)) inC++;
       else outC++;
     }
     updateStats(inC, outC);
     return { inC, outC };
   }
 
-  /** Pan nhẹ — không zoom nhảy nếu đã gần đúng chỗ */
   function focusPoint(lat, lng) {
     if (!map) init();
     if (!map || lat == null || lng == null) return;
@@ -353,47 +370,21 @@
     map?.zoomOut();
   }
 
-  function locateUser() {
-    if (!navigator.geolocation) return;
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        const { latitude: lat, longitude: lng } = pos.coords;
-        if (!map) init();
-        map?.setView([lat, lng], 15, { animate: false });
-        window.dispatchEvent(
-          new CustomEvent("timdiemban:gps-center", {
-            detail: { lat, lng, accuracy: pos.coords.accuracy }
-          })
-        );
-      },
-      (err) => {
-        window.dispatchEvent(
-          new CustomEvent("timdiemban:gps-denied", {
-            detail: { code: err?.code, message: err?.message }
-          })
-        );
-      },
-      { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 }
-    );
-  }
-
   window.TimDiemBanMap = {
     init,
-    setSearchArea,
-    hasSearchArea(lat, lng, radiusKm) {
-      return sameSearchArea({ lat, lng }, radiusKm);
-    },
+    drawSearchAreas,
+    drawWardBoundary,
+    clearWardBoundary,
+    drawGrid,
     upsertMarker,
     refreshMarkers,
     clearMarkers,
-    clearSearchAreaOverlays,
     clearAll,
     countInOut,
-    isInsideRadius,
     focusPoint,
     zoomIn,
     zoomOut,
-    locateUser,
+    fitToDrawnLayers,
     invalidateSize() {
       if (map) map.invalidateSize({ animate: false });
     }

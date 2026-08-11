@@ -1,4 +1,4 @@
-// ——— Load .env nếu có ———
+// â€”â€”â€” Load .env náº¿u cÃ³ â€”â€”â€”
 (function loadEnv() {
   const envPath = require("path").join(__dirname, ".env");
   if (!require("fs").existsSync(envPath)) return;
@@ -38,6 +38,7 @@ const {
   JobsIntegrationError,
   createJobsIntegrationService
 } = require("./jobs-integration");
+const { getProvinces, getWards, getWardBoundary, getWardInfo } = require("./geo-api");
 
 const { getSetting, setSetting } = dbModule;
 const {
@@ -70,15 +71,15 @@ const {
   acceptTerms
 } = authModule;
 
-// ——— Khởi tạo database ———
+// â€”â€”â€” Khá»Ÿi táº¡o database â€”â€”â€”
 let dbReady = false;
 async function initDatabase() {
   await dbModule.initDb();
   dbReady = true;
 }
 initDatabase().catch((err) => {
-  console.error("[DB] Lỗi khởi tạo:", err.message);
-  console.error("Kiểm tra cấu hình MySQL trong server/.env");
+  console.error("[DB] Lá»—i khá»Ÿi táº¡o:", err.message);
+  console.error("Kiá»ƒm tra cáº¥u hÃ¬nh MySQL trong server/.env");
   process.exit(1);
 });
 
@@ -134,7 +135,7 @@ function expandOriginAliases(origin) {
     } else if (host !== "localhost" && !/^\d+\.\d+\.\d+\.\d+$/.test(host)) {
       out.add(`${u.protocol}//www.${host}${port}`);
     }
-    // Chỉ alias apex/www thuộc ứng dụng Findmap hiện tại.
+    // Chá»‰ alias apex/www thuá»™c á»©ng dá»¥ng Findmap hiá»‡n táº¡i.
     if (host === "findmap.vn" || host.endsWith(".findmap.vn")) {
       out.add(`${u.protocol}//findmap.vn`);
       out.add(`${u.protocol}//www.findmap.vn`);
@@ -164,13 +165,13 @@ function hostnameOf(urlLike) {
   }
 }
 
-/** Origin / Referer hợp lệ: allowlist + cùng hệ findmap.vn + host của APP/NEWS_ORIGIN */
+/** Origin / Referer há»£p lá»‡: allowlist + cÃ¹ng há»‡ findmap.vn + host cá»§a APP/NEWS_ORIGIN */
 function isAllowedWebOrigin(originOrUrl) {
   const raw = String(originOrUrl || "").trim();
   if (!raw) return true;
   const normalized = raw.replace(/\/$/, "");
   if (allowedOrigins.has(normalized)) return true;
-  // Referer có path → so khớp prefix allowlist
+  // Referer cÃ³ path â†’ so khá»›p prefix allowlist
   if ([...allowedOrigins].some((o) => raw === o || raw.startsWith(`${o}/`))) return true;
 
   const host = hostnameOf(raw.includes("://") ? raw : `https://${raw}`);
@@ -203,7 +204,7 @@ function createRateLimiter({ windowMs, max, keyPrefix }) {
     if (row.count > max) {
       const retryAfter = Math.max(1, Math.ceil((row.resetAt - now) / 1000));
       res.setHeader("Retry-After", String(retryAfter));
-      return res.status(429).json({ error: "Quá nhiều yêu cầu, vui lòng thử lại sau." });
+      return res.status(429).json({ error: "QuÃ¡ nhiá»u yÃªu cáº§u, vui lÃ²ng thá»­ láº¡i sau." });
     }
     next();
   };
@@ -218,7 +219,7 @@ const jobsIntegrationRateLimit = createRateLimiter({
 });
 
 function sanitizeValue(val, key) {
-  // Không làm biến dạng mật khẩu (ký tự đặc biệt hợp lệ).
+  // KhÃ´ng lÃ m biáº¿n dáº¡ng máº­t kháº©u (kÃ½ tá»± Ä‘áº·c biá»‡t há»£p lá»‡).
   if (typeof val === "string" && /password/i.test(String(key || ""))) {
     return val;
   }
@@ -252,7 +253,7 @@ function guardSensitiveInput(...fields) {
     for (const f of fields) {
       const v = req.body?.[f];
       if (v != null && hasSuspiciousSqlInput(v)) {
-        return res.status(400).json({ error: "Dữ liệu đầu vào không hợp lệ." });
+        return res.status(400).json({ error: "Dá»¯ liá»‡u Ä‘áº§u vÃ o khÃ´ng há»£p lá»‡." });
       }
     }
     next();
@@ -262,12 +263,12 @@ function guardSensitiveInput(...fields) {
 function csrfOriginGuard(req, res, next) {
   if (!req.path.startsWith("/api/")) return next();
   if (["GET", "HEAD", "OPTIONS"].includes(req.method)) return next();
-  // Server Jobs chỉ kích hoạt đối soát; Findmap vẫn tự xác minh token với Jobs trước khi thu hồi.
+  // Server Jobs chá»‰ kÃ­ch hoáº¡t Ä‘á»‘i soÃ¡t; Findmap váº«n tá»± xÃ¡c minh token vá»›i Jobs trÆ°á»›c khi thu há»“i.
   if (req.path === "/api/integrations/jobs/reconcile") return next();
   const origin = req.headers.origin || "";
   const referer = req.headers.referer || "";
   if (!isAllowedWebOrigin(origin) || !isAllowedWebOrigin(referer)) {
-    return res.status(403).json({ error: "CSRF blocked: origin không hợp lệ." });
+    return res.status(403).json({ error: "CSRF blocked: origin khÃ´ng há»£p lá»‡." });
   }
   next();
 }
@@ -294,7 +295,7 @@ app.use("/api/", apiRateLimit);
 
 app.use((err, req, res, next) => {
   if (err instanceof SyntaxError && err.status === 400 && "body" in err) {
-    return res.status(400).json({ error: "JSON không hợp lệ — kiểm tra Content-Type và nội dung request" });
+    return res.status(400).json({ error: "JSON khÃ´ng há»£p lá»‡ â€” kiá»ƒm tra Content-Type vÃ  ná»™i dung request" });
   }
   next(err);
 });
@@ -308,9 +309,9 @@ function getToken(req) {
 async function requireAuth(req, res, next) {
   try {
     const user = await getUserFromToken(getToken(req));
-    if (!user) return res.status(401).json({ error: "Chưa đăng nhập hoặc phiên hết hạn" });
+    if (!user) return res.status(401).json({ error: "ChÆ°a Ä‘Äƒng nháº­p hoáº·c phiÃªn háº¿t háº¡n" });
     req.user = user;
-    // Gia hạn cookie routing khi còn hoạt động
+    // Gia háº¡n cookie routing khi cÃ²n hoáº¡t Ä‘á»™ng
     attachSessionCookie(req, res);
     next();
   } catch (err) {
@@ -321,7 +322,7 @@ async function requireAuth(req, res, next) {
 async function requireAdmin(req, res, next) {
   try {
     const admin = await getAdminFromToken(getToken(req));
-    if (!admin) return res.status(403).json({ error: "Cần đăng nhập quản trị viên hệ thống" });
+    if (!admin) return res.status(403).json({ error: "Cáº§n Ä‘Äƒng nháº­p quáº£n trá»‹ viÃªn há»‡ thá»‘ng" });
     req.admin = admin;
     next();
   } catch (err) {
@@ -337,7 +338,7 @@ function sendJobsIntegrationError(res, error) {
     console.error("[Jobs integration]", error?.message || error);
   }
   return res.status(status).json({
-    error: error?.message || "Không xử lý được yêu cầu tích hợp Jobs ClickOn.",
+    error: error?.message || "KhÃ´ng xá»­ lÃ½ Ä‘Æ°á»£c yÃªu cáº§u tÃ­ch há»£p Jobs ClickOn.",
     code: error instanceof JobsIntegrationError ? error.code : "jobs_integration_error"
   });
 }
@@ -375,7 +376,7 @@ async function buildVietQrPayment(order) {
     note: notePlain
   };
 
-  // Ưu tiên API v2 khi có Client ID + API Key
+  // Æ¯u tiÃªn API v2 khi cÃ³ Client ID + API Key
   if (clientId && apiKey) {
     const acqId = resolveAcqId(bankId, acqIdSetting);
     if (acqId) {
@@ -392,12 +393,12 @@ async function buildVietQrPayment(order) {
         });
         return { ...v2, paymentInfo: { ...paymentInfo, method: "api-v2" } };
       } catch (err) {
-        console.warn("[VietQR v2]", err.message, "— fallback Quick Link");
+        console.warn("[VietQR v2]", err.message, "â€” fallback Quick Link");
       }
     }
   }
 
-  // Fallback: Quick Link img.vietqr.io (không cần API key)
+  // Fallback: Quick Link img.vietqr.io (khÃ´ng cáº§n API key)
   if (bankId) {
     const quick = buildQuickLinkUrl({
       bankId,
@@ -463,12 +464,12 @@ async function sendResetMail({ to, resetLink }) {
       await transporter.sendMail({
         from: `"${cfg.fromName || "findmap"}" <${cfg.fromEmail}>`,
         to: recipient,
-        subject: "Đặt lại mật khẩu findmap",
-        text: `Bạn vừa yêu cầu đặt lại mật khẩu.\n\nNhấn link sau để đổi mật khẩu:\n${resetLink}\n\nNếu không phải bạn yêu cầu, hãy bỏ qua email này.`,
+        subject: "Äáº·t láº¡i máº­t kháº©u findmap",
+        text: `Báº¡n vá»«a yÃªu cáº§u Ä‘áº·t láº¡i máº­t kháº©u.\n\nNháº¥n link sau Ä‘á»ƒ Ä‘á»•i máº­t kháº©u:\n${resetLink}\n\nNáº¿u khÃ´ng pháº£i báº¡n yÃªu cáº§u, hÃ£y bá» qua email nÃ y.`,
         html: `
-          <p>Bạn vừa yêu cầu đặt lại mật khẩu.</p>
-          <p><a href="${resetLink}">Bấm vào đây để đổi mật khẩu</a></p>
-          <p>Nếu không phải bạn yêu cầu, hãy bỏ qua email này.</p>
+          <p>Báº¡n vá»«a yÃªu cáº§u Ä‘áº·t láº¡i máº­t kháº©u.</p>
+          <p><a href="${resetLink}">Báº¥m vÃ o Ä‘Ã¢y Ä‘á»ƒ Ä‘á»•i máº­t kháº©u</a></p>
+          <p>Náº¿u khÃ´ng pháº£i báº¡n yÃªu cáº§u, hÃ£y bá» qua email nÃ y.</p>
         `
       });
       return { ok: true, host, rerouted: Boolean(cfg.rerouteAddress) };
@@ -515,7 +516,7 @@ app.get("/api/packages/vietqr-status", requireAuth, async (req, res) => {
   res.json({ configured: await isVietQrConfigured() });
 });
 
-/** Origin public theo Host / X-Forwarded-* — để client dùng path tương đối đúng subdomain đang mở. */
+/** Origin public theo Host / X-Forwarded-* â€” Ä‘á»ƒ client dÃ¹ng path tÆ°Æ¡ng Ä‘á»‘i Ä‘Ãºng subdomain Ä‘ang má»Ÿ. */
 function requestPublicOrigin(req) {
   const xfProto = String(req.headers["x-forwarded-proto"] || "")
     .split(",")[0]
@@ -531,7 +532,7 @@ function requestPublicOrigin(req) {
 
 app.get("/api/config/origins", (req, res) => {
   const page = requestPublicOrigin(req);
-  // Cùng host (nginx chung domain): trả origin đang truy cập — tránh app.* bị ép sang apex.
+  // CÃ¹ng host (nginx chung domain): tráº£ origin Ä‘ang truy cáº­p â€” trÃ¡nh app.* bá»‹ Ã©p sang apex.
   if (page && sameNewsOrigin()) {
     return res.json({
       searchOrigin: page,
@@ -545,6 +546,11 @@ app.get("/api/config/origins", (req, res) => {
     appOrigin
   });
 });
+
+app.get("/api/geo/provinces", getProvinces);
+app.get("/api/geo/wards", getWards);
+app.get("/api/geo/ward-boundary/:code", getWardBoundary);
+app.get("/api/geo/ward-info/:code", getWardInfo);
 
 app.post("/api/auth/login", authWriteRateLimit, guardSensitiveInput("email", "password"), async (req, res) => {
   try {
@@ -577,8 +583,8 @@ app.post("/api/auth/logout", authWriteRateLimit, async (req, res) => {
 
 app.get("/api/auth/me", async (req, res) => {
   const user = await getUserFromToken(getToken(req));
-  if (!user) return res.status(401).json({ error: "Chưa đăng nhập" });
-  // Gia hạn cookie routing + sliding token (touch trong getTokenRow)
+  if (!user) return res.status(401).json({ error: "ChÆ°a Ä‘Äƒng nháº­p" });
+  // Gia háº¡n cookie routing + sliding token (touch trong getTokenRow)
   attachSessionCookie(req, res);
   res.json({ user });
 });
@@ -591,7 +597,7 @@ app.post("/api/auth/profile", authWriteRateLimit, requireAuth, async (req, res) 
     res.json({
       ok: true,
       user,
-      message: changedPw ? "Đã cập nhật hồ sơ và mật khẩu" : "Đã cập nhật hồ sơ"
+      message: changedPw ? "ÄÃ£ cáº­p nháº­t há»“ sÆ¡ vÃ  máº­t kháº©u" : "ÄÃ£ cáº­p nháº­t há»“ sÆ¡"
     });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -691,13 +697,13 @@ app.post("/api/auth/forgot-password", authWriteRateLimit, guardSensitiveInput("e
         `[AUTH] Reset link for ${String(email || "").trim().toLowerCase()}: ${resetLink}`
       );
       if (!mailResult.ok) {
-        console.warn(`[AUTH] SMTP chưa gửi được (${mailResult.reason})`);
+        console.warn(`[AUTH] SMTP chÆ°a gá»­i Ä‘Æ°á»£c (${mailResult.reason})`);
       }
     }
     res.json({
       ok: true,
       message:
-        "Nếu email tồn tại, hệ thống đã gửi hướng dẫn đặt lại mật khẩu. Nếu chưa nhận được, vui lòng liên hệ admin hỗ trợ."
+        "Náº¿u email tá»“n táº¡i, há»‡ thá»‘ng Ä‘Ã£ gá»­i hÆ°á»›ng dáº«n Ä‘áº·t láº¡i máº­t kháº©u. Náº¿u chÆ°a nháº­n Ä‘Æ°á»£c, vui lÃ²ng liÃªn há»‡ admin há»— trá»£."
     });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -727,7 +733,7 @@ app.post("/api/admin/login", authWriteRateLimit, guardSensitiveInput("email", "p
 app.get("/api/admin/me", async (req, res, next) => {
   try {
     const admin = await getAdminFromToken(getToken(req));
-    if (!admin) return res.status(403).json({ error: "Cần đăng nhập quản trị" });
+    if (!admin) return res.status(403).json({ error: "Cáº§n Ä‘Äƒng nháº­p quáº£n trá»‹" });
     res.json({ user: admin });
   } catch (err) {
     next(err);
@@ -749,7 +755,7 @@ app.post("/api/admin/users", requireAdmin, async (req, res) => {
     });
     res.json({
       user,
-      message: `Đã tạo tài khoản ${user.email} — ${user.points} credit`
+      message: `ÄÃ£ táº¡o tÃ i khoáº£n ${user.email} â€” ${user.points} credit`
     });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -774,7 +780,7 @@ app.post("/api/admin/points/add", requireAdmin, async (req, res) => {
   try {
     const { email, amount } = req.body || {};
     const user = await addPoints(email, amount);
-    res.json({ user, message: `Đã cộng ${amount} credit cho ${email}` });
+    res.json({ user, message: `ÄÃ£ cá»™ng ${amount} credit cho ${email}` });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -784,7 +790,7 @@ app.post("/api/admin/points/set", requireAdmin, async (req, res) => {
   try {
     const { email, points } = req.body || {};
     const user = await setUserPoints(email, points);
-    res.json({ user, message: `Đã đặt ${user.points} credit cho ${email}` });
+    res.json({ user, message: `ÄÃ£ Ä‘áº·t ${user.points} credit cho ${email}` });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -806,7 +812,7 @@ app.post("/api/admin/users/toggle-active", requireAdmin, async (req, res) => {
     const user = await setUserActive(email, active !== false);
     res.json({
       user,
-      message: user.isActive ? `Đã mở khóa ${email}` : `Đã khóa ${email}`
+      message: user.isActive ? `ÄÃ£ má»Ÿ khÃ³a ${email}` : `ÄÃ£ khÃ³a ${email}`
     });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -822,8 +828,8 @@ app.post("/api/admin/users/update-profile", requireAdmin, async (req, res) => {
       ok: true,
       user,
       message: changedPw
-        ? `Đã cập nhật hồ sơ và mật khẩu ${user.email}`
-        : `Đã cập nhật hồ sơ ${user.email}`
+        ? `ÄÃ£ cáº­p nháº­t há»“ sÆ¡ vÃ  máº­t kháº©u ${user.email}`
+        : `ÄÃ£ cáº­p nháº­t há»“ sÆ¡ ${user.email}`
     });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -833,7 +839,7 @@ app.post("/api/admin/users/update-profile", requireAdmin, async (req, res) => {
 app.post("/api/packages/purchase", requireAuth, async (req, res) => {
   try {
     const packageId = String(req.body?.packageId || "").trim();
-    if (!packageId) return res.status(400).json({ error: "Thiếu mã gói" });
+    if (!packageId) return res.status(400).json({ error: "Thiáº¿u mÃ£ gÃ³i" });
     const result = await requestPackagePurchase(req.user.id, packageId);
     const payment = result.order ? await buildVietQrPayment(result.order) : null;
     if (payment) {
@@ -852,11 +858,11 @@ app.post("/api/packages/purchase", requireAuth, async (req, res) => {
 app.post("/api/packages/orders/:id/confirm-payment", requireAuth, async (req, res) => {
   try {
     if (!confirmPayment) {
-      return res.status(400).json({ error: "Chức năng này yêu cầu MySQL" });
+      return res.status(400).json({ error: "Chá»©c nÄƒng nÃ y yÃªu cáº§u MySQL" });
     }
     if (!(await isVietQrConfigured())) {
       return res.status(400).json({
-        error: "Admin chưa cấu hình VietQR — vui lòng liên hệ admin trước khi xác nhận thanh toán"
+        error: "Admin chÆ°a cáº¥u hÃ¬nh VietQR â€” vui lÃ²ng liÃªn há»‡ admin trÆ°á»›c khi xÃ¡c nháº­n thanh toÃ¡n"
       });
     }
     const result = await confirmPayment(req.params.id, req.user.id);
@@ -869,7 +875,7 @@ app.post("/api/packages/orders/:id/confirm-payment", requireAuth, async (req, re
 app.post("/api/packages/orders/:id/cancel", requireAuth, async (req, res) => {
   try {
     if (!cancelPackageOrder) {
-      return res.status(400).json({ error: "Chức năng hủy đơn chưa khả dụng" });
+      return res.status(400).json({ error: "Chá»©c nÄƒng há»§y Ä‘Æ¡n chÆ°a kháº£ dá»¥ng" });
     }
     const result = await cancelPackageOrder(req.params.id, req.user.id);
     res.json(result);
@@ -881,14 +887,14 @@ app.post("/api/packages/orders/:id/cancel", requireAuth, async (req, res) => {
 app.get("/api/packages/orders/:id/payment", requireAuth, async (req, res) => {
   try {
     if (!getPackageOrderById) {
-      return res.status(400).json({ error: "Chức năng này yêu cầu MySQL" });
+      return res.status(400).json({ error: "Chá»©c nÄƒng nÃ y yÃªu cáº§u MySQL" });
     }
     const order = await getPackageOrderById(req.params.id);
     if (!order || order.userId !== req.user.id) {
-      return res.status(404).json({ error: "Không tìm thấy đơn hàng" });
+      return res.status(404).json({ error: "KhÃ´ng tÃ¬m tháº¥y Ä‘Æ¡n hÃ ng" });
     }
     if (order.status !== "pending") {
-      return res.status(400).json({ error: "Đơn không còn ở trạng thái chờ thanh toán" });
+      return res.status(400).json({ error: "ÄÆ¡n khÃ´ng cÃ²n á»Ÿ tráº¡ng thÃ¡i chá» thanh toÃ¡n" });
     }
     const payment = await buildVietQrPayment(order);
     res.json({
@@ -964,7 +970,7 @@ app.post("/api/search/charge", requireAuth, async (req, res) => {
   }
 });
 
-// ——— Lưu / khôi phục kết quả tìm kiếm theo tài khoản ———
+// â€”â€”â€” LÆ°u / khÃ´i phá»¥c káº¿t quáº£ tÃ¬m kiáº¿m theo tÃ i khoáº£n â€”â€”â€”
 app.get("/api/search/results", requireAuth, async (req, res) => {
   try {
     const result = await getUserSearchResults(req.user.id);
@@ -992,7 +998,7 @@ app.delete("/api/search/results", requireAuth, async (req, res) => {
   }
 });
 
-// ——— Admin VietQR config ———
+// â€”â€”â€” Admin VietQR config â€”â€”â€”
 app.get("/api/admin/vietqr-config", requireAdmin, async (req, res) => {
   res.json({
     bankId: await getSetting("vietqr_bank_id", ""),
@@ -1025,8 +1031,8 @@ app.post("/api/admin/vietqr-config", requireAdmin, async (req, res) => {
     res.json({
       ok: true,
       message: hasV2
-        ? "Đã lưu — VietQR API v2 sẵn sàng (Client ID + API Key + STK + BIN)"
-        : "Đã lưu STK ngân hàng. Để dùng API v2: nhập Client ID, API Key và mã BIN (6 số).",
+        ? "ÄÃ£ lÆ°u â€” VietQR API v2 sáºµn sÃ ng (Client ID + API Key + STK + BIN)"
+        : "ÄÃ£ lÆ°u STK ngÃ¢n hÃ ng. Äá»ƒ dÃ¹ng API v2: nháº­p Client ID, API Key vÃ  mÃ£ BIN (6 sá»‘).",
       vietqrV2Ready: hasV2,
       bankId: savedBankId,
       accountNo: savedAccountNo,
@@ -1094,10 +1100,10 @@ app.post("/api/admin/system-config", requireAdmin, async (req, res) => {
     res.json({
       ok: true,
       creditPerPoint,
-      message: `Đã lưu cấu hình: ${creditPerPoint} credit / 1 điểm + SMTP`
+      message: `ÄÃ£ lÆ°u cáº¥u hÃ¬nh: ${creditPerPoint} credit / 1 Ä‘iá»ƒm + SMTP`
     });
   } catch (err) {
-    res.status(400).json({ error: err.message || "Lưu cấu hình thất bại" });
+    res.status(400).json({ error: err.message || "LÆ°u cáº¥u hÃ¬nh tháº¥t báº¡i" });
   }
 });
 
@@ -1109,22 +1115,22 @@ app.post("/api/admin/system-config/test-mail", requireAdmin, async (req, res) =>
       return res.status(400).json({
         error:
           result.reason === "smtp_not_configured"
-            ? "SMTP chưa cấu hình đủ"
+            ? "SMTP chÆ°a cáº¥u hÃ¬nh Ä‘á»§"
             : result.reason === "smtp_test_recipient_missing"
-              ? "Thiếu email nhận test"
-              : result.error || "Gửi mail test thất bại"
+              ? "Thiáº¿u email nháº­n test"
+              : result.error || "Gá»­i mail test tháº¥t báº¡i"
       });
     }
     return res.json({
       ok: true,
-      message: `Đã gửi mail test tới ${result.to} qua ${result.host}`
+      message: `ÄÃ£ gá»­i mail test tá»›i ${result.to} qua ${result.host}`
     });
   } catch (err) {
-    return res.status(400).json({ error: err.message || "Gửi mail test thất bại" });
+    return res.status(400).json({ error: err.message || "Gá»­i mail test tháº¥t báº¡i" });
   }
 });
 
-/** Admin test tạo QR thử (API v2 hoặc Quick Link) */
+/** Admin test táº¡o QR thá»­ (API v2 hoáº·c Quick Link) */
 app.post("/api/admin/vietqr-test", requireAdmin, async (req, res) => {
   try {
     const amount = Number(req.body?.amount) || 99000;
@@ -1134,14 +1140,14 @@ app.post("/api/admin/vietqr-test", requireAdmin, async (req, res) => {
     };
     const payment = await buildVietQrPayment(fakeOrder);
     if (!payment?.qrUrl) {
-      return res.status(400).json({ error: "Chưa đủ cấu hình — kiểm tra STK, mã NH và API Key" });
+      return res.status(400).json({ error: "ChÆ°a Ä‘á»§ cáº¥u hÃ¬nh â€” kiá»ƒm tra STK, mÃ£ NH vÃ  API Key" });
     }
     res.json({
       ok: true,
       qrUrl: payment.qrUrl,
       qrMethod: payment.method,
       paymentInfo: payment.paymentInfo,
-      message: payment.method === "api-v2" ? "QR tạo qua API v2" : "QR tạo qua Quick Link"
+      message: payment.method === "api-v2" ? "QR táº¡o qua API v2" : "QR táº¡o qua Quick Link"
     });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -1149,7 +1155,7 @@ app.post("/api/admin/vietqr-test", requireAdmin, async (req, res) => {
 });
 
 /**
- * Lấy site Winmap — CHỈ theo tài khoản đang đăng nhập (mỗi user 1 site + token riêng).
+ * Láº¥y site Winmap â€” CHá»ˆ theo tÃ i khoáº£n Ä‘ang Ä‘Äƒng nháº­p (má»—i user 1 site + token riÃªng).
  */
 async function getWinmapSite(userId) {
   const url = (await getSetting(`winmap_site_url:${userId}`, "")).trim();
@@ -1169,7 +1175,7 @@ function siteHost(url, urlMode = "winmap") {
   }
 }
 
-/** Cấu hình site nhận dữ liệu — dùng cho nút "Gửi về site". Riêng theo từng tài khoản. */
+/** Cáº¥u hÃ¬nh site nháº­n dá»¯ liá»‡u â€” dÃ¹ng cho nÃºt "Gá»­i vá» site". RiÃªng theo tá»«ng tÃ i khoáº£n. */
 app.get("/api/points/site", requireAuth, async (req, res) => {
   const site = await getWinmapSite(req.user.id);
   const urlMode = site.pushConfig?.urlMode || "winmap";
@@ -1184,12 +1190,12 @@ app.get("/api/points/site", requireAuth, async (req, res) => {
   });
 });
 
-/** Lưu site nhận dữ liệu — Winmap hoặc webhook/API tùy chỉnh. */
+/** LÆ°u site nháº­n dá»¯ liá»‡u â€” Winmap hoáº·c webhook/API tÃ¹y chá»‰nh. */
 app.post("/api/points/site", requireAuth, async (req, res) => {
   try {
     const { url, token, label, pushConfig } = req.body || {};
     const cleanUrl = String(url || "").trim();
-    if (!cleanUrl) return res.status(400).json({ error: "Thiếu địa chỉ site (vd: demo.winmap.vn hoặc https://api.example.com/hook)" });
+    if (!cleanUrl) return res.status(400).json({ error: "Thiáº¿u Ä‘á»‹a chá»‰ site (vd: demo.winmap.vn hoáº·c https://api.example.com/hook)" });
 
     const { parsePushConfig } = require("./push-config");
     const cfg = pushConfig && typeof pushConfig === "object" ? parsePushConfig(pushConfig) : null;
@@ -1199,7 +1205,7 @@ app.post("/api/points/site", requireAuth, async (req, res) => {
       // eslint-disable-next-line no-new
       new URL(importUrl);
     } catch {
-      return res.status(400).json({ error: "Địa chỉ site không hợp lệ" });
+      return res.status(400).json({ error: "Äá»‹a chá»‰ site khÃ´ng há»£p lá»‡" });
     }
 
     const uid = req.user.id;
@@ -1216,7 +1222,7 @@ app.post("/api/points/site", requireAuth, async (req, res) => {
     const savedMode = site.pushConfig?.urlMode || "winmap";
     res.json({
       ok: true,
-      message: `Đã lưu site ${siteHost(cleanUrl, savedMode)}`,
+      message: `ÄÃ£ lÆ°u site ${siteHost(cleanUrl, savedMode)}`,
       url: site.url,
       label: site.label,
       host: siteHost(site.url, savedMode),
@@ -1226,11 +1232,11 @@ app.post("/api/points/site", requireAuth, async (req, res) => {
       pushConfig: site.pushConfig
     });
   } catch (err) {
-    res.status(500).json({ error: err.message || "Lỗi lưu site" });
+    res.status(500).json({ error: err.message || "Lá»—i lÆ°u site" });
   }
 });
 
-/** Chẩn đoán kết nối sang site nhận — không gửi dữ liệu thật. */
+/** Cháº©n Ä‘oÃ¡n káº¿t ná»‘i sang site nháº­n â€” khÃ´ng gá»­i dá»¯ liá»‡u tháº­t. */
 app.get("/api/points/ping", requireAuth, async (req, res) => {
   const saved = await getWinmapSite(req.user.id);
   const rawUrl = (req.query.url && String(req.query.url).trim()) || saved.url;
@@ -1238,7 +1244,7 @@ app.get("/api/points/ping", requireAuth, async (req, res) => {
   const urlMode = req.query.urlMode === "custom" ? "custom" : (saved.pushConfig?.urlMode || "winmap");
 
   if (!rawUrl) {
-    return res.json({ ok: false, configured: false, message: "Chưa lưu site. Nhập địa chỉ và token rồi bấm Lưu." });
+    return res.json({ ok: false, configured: false, message: "ChÆ°a lÆ°u site. Nháº­p Ä‘á»‹a chá»‰ vÃ  token rá»“i báº¥m LÆ°u." });
   }
 
   const { clean: importUrl, fallback: fallbackUrl } = resolveImportUrls(rawUrl, { urlMode });
@@ -1260,10 +1266,10 @@ app.get("/api/points/ping", requireAuth, async (req, res) => {
     report.steps.push({ url: baseUrl, status: r.status, ok: r.status < 500 });
   } catch (e) {
     report.steps.push({ url: baseUrl, status: 0, ok: false, error: e.message });
-    return res.json({ ok: false, ...report, message: `Không kết nối được tới ${baseUrl}: ${e.message}` });
+    return res.json({ ok: false, ...report, message: `KhÃ´ng káº¿t ná»‘i Ä‘Æ°á»£c tá»›i ${baseUrl}: ${e.message}` });
   }
 
-  // Thử POST tới import URL với payload rỗng (để kiểm tra auth)
+  // Thá»­ POST tá»›i import URL vá»›i payload rá»—ng (Ä‘á»ƒ kiá»ƒm tra auth)
   const headers = { "Content-Type": "application/json", Accept: "application/json" };
   if (token) headers.Authorization = `Bearer ${token}`;
 
@@ -1283,32 +1289,32 @@ app.get("/api/points/ping", requireAuth, async (req, res) => {
 
       if (r.status === 403) {
         return res.json({ ok: false, ...report, usedUrl: tryUrl,
-          message: `403 Forbidden — token không khớp hoặc không có quyền. URL: ${tryUrl}` });
+          message: `403 Forbidden â€” token khÃ´ng khá»›p hoáº·c khÃ´ng cÃ³ quyá»n. URL: ${tryUrl}` });
       }
       if (r.status === 404 && tryUrl === importUrl) {
-        report.steps.push({ note: "Clean URL 404, thử fallback ?q= ..." });
+        report.steps.push({ note: "Clean URL 404, thá»­ fallback ?q= ..." });
         continue;
       }
       if (r.ok || r.status < 500) {
         return res.json({ ok: true, ...report, usedUrl: tryUrl,
-          message: `Kết nối OK (HTTP ${r.status}) — ${tryUrl}` });
+          message: `Káº¿t ná»‘i OK (HTTP ${r.status}) â€” ${tryUrl}` });
       }
       return res.json({ ok: false, ...report, usedUrl: tryUrl,
-        message: `HTTP ${r.status} từ ${tryUrl}` });
+        message: `HTTP ${r.status} tá»« ${tryUrl}` });
     } catch (e) {
       report.steps.push({ url: tryUrl, status: 0, ok: false, error: e.message });
     }
   }
 
-  return res.json({ ok: false, ...report, message: `Không gọi được API import. Kiểm tra log server XAMPP (error_log).` });
+  return res.json({ ok: false, ...report, message: `KhÃ´ng gá»i Ä‘Æ°á»£c API import. Kiá»ƒm tra log server XAMPP (error_log).` });
 });
 
-/** Gửi điểm bán sang site Winmap đã lưu (hoặc site truyền kèm trong body). */
+/** Gá»­i Ä‘iá»ƒm bÃ¡n sang site Winmap Ä‘Ã£ lÆ°u (hoáº·c site truyá»n kÃ¨m trong body). */
 app.post("/api/points/push", requireAuth, async (req, res) => {
   try {
     const { points, site } = req.body || {};
     if (!Array.isArray(points) || !points.length) {
-      return res.status(400).json({ error: "Danh sách điểm trống" });
+      return res.status(400).json({ error: "Danh sÃ¡ch Ä‘iá»ƒm trá»‘ng" });
     }
     const saved = await getWinmapSite(req.user.id);
     const target = {
@@ -1318,11 +1324,11 @@ app.post("/api/points/push", requireAuth, async (req, res) => {
     };
     const result = await pushPointsExternal(points, target);
     if (result.failed > 0 && result.pushed === 0) {
-      return res.status(502).json({ error: result.message || "Gửi thất bại", ...result });
+      return res.status(502).json({ error: result.message || "Gá»­i tháº¥t báº¡i", ...result });
     }
     res.json({ ok: true, host: siteHost(target.url, saved.pushConfig?.urlMode), ...result });
   } catch (err) {
-    res.status(500).json({ error: err.message || "Lỗi gửi điểm" });
+    res.status(500).json({ error: err.message || "Lá»—i gá»­i Ä‘iá»ƒm" });
   }
 });
 
@@ -1349,7 +1355,7 @@ function sendWebPage(res, file) {
 
 function redirectToNews(req, res) {
   const qs = req.url.includes("?") ? req.url.slice(req.url.indexOf("?")) : "";
-  // Cùng domain reverse-proxy: redirect tương đối để giữ host Findmap hiện tại.
+  // CÃ¹ng domain reverse-proxy: redirect tÆ°Æ¡ng Ä‘á»‘i Ä‘á»ƒ giá»¯ host Findmap hiá»‡n táº¡i.
   if (sameNewsOrigin()) {
     return res.redirect(302, `${req.path}${qs}`);
   }
@@ -1369,7 +1375,7 @@ function sameNewsOrigin() {
   }
 }
 
-/** Tin tức / giới thiệu / CMS đã tách sang hệ news — chuyển hướng. */
+/** Tin tá»©c / giá»›i thiá»‡u / CMS Ä‘Ã£ tÃ¡ch sang há»‡ news â€” chuyá»ƒn hÆ°á»›ng. */
 app.get("/gioi-thieu", redirectGioiThieuToHome);
 [
   "/tin-tuc",
@@ -1389,7 +1395,18 @@ app.get("/gioi-thieu", redirectGioiThieuToHome);
 app.get(/^\/tin-tuc(\/.*)?$/, redirectToNews);
 app.get(/^\/admin-post-/, redirectToNews);
 app.get(/^\/media(\/.*)?$/, redirectToNews);
-app.get(/^\/landing(\/.*)?$/, redirectToNews);
+// Landing assets: /landing/styles.css, /landing/script.js, /landing/assets/*
+// Do NOT redirect /landing/* to news — that breaks CSS/JS on the homepage.
+app.use(
+  "/landing",
+  express.static(landingDir, {
+    setHeaders(res, filePath) {
+      if (/\.(html|js|css)$/i.test(filePath)) {
+        res.setHeader("Cache-Control", "no-cache, must-revalidate");
+      }
+    }
+  })
+);
 
 app.get("/robots.txt", (req, res) => {
   const origin = requestPublicOrigin(req) || newsOrigin;
@@ -1427,7 +1444,7 @@ for (const [route, file] of Object.entries(webPages)) {
   app.get(route, (req, res) => sendWebPage(res, file));
 }
 
-/** Trang tìm điểm — alias cũ → "/" (một URL duy nhất). */
+/** Trang tÃ¬m Ä‘iá»ƒm â€” alias cÅ© â†’ "/" (má»™t URL duy nháº¥t). */
 app.get("/app", (req, res) => {
   const qs = req.url.includes("?") ? req.url.slice(req.url.indexOf("?")) : "";
   res.redirect(301, `/${qs}`);
@@ -1437,7 +1454,7 @@ app.get("/", (req, res) => {
   if (hasSessionCookie(req)) {
     return sendWebPage(res, "index.html");
   }
-  // Cùng domain: trả HTML giới thiệu tại "/" (không redirect — tránh vòng lặp)
+  // CÃ¹ng domain: tráº£ HTML giá»›i thiá»‡u táº¡i "/" (khÃ´ng redirect â€” trÃ¡nh vÃ²ng láº·p)
   if (sameNewsOrigin() && fs.existsSync(landingIndexHtml)) {
     return res.sendFile(landingIndexHtml);
   }
@@ -1473,7 +1490,7 @@ for (const [from, to] of Object.entries(legacyHtmlRedirects)) {
 app.use(
   express.static(webDir, {
     setHeaders(res, filePath) {
-      // Tránh cache cứng HTML/JS/CSS — prod hay giữ bản cũ (panel GPS ảnh 2)
+      // TrÃ¡nh cache cá»©ng HTML/JS/CSS â€” prod hay giá»¯ báº£n cÅ© (panel GPS áº£nh 2)
       if (/\.(html|js|css)$/i.test(filePath)) {
         res.setHeader("Cache-Control", "no-cache, must-revalidate");
       }
@@ -1537,11 +1554,11 @@ function freePort(port) {
 
 function startServer(retried = false) {
   const server = app.listen(PORT, () => {
-    console.log(`Hệ tìm kiếm: ${appOrigin}`);
-    console.log(`Trang quản trị: ${appOrigin}/admin`);
-    console.log(`Đăng nhập: ${appOrigin}/login`);
-    console.log(`Hệ tin tức / CMS: ${newsOrigin}`);
-    console.log(`Quên MK: ${appOrigin}/quen-mat-khau`);
+    console.log(`Há»‡ tÃ¬m kiáº¿m: ${appOrigin}`);
+    console.log(`Trang quáº£n trá»‹: ${appOrigin}/admin`);
+    console.log(`ÄÄƒng nháº­p: ${appOrigin}/login`);
+    console.log(`Há»‡ tin tá»©c / CMS: ${newsOrigin}`);
+    console.log(`QuÃªn MK: ${appOrigin}/quen-mat-khau`);
     console.log(
       `Database: MySQL (${process.env.MYSQL_HOST || "localhost"}:${process.env.MYSQL_PORT || 3306}/${process.env.MYSQL_DATABASE || "timdiemban"})`
     );
@@ -1549,13 +1566,13 @@ function startServer(retried = false) {
 
   server.on("error", (err) => {
     if (err.code === "EADDRINUSE" && !retried) {
-      console.warn(`Port ${PORT} đang bận — đang tắt process cũ rồi chạy lại…`);
+      console.warn(`Port ${PORT} Ä‘ang báº­n â€” Ä‘ang táº¯t process cÅ© rá»“i cháº¡y láº¡iâ€¦`);
       freePort(PORT);
       setTimeout(() => startServer(true), 600);
       return;
     }
     if (err.code === "EADDRINUSE") {
-      console.error(`Không mở được port ${PORT} (vẫn bị chiếm).`);
+      console.error(`KhÃ´ng má»Ÿ Ä‘Æ°á»£c port ${PORT} (váº«n bá»‹ chiáº¿m).`);
       process.exit(1);
     }
     throw err;
