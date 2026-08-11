@@ -8,8 +8,20 @@ let sentKeys = new Set(); // key của các dòng đã gửi thành công về s
 let jobsSyncResults = new Map();
 let jobsIntegrationStatus = { linked: false };
 let jobsSyncBusy = false;
-const TABLE_PAGE_SIZE = 50;
+let tablePageSizeMode = 50; // 20 | 50 | 100 | "all"
+const TABLE_PAGE_SIZE_STORAGE_KEY = "timdiemban_table_page_size";
+try {
+  const v = localStorage.getItem(TABLE_PAGE_SIZE_STORAGE_KEY);
+  if (v === "all") tablePageSizeMode = "all";
+  else if (v === "20" || v === "50" || v === "100") tablePageSizeMode = Number(v);
+} catch {}
 let currentPage = 1;
+
+function getTablePageSize(totalCount) {
+  if (tablePageSizeMode === "all") return Math.max(1, totalCount);
+  const n = Number(tablePageSizeMode);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 50;
+}
 
 function isSearchInProgress(search = currentSearch) {
   return search?.status === "running" || search?.status === "paused";
@@ -404,6 +416,7 @@ const els = {
   searchResultBox: document.getElementById("searchResultBox"),
   tablePagination: document.getElementById("tablePagination"),
   tablePaginationControls: document.getElementById("tablePaginationControls"),
+  tablePageSizeSelect: document.getElementById("tablePageSizeSelect"),
   pagePrevBtn: document.getElementById("pagePrevBtn"),
   pageNextBtn: document.getElementById("pageNextBtn"),
   pageInfo: document.getElementById("pageInfo"),
@@ -1984,17 +1997,19 @@ function buildFilteredData() {
 }
 
 function getTotalPages(count) {
-  return Math.max(1, Math.ceil(count / TABLE_PAGE_SIZE));
+  const pageSize = getTablePageSize(count);
+  return Math.max(1, Math.ceil(count / pageSize));
 }
 
 function updatePaginationControls(visibleCount) {
+  const pageSize = getTablePageSize(visibleCount);
   const totalPages = getTotalPages(visibleCount);
   if (currentPage > totalPages) currentPage = totalPages;
   if (els.pageInfo) els.pageInfo.textContent = `${currentPage} / ${totalPages}`;
   if (els.pagePrevBtn) els.pagePrevBtn.disabled = currentPage <= 1;
   if (els.pageNextBtn) els.pageNextBtn.disabled = currentPage >= totalPages;
   if (els.tablePaginationControls) {
-    els.tablePaginationControls.classList.toggle("hidden", visibleCount <= TABLE_PAGE_SIZE);
+    els.tablePaginationControls.classList.toggle("hidden", visibleCount <= pageSize);
   }
 }
 
@@ -2019,8 +2034,9 @@ function updateFilterCount() {
     if (!visible) {
       els.tablePagination.textContent = "Hiển thị 0 điểm bán";
     } else {
-      const start = (currentPage - 1) * TABLE_PAGE_SIZE + 1;
-      const end = Math.min(currentPage * TABLE_PAGE_SIZE, visible);
+      const pageSize = getTablePageSize(visible);
+      const start = (currentPage - 1) * pageSize + 1;
+      const end = Math.min(currentPage * pageSize, visible);
       els.tablePagination.textContent = `Hiển thị ${start} – ${end} của ${visible} điểm bán`;
     }
   }
@@ -2143,8 +2159,9 @@ function renderFullTable() {
 
   const totalPages = getTotalPages(filteredData.length);
   if (currentPage > totalPages) currentPage = totalPages;
-  const startIdx = (currentPage - 1) * TABLE_PAGE_SIZE;
-  const pageRows = filteredData.slice(startIdx, startIdx + TABLE_PAGE_SIZE);
+  const pageSize = getTablePageSize(filteredData.length);
+  const startIdx = (currentPage - 1) * pageSize;
+  const pageRows = filteredData.slice(startIdx, startIdx + pageSize);
 
   els.resultsBody.innerHTML = pageRows
     .map((row, i) => {
@@ -2204,7 +2221,7 @@ function upsertTableRow(result) {
   const useFastPath =
     !q &&
     currentPage === 1 &&
-    filteredData.length <= TABLE_PAGE_SIZE;
+    filteredData.length <= getTablePageSize(filteredData.length);
 
   if (!useFastPath) {
     renderFullTable();
@@ -2223,7 +2240,8 @@ function upsertTableRow(result) {
     newTr.innerHTML = buildRowHtml(row, 1);
     els.resultsBody.insertBefore(newTr, els.resultsBody.firstChild);
     const dataRows = els.resultsBody.querySelectorAll("tr[data-key]");
-    if (dataRows.length > TABLE_PAGE_SIZE) {
+    const pageSizeNow = getTablePageSize(filteredData.length);
+    if (dataRows.length > pageSizeNow) {
       dataRows[dataRows.length - 1].remove();
     }
     setTimeout(() => newTr.classList.remove("row-new"), 1200);
@@ -2244,7 +2262,8 @@ function upsertTableRow(result) {
 }
 
 function reorderAllStt() {
-  const startIdx = (currentPage - 1) * TABLE_PAGE_SIZE;
+  const startIdx =
+    (currentPage - 1) * getTablePageSize(filteredData.length || currentData.length || 0);
   els.resultsBody.querySelectorAll("tr[data-key]").forEach((tr, i) => {
     const sttCell = tr.querySelector(".col-stt");
     if (sttCell) sttCell.textContent = String(startIdx + i + 1);
@@ -3515,6 +3534,21 @@ els.pageNextBtn?.addEventListener("click", () => {
   currentPage += 1;
   renderFullTable();
 });
+
+els.tablePageSizeSelect?.addEventListener("change", () => {
+  const raw = String(els.tablePageSizeSelect.value || "50");
+  tablePageSizeMode = raw === "all" ? "all" : Number(raw);
+  try {
+    localStorage.setItem(TABLE_PAGE_SIZE_STORAGE_KEY, String(els.tablePageSizeSelect.value));
+  } catch {}
+  currentPage = 1;
+  renderFullTable();
+});
+
+// Init dropdown from persisted state
+if (els.tablePageSizeSelect) {
+  els.tablePageSizeSelect.value = String(tablePageSizeMode);
+}
 
 els.checkAllRows?.addEventListener("change", (e) => {
   const checked = e.target.checked;

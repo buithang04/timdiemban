@@ -14,7 +14,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
   <base href="/" />
-  <link rel="stylesheet" href="/style.css?v=20260810grid6" />
+  <link rel="stylesheet" href="/style.css?v=20260811grid7" />
   <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
   <script src="/session-cookie.js"></script>
   <script>
@@ -322,6 +322,12 @@
 
         <div class="wm-table-footer">
           <span id="tablePagination" class="wm-pagination-text">Hiển thị 0 điểm bán</span>
+          <select id="tablePageSizeSelect" class="wm-control wm-page-size-select" aria-label="Số lượng hiển thị trên trang">
+            <option value="20">20</option>
+            <option value="50" selected>50</option>
+            <option value="100">100</option>
+            <option value="all">Tất cả</option>
+          </select>
           <div id="tablePaginationControls" class="wm-pagination-controls hidden">
             <button type="button" id="pagePrevBtn" class="wm-btn wm-btn-sm wm-page-btn" disabled aria-label="Trang trước">‹</button>
             <span id="pageInfo" class="wm-page-info">1 / 1</span>
@@ -415,11 +421,11 @@
 
   <script src="/app-config.js"></script>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
-  <script src="/grid-utils.js?v=20260810grid6"></script>
-  <script src="/map.js?v=20260810grid6"></script>
+  <script src="/grid-utils.js?v=20260811grid7"></script>
+  <script src="/map.js?v=20260811grid7"></script>
   <script src="/ext-presence.js?v=20260723pause2"></script>
   <script src="/jobs-nav.js"></script>
-  <script src="/search.js?v=20260810grid6"></script>
-  <script src="/app.js?v=20260810grid6"></script>
+  <script src="/search.js?v=20260811grid7"></script>
+  <script src="/app.js?v=20260811grid7"></script>
 </body>
 </html>
