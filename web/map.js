@@ -115,40 +115,42 @@
   }
 
   /**
-   * Vẽ nhiều khu vực + lưới ô quét.
-   * opts.showCellNumbers: hiện số ô (chỉ khi đang tìm / province search)
+   * Thời lượng fly mượt theo khoảng zoom + khoảng cách pan.
+   * Mục tiêu: không nhảy, không quá nhanh/chậm (~0.9–1.4s).
    */
-  function drawSearchAreas(areas, opts = {}) {
-    if (!map) init();
-    if (!map) return;
-
-    const list = Array.isArray(areas) ? areas.filter((a) => a?.boundary?.features?.length) : [];
-    const sig = areasSignature(list, opts);
-    const force = opts.force === true;
-    if (!force && sig && sig === lastAreasSig) {
-      if (opts.fit !== false) fitToDrawnLayers(opts);
-      return;
+  function estimateFlyDuration(targetBounds, opts = {}) {
+    const hint = Number(opts.duration);
+    if (!map || !targetBounds?.isValid?.()) {
+      return hint > 0 ? Math.max(0.9, Math.min(hint, 1.4)) : 1.05;
     }
-    lastAreasSig = sig;
 
-    // Hủy animation cũ — tránh dật khi chọn liên tục
+    const pad = opts.padding || [44, 44];
+    const padPoint = L.point(pad[0], pad[1]);
+    let targetZoom = map.getZoom();
     try {
-      map.stop();
+      targetZoom = map.getBoundsZoom(targetBounds, false, padPoint);
     } catch {}
-    fitToken += 1;
-    const token = fitToken;
+    const maxZoom = Number(opts.maxZoom) > 0 ? Number(opts.maxZoom) : 14;
+    targetZoom = Math.min(targetZoom, maxZoom);
 
-    clearAreaLayers();
-    lastAreasSig = sig;
-    if (!list.length) return;
+    const zoomDelta = Math.abs(map.getZoom() - targetZoom);
+    let centerDist = 0;
+    try {
+      centerDist = map.getCenter().distanceTo(targetBounds.getCenter());
+    } catch {}
 
-    const activeIdx =
-      opts.activeAreaIndex != null && Number.isFinite(Number(opts.activeAreaIndex))
-        ? Number(opts.activeAreaIndex)
-        : null;
-    const showCellNumbers = opts.showCellNumbers === true;
+    // Base + zoom-in/out + pan xa (tỉnh↔xã / tỉnh↔tỉnh)
+    let duration = 0.92 + zoomDelta * 0.13 + Math.min(centerDist / 70000, 0.42);
+    if (opts.scale === "province") duration += 0.1;
+    if (opts.scale === "cross") duration += 0.14; // tỉnh↔xã hoặc nhảy xa
+    if (hint > 0) duration = duration * 0.55 + hint * 0.45;
 
-    // 1) Vẽ đường bao trước (nhẹ) — grid vẽ sau khi zoom xong
+    return Math.max(0.9, Math.min(duration, 1.4));
+  }
+
+  function paintAreaPolygons(list, activeIdx) {
+    layerAreas?.clearLayers();
+    areaRingSets = [];
     list.forEach((area, idx) => {
       const colors = paletteFor(area.colorIndex != null ? area.colorIndex : idx);
       const wardName =
@@ -195,6 +197,54 @@
         }
       }
     });
+  }
+
+  /**
+   * Vẽ nhiều khu vực + lưới ô quét.
+   * opts.showCellNumbers: hiện số ô (chỉ khi đang tìm / province search)
+   */
+  function drawSearchAreas(areas, opts = {}) {
+    if (!map) init();
+    if (!map) return;
+
+    const list = Array.isArray(areas) ? areas.filter((a) => a?.boundary?.features?.length) : [];
+    const sig = areasSignature(list, opts);
+    const force = opts.force === true;
+    if (!force && sig && sig === lastAreasSig) {
+      if (opts.fit !== false) fitToDrawnLayers(opts);
+      return;
+    }
+
+    if (pendingGridDraw) {
+      clearTimeout(pendingGridDraw);
+      pendingGridDraw = null;
+    }
+    fitToken += 1;
+    const token = fitToken;
+    lastAreasSig = sig;
+
+    if (!list.length) {
+      clearAreaLayers();
+      return;
+    }
+
+    const activeIdx =
+      opts.activeAreaIndex != null && Number.isFinite(Number(opts.activeAreaIndex))
+        ? Number(opts.activeAreaIndex)
+        : null;
+    const showCellNumbers = opts.showCellNumbers === true;
+    const padding = opts.padding || [44, 44];
+    const hasProvince = list.some((a) => a.level === "province");
+    const hasWard = list.some((a) => a.level !== "province");
+    const maxZoom =
+      Number(opts.maxZoom) > 0 ? Number(opts.maxZoom) : hasProvince && !hasWard ? 11 : 14;
+    const animate = opts.animate !== false && opts.fit !== false;
+
+    // Tính bounds đích TRƯỚC — để fly mượt theo khoảng cách thực
+    const preBounds = boundsFromAreas(list);
+
+    // Gỡ lưới trước (nặng) — giữ polygon cũ thêm 1 nhịp rồi mới đổi khung
+    layerGrids?.clearLayers();
 
     const drawGridsNow = () => {
       if (token !== fitToken) return;
@@ -211,10 +261,8 @@
           `Khu vực ${idx + 1}`;
         const isActive = area.active === true || (activeIdx != null && activeIdx === idx);
         const dimOthers = activeIdx != null;
-        const isProvince = area.level === "province";
         const points = Array.isArray(area.gridPoints) ? area.gridPoints : [];
         const sideKm = Number(area.cellSizeKm) || 0.4;
-        // Chỉ hiện số khi đang quét tỉnh (không xã) — preview tỉnh chỉ lưới không số
         const wantLabels = showCellNumbers && area.showLabels === true;
         drawGridCells(points, sideKm, colors, wardName, idx, {
           emphasize: isActive || !dimOthers,
@@ -223,29 +271,34 @@
       });
     };
 
-    if (opts.fit === false) {
+    if (opts.fit === false || !preBounds?.isValid?.()) {
+      paintAreaPolygons(list, activeIdx);
       drawGridsNow();
       return;
     }
 
-    const preBounds = boundsFromAreas(list) || (layerAreas.getLayers().length ? layerAreas.getBounds() : null);
-    if (!preBounds?.isValid?.()) {
-      drawGridsNow();
-      return;
-    }
-
-    const padding = opts.padding || [40, 40];
-    const maxZoom = Number(opts.maxZoom) > 0 ? Number(opts.maxZoom) : 14;
-    const animate = opts.animate !== false;
-    // fitBounds animate nhẹ hơn flyToBounds — ít dật khi nhiều ô
-    const duration = Math.max(0.3, Math.min(Number(opts.duration) || 0.5, 0.75));
+    const scale =
+      opts.scale ||
+      (hasProvince && hasWard ? "cross" : hasProvince ? "province" : "ward");
+    const duration = estimateFlyDuration(preBounds, {
+      duration: opts.duration,
+      padding,
+      maxZoom,
+      scale
+    });
 
     let gridsDrawn = false;
+    let polysPainted = false;
+    const ensurePolygons = () => {
+      if (polysPainted || token !== fitToken) return;
+      paintAreaPolygons(list, activeIdx);
+      polysPainted = true;
+    };
     const finish = () => {
       if (gridsDrawn || token !== fitToken) return;
       gridsDrawn = true;
       map.off("moveend", onMoveEnd);
-      // Vẽ lưới sau 1 frame để zoom kịp settle
+      ensurePolygons();
       requestAnimationFrame(() => {
         if (token !== fitToken) return;
         drawGridsNow();
@@ -253,31 +306,63 @@
     };
     const onMoveEnd = () => finish();
 
-    if (animate) {
-      map.once("moveend", onMoveEnd);
+    const hadPreviousAreas = (layerAreas?.getLayers()?.length || 0) > 0;
+
+    if (!animate) {
+      try {
+        map.stop();
+      } catch {}
+      ensurePolygons();
+      map.fitBounds(preBounds, { padding, maxZoom, animate: false });
+      finish();
+      return;
+    }
+
+    try {
+      map.stop();
+    } catch {}
+
+    // Giữ khung cũ lúc bắt đầu fly → đổi polygon giữa animation (tránh “nhảy” cứng)
+    if (!hadPreviousAreas) {
+      ensurePolygons();
+    } else {
+      const swapAt = Math.max(140, Math.min(Math.round(duration * 1000 * 0.22), 320));
+      setTimeout(() => {
+        if (token !== fitToken) return;
+        ensurePolygons();
+      }, swapAt);
+    }
+
+    map.once("moveend", onMoveEnd);
+    try {
+      map.flyToBounds(preBounds, {
+        padding,
+        maxZoom,
+        duration,
+        easeLinearity: 0.2
+      });
+    } catch {
+      map.off("moveend", onMoveEnd);
+      ensurePolygons();
       try {
         map.fitBounds(preBounds, {
           padding,
           maxZoom,
           animate: true,
           duration,
-          easeLinearity: 0.35
+          easeLinearity: 0.2
         });
       } catch {
-        map.off("moveend", onMoveEnd);
         map.fitBounds(preBounds, { padding, maxZoom, animate: false });
         finish();
         return;
       }
-      // Fallback nếu không có moveend (đã gần đúng bounds)
-      pendingGridDraw = setTimeout(() => {
-        pendingGridDraw = null;
-        finish();
-      }, Math.round(duration * 1000) + 180);
-    } else {
-      map.fitBounds(preBounds, { padding, maxZoom, animate: false });
-      finish();
     }
+
+    pendingGridDraw = setTimeout(() => {
+      pendingGridDraw = null;
+      finish();
+    }, Math.round(duration * 1000) + 260);
   }
 
   function drawGridCells(gridPoints, sideKm, colors, wardName, areaIdx, styleOpts = {}) {
@@ -344,14 +429,32 @@
       for (let i = 1; i < parts.length; i++) bounds = bounds.extend(parts[i]);
       if (!bounds?.isValid?.()) return;
 
+      const padding = opts.padding || [44, 44];
+      const maxZoom = Number(opts.maxZoom) > 0 ? Number(opts.maxZoom) : 14;
+      const animate = opts.animate !== false;
+      if (!animate) {
+        try {
+          map.stop();
+        } catch {}
+        map.fitBounds(bounds, { padding, maxZoom, animate: false });
+        return;
+      }
+
+      const duration = estimateFlyDuration(bounds, {
+        duration: opts.duration,
+        padding,
+        maxZoom,
+        scale: opts.scale
+      });
       try {
         map.stop();
       } catch {}
-      const padding = opts.padding || [40, 40];
-      const maxZoom = Number(opts.maxZoom) > 0 ? Number(opts.maxZoom) : 14;
-      const animate = opts.animate !== false;
-      const duration = Math.max(0.3, Math.min(Number(opts.duration) || 0.5, 0.75));
-      map.fitBounds(bounds, { padding, maxZoom, animate, duration, easeLinearity: 0.35 });
+      map.flyToBounds(bounds, {
+        padding,
+        maxZoom,
+        duration,
+        easeLinearity: 0.2
+      });
     } catch {}
   }
 

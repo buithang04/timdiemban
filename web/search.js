@@ -651,13 +651,18 @@
     }
 
     const hasProvinceOnly = areas.some((a) => a.level === "province");
+    const hasWard = areas.some((a) => a.level === "ward" || (a.level !== "province" && a.wardCode));
+    const scale =
+      opts.scale ||
+      (hasProvinceOnly && hasWard ? "cross" : hasProvinceOnly ? "province" : "ward");
     window.TimDiemBanMap.drawSearchAreas(areas, {
       fit: opts.fit !== false,
       force: opts.force === true,
       animate: opts.animate !== false,
-      duration: opts.duration || (hasProvinceOnly ? 0.5 : 0.42),
-      maxZoom: opts.maxZoom || (hasProvinceOnly ? 11 : 14),
-      // Chỉ hiện số ô khi đang tìm kiếm không có xã (province-only search)
+      // Không ép duration ngắn — map tự chỉnh theo khoảng zoom (tỉnh↔xã / tỉnh↔tỉnh)
+      duration: opts.duration,
+      maxZoom: opts.maxZoom || (hasProvinceOnly && !hasWard ? 11 : 14),
+      scale,
       showCellNumbers: opts.showCellNumbers === true,
       activeAreaIndex:
         opts.activeAreaIndex != null && Number.isFinite(Number(opts.activeAreaIndex))
@@ -694,7 +699,7 @@
       force: true,
       animate: true,
       maxZoom: 11,
-      duration: 0.5
+      scale: "cross"
     });
     return true;
   }
@@ -773,7 +778,7 @@
           force: true,
           animate: true,
           maxZoom: 11,
-          duration: 0.5
+          scale: "province"
         });
       } else {
         card.cells = 0;
@@ -914,7 +919,7 @@
           force: true,
           animate: true,
           maxZoom: 14,
-          duration: 0.45
+          scale: "cross"
         });
       } else {
         card.hint.textContent = "Không tải được ranh giới phường/xã.";
@@ -2176,7 +2181,7 @@
           fit: true,
           force: true,
           showCellNumbers: provinceOnlySearch,
-          duration: 0.48,
+          scale: provinceOnlySearch ? "province" : "cross",
           maxZoom: provinceOnlySearch ? 11 : 14
         });
 
