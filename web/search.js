@@ -84,15 +84,27 @@
     let open = false;
 
     function optionEntries() {
-      return [...selectEl.options]
-        .filter((o) => o.value !== "")
-        .map((o) => ({ value: o.value, label: o.textContent || o.value }));
+      // Giữ option rỗng để có thể «Bỏ chọn» (xóa xã / tỉnh)
+      return [...selectEl.options].map((o) => ({
+        value: o.value,
+        label: o.value === "" ? "— Bỏ chọn —" : o.textContent || o.value
+      }));
     }
 
     function syncInputFromSelect() {
       const opt = selectEl.selectedOptions?.[0];
       if (opt && opt.value) input.value = opt.textContent || "";
       else if (!open) input.value = "";
+    }
+
+    function clearSelection() {
+      const prev = selectEl.value;
+      selectEl.value = "";
+      input.value = "";
+      setOpen(false);
+      if (prev !== "") {
+        selectEl.dispatchEvent(new Event("change", { bubbles: true }));
+      }
     }
 
     function setOpen(next) {
@@ -188,14 +200,25 @@
       } else if (e.key === "Escape") {
         setOpen(false);
         syncInputFromSelect();
+      } else if (e.key === "Backspace" || e.key === "Delete") {
+        // Ô trống + Backspace/Delete → bỏ chọn (cho phép xóa xã rồi chọn lại tỉnh)
+        if (!input.value && selectEl.value) {
+          e.preventDefault();
+          clearSelection();
+        }
       }
     });
 
     input.addEventListener("blur", () => {
       setTimeout(() => {
         setOpen(false);
-        if (selectEl.value) syncInputFromSelect();
-        else input.value = "";
+        // Xóa hết chữ trong ô → coi như bỏ chọn
+        if (!input.value.trim()) {
+          if (selectEl.value) clearSelection();
+          else input.value = "";
+          return;
+        }
+        syncInputFromSelect();
       }, 150);
     });
 
@@ -206,7 +229,8 @@
         syncInputFromSelect();
         if (open) renderList(input.value);
       },
-      syncFromSelect: syncInputFromSelect
+      syncFromSelect: syncInputFromSelect,
+      clear: clearSelection
     };
     selectEl._combo = combo;
     combo.refresh();
@@ -543,9 +567,14 @@
   function redrawAllAreaMaps(opts = {}) {
     if (typeof window.TimDiemBanMap?.drawSearchAreas !== "function") return;
 
+    // Form đang chỉnh (chọn/xóa tỉnh–xã) → ưu tiên card, bỏ cache batch cũ
+    if (opts.fromForm === true) {
+      lastBatchAreasForMap = null;
+    }
+
     const sourceAreas = Array.isArray(opts.areas)
       ? opts.areas
-      : Array.isArray(lastBatchAreasForMap) && lastBatchAreasForMap.length
+      : !opts.fromForm && Array.isArray(lastBatchAreasForMap) && lastBatchAreasForMap.length
         ? lastBatchAreasForMap
         : null;
 
@@ -578,6 +607,7 @@
           colorIndex: idx,
           level,
           showGrid,
+          showLabels: level === "province" && opts.showCellNumbers === true,
           active: Number(opts.activeAreaIndex) === idx
         });
       });
@@ -614,6 +644,7 @@
           colorIndex: idx,
           level,
           showGrid,
+          showLabels: false,
           active: Number(opts.activeAreaIndex) === idx
         });
       });
@@ -624,8 +655,10 @@
       fit: opts.fit !== false,
       force: opts.force === true,
       animate: opts.animate !== false,
-      duration: opts.duration || (hasProvinceOnly ? 1.0 : 0.8),
+      duration: opts.duration || (hasProvinceOnly ? 0.5 : 0.42),
       maxZoom: opts.maxZoom || (hasProvinceOnly ? 11 : 14),
+      // Chỉ hiện số ô khi đang tìm kiếm không có xã (province-only search)
+      showCellNumbers: opts.showCellNumbers === true,
       activeAreaIndex:
         opts.activeAreaIndex != null && Number.isFinite(Number(opts.activeAreaIndex))
           ? Number(opts.activeAreaIndex)
@@ -633,11 +666,45 @@
     });
   }
 
+  /** Khôi phục preview tỉnh đã cache (sau khi xóa xã) — không refetch. */
+  function restoreProvincePreview(card) {
+    if (!card) return false;
+    const boundary = card.provinceBoundary;
+    if (!boundary?.features?.length) return false;
+    card.boundary = boundary;
+    card.level = "province";
+    card.info = null;
+    const name =
+      card.provinceInfo?.fullName || card.provinceInfo?.name || "Tỉnh/Thành";
+    const scan = computeScanCells(boundary, { coverFull: true, level: "province" });
+    card.cells = scan.cells;
+    card.capped = scan.capped;
+    card.cellSizeM = scan.cellSizeM || 0;
+    showAreaHint(
+      card,
+      { fullName: name, name },
+      card.cells,
+      card.capped,
+      card.cellSizeM,
+      { provinceWide: true }
+    );
+    redrawAllAreaMaps({
+      fromForm: true,
+      fit: true,
+      force: true,
+      animate: true,
+      maxZoom: 11,
+      duration: 0.5
+    });
+    return true;
+  }
+
   async function onAreaProvinceSelected(card, provinceCode) {
     if (!card) return;
     card.provinceInfo = null;
     card.info = null;
     card.boundary = null;
+    card.provinceBoundary = null;
     card.level = null;
     card.cells = 0;
     card.capped = false;
@@ -645,7 +712,7 @@
 
     if (!provinceCode) {
       card.hint?.classList.add("hidden");
-      redrawAllAreaMaps({ fit: false, force: true, animate: false });
+      redrawAllAreaMaps({ fromForm: true, fit: false, force: true, animate: false });
       return;
     }
 
@@ -677,7 +744,11 @@
       }
 
       card.provinceInfo = info;
-      card.boundary = boundary?.features?.length ? boundary : null;
+      card.provinceBoundary = boundary?.features?.length ? boundary : null;
+      // Nếu đã chọn xã trong lúc chờ → không đè ranh giới xã
+      if (card.ward?.value) return;
+
+      card.boundary = card.provinceBoundary;
       card.level = card.boundary ? "province" : null;
       card.info = null;
 
@@ -695,14 +766,22 @@
           card.cellSizeM,
           { provinceWide: true }
         );
-        redrawAllAreaMaps({ fit: true, force: true, animate: true, maxZoom: 11, duration: 1.05 });
+        // Preview: chia ô nhưng KHÔNG hiện số
+        redrawAllAreaMaps({
+          fromForm: true,
+          fit: true,
+          force: true,
+          animate: true,
+          maxZoom: 11,
+          duration: 0.5
+        });
       } else {
         card.cells = 0;
         card.capped = false;
         card.hint.textContent = `${name} · chưa có ranh giới tỉnh — hãy chọn Phường/Xã hoặc thử lại.`;
         card.hint.className = "ward-hint ward-hint-warn";
         card.hint.classList.remove("hidden");
-        redrawAllAreaMaps({ fit: false, force: true, animate: false });
+        redrawAllAreaMaps({ fromForm: true, fit: false, force: true, animate: false });
       }
     } catch (err) {
       console.warn("[Findmap] onAreaProvinceSelected:", err);
@@ -715,6 +794,11 @@
 
   async function loadWardsIntoCard(card, provinceCode, preferredWardCode = "") {
     if (!card?.ward) return;
+    // Đổi tỉnh → bỏ xã cũ ngay (tránh kẹt state / đè preview tỉnh)
+    if (!preferredWardCode) {
+      card.info = null;
+      if (card.ward.value) card.ward.value = "";
+    }
     card.ward.innerHTML = '<option value="">-- Đang tải... --</option>';
     card.ward.disabled = true;
     card.wardCombo?.refresh?.();
@@ -765,18 +849,20 @@
   async function onAreaWardSelected(card) {
     const code = card.ward?.value;
     if (!code) {
-      // Quay về preview tỉnh nếu đang chọn tỉnh
+      // Xóa xã → co về ranh giới tỉnh đã cache (không kẹt chọn lại tỉnh)
+      if (restoreProvincePreview(card)) return;
       const provinceCode = card.province?.value || "";
       if (provinceCode) {
         await onAreaProvinceSelected(card, provinceCode);
       } else {
         card.info = null;
         card.boundary = null;
+        card.provinceBoundary = null;
         card.level = null;
         card.cells = 0;
         card.capped = false;
         card.hint?.classList.add("hidden");
-        redrawAllAreaMaps({ fit: true, force: true, animate: true });
+        redrawAllAreaMaps({ fromForm: true, fit: true, force: true, animate: true });
       }
       return;
     }
@@ -807,6 +893,7 @@
         } catch {}
       }
       card.info = info;
+      // Co khung danh giới về đúng xã đã chọn (giữ provinceBoundary để xóa xã khôi phục)
       card.boundary = boundary?.features?.length ? boundary : null;
       card.level = card.boundary ? "ward" : null;
       const scan = computeScanCells(card.boundary);
@@ -821,7 +908,14 @@
           card.capped,
           card.cellSizeM
         );
-        redrawAllAreaMaps({ fit: true, force: true, animate: true, maxZoom: 14, duration: 0.85 });
+        redrawAllAreaMaps({
+          fromForm: true,
+          fit: true,
+          force: true,
+          animate: true,
+          maxZoom: 14,
+          duration: 0.45
+        });
       } else {
         card.hint.textContent = "Không tải được ranh giới phường/xã.";
         card.hint.className = "ward-hint ward-hint-warn";
@@ -886,6 +980,7 @@
       info: null,
       provinceInfo: null,
       boundary: null,
+      provinceBoundary: null,
       level: null,
       cells: 0,
       capped: false
@@ -918,7 +1013,7 @@
     const [card] = areaCards.splice(idx, 1);
     card.el?.remove();
     renumberAreaCards();
-    redrawAllAreaMaps({ fit: true, force: true, animate: true });
+    redrawAllAreaMaps({ fromForm: true, fit: true, force: true, animate: true });
   }
 
   async function loadProvinces() {
@@ -2070,11 +2165,19 @@
 
         window.dispatchEvent(new CustomEvent("timdiemban:search-starting", { detail: searchParams }));
         // Giữ đủ mọi khu vực trên map; nổi khu vực đang chạy
+        // Hiện số ô chỉ khi job này là tìm cả tỉnh (không xã)
+        const currentArea = areas[areaIndex];
+        const provinceOnlySearch =
+          (currentArea?.level === "province" || currentArea?.areaLevel === "province") &&
+          !currentArea?.wardCode;
         redrawAllAreaMaps({
           areas,
           activeAreaIndex: areaIndex,
           fit: true,
-          force: true
+          force: true,
+          showCellNumbers: provinceOnlySearch,
+          duration: 0.48,
+          maxZoom: provinceOnlySearch ? 11 : 14
         });
 
         const stepLabel =

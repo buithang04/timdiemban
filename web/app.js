@@ -2951,13 +2951,18 @@ function applyExtensionDataSync(type, payload = {}) {
     }
     // Draw ALL batch/form areas — không xóa khu vực khác khi nhảy KV
     if (typeof window.TimDiemBanSearch?.redrawAllAreaMaps === "function") {
+      const provinceOnly =
+        (sp.areaLevel === "province" || sp.level === "province") && !sp.wardCode;
       window.TimDiemBanSearch.redrawAllAreaMaps({
         activeAreaIndex: sp.areaIndex,
         fit: true,
-        force: true
+        force: true,
+        showCellNumbers: provinceOnly
       });
     } else if (sp.wardBoundary && typeof window.TimDiemBanMap?.drawWardBoundary === "function") {
       const gridPoints = Array.isArray(sp.gridPoints) ? sp.gridPoints : null;
+      const provinceOnly =
+        (sp.areaLevel === "province" || sp.level === "province") && !sp.wardCode;
       window.TimDiemBanMap.drawWardBoundary(sp.wardBoundary, {
         provinceName: sp.provinceName,
         wardName: sp.wardName,
@@ -2967,6 +2972,9 @@ function applyExtensionDataSync(type, payload = {}) {
         colorIndex: sp.areaIndex,
         gridPoints,
         cellSizeKm: sp.cellSizeKm,
+        level: provinceOnly ? "province" : "ward",
+        showCellNumbers: provinceOnly,
+        showLabels: provinceOnly,
         fit: true,
         force: true
       });
@@ -3701,12 +3709,17 @@ els.authForm.addEventListener("submit", async (e) => {
         renderSearchInfo(currentSearch);
         const sp = currentSearch;
         if (typeof window.TimDiemBanSearch?.redrawAllAreaMaps === "function") {
+          const provinceOnly =
+            (sp.areaLevel === "province" || sp.level === "province") && !sp.wardCode;
           window.TimDiemBanSearch.redrawAllAreaMaps({
             activeAreaIndex: sp.areaIndex,
             fit: true,
-            force: true
+            force: true,
+            showCellNumbers: provinceOnly
           });
         } else if (sp.wardBoundary) {
+          const provinceOnly =
+            (sp.areaLevel === "province" || sp.level === "province") && !sp.wardCode;
           window.TimDiemBanMap?.drawWardBoundary?.(sp.wardBoundary, {
             provinceName: sp.provinceName,
             wardName: sp.wardName,
@@ -3714,6 +3727,9 @@ els.authForm.addEventListener("submit", async (e) => {
             areaIndex: sp.areaIndex,
             gridPoints: sp.gridPoints,
             cellSizeKm: sp.cellSizeKm,
+            level: provinceOnly ? "province" : "ward",
+            showCellNumbers: provinceOnly,
+            showLabels: provinceOnly,
             force: true
           });
         }
@@ -3785,12 +3801,17 @@ loadCurrentUser().then(async () => {
       renderSearchInfo(currentSearch);
       const sp = currentSearch;
       if (typeof window.TimDiemBanSearch?.redrawAllAreaMaps === "function") {
+        const provinceOnly =
+          (sp.areaLevel === "province" || sp.level === "province") && !sp.wardCode;
         window.TimDiemBanSearch.redrawAllAreaMaps({
           activeAreaIndex: sp.areaIndex,
           fit: true,
-          force: true
+          force: true,
+          showCellNumbers: provinceOnly
         });
       } else if (sp.wardBoundary) {
+        const provinceOnly =
+          (sp.areaLevel === "province" || sp.level === "province") && !sp.wardCode;
         window.TimDiemBanMap?.drawWardBoundary?.(sp.wardBoundary, {
           provinceName: sp.provinceName,
           wardName: sp.wardName,
@@ -3798,6 +3819,9 @@ loadCurrentUser().then(async () => {
           areaIndex: sp.areaIndex,
           gridPoints: sp.gridPoints,
           cellSizeKm: sp.cellSizeKm,
+          level: provinceOnly ? "province" : "ward",
+          showCellNumbers: provinceOnly,
+          showLabels: provinceOnly,
           force: true
         });
       }
