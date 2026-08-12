@@ -6279,21 +6279,40 @@ async function handleStartSearch(params) {
   delete params.authToken;
   params.userPoints = authUser.points;
 
-  if (!params.wardCode) {
-    throw new Error("Chưa chọn Phường/Xã. Vui lòng chọn vùng tìm kiếm trên form.");
+  if (!params.wardBoundary?.features?.length && !params.provinceBoundary?.features?.length) {
+    throw new Error("Dữ liệu ranh giới khu vực không có. Vui lòng chọn lại Tỉnh hoặc Phường/Xã.");
   }
 
-  if (!params.wardBoundary) {
-    throw new Error("Dữ liệu ranh giới Phường/Xã không có. Vui lòng chọn lại.");
+  const areaLevel =
+    params.areaLevel ||
+    params.level ||
+    (params.wardCode ? "ward" : "province");
+  const boundary =
+    params.wardBoundary?.features?.length
+      ? params.wardBoundary
+      : params.provinceBoundary;
+  params.wardBoundary = boundary;
+  params.areaLevel = areaLevel;
+  params.level = areaLevel;
+
+  if (areaLevel === "ward" && !params.wardCode) {
+    throw new Error("Chưa chọn Phường/Xã. Vui lòng chọn vùng tìm kiếm trên form.");
+  }
+  if (areaLevel === "province" && !params.provinceCode) {
+    throw new Error("Chưa chọn Tỉnh/Thành. Vui lòng chọn vùng tìm kiếm trên form.");
   }
 
   const grid = generateGridFromPolygon(
-    params.wardBoundary,
-    Number(params.viewportM) > 0 ? Number(params.viewportM) : null
+    boundary,
+    Number(params.viewportM) > 0 ? Number(params.viewportM) : null,
+    {
+      coverFull: areaLevel === "province" || params.coverFull === true,
+      level: areaLevel
+    }
   );
 
-  // Compute ward centroid for distance calculations
-  const wardCentroid = computeWardCentroid(params.wardBoundary);
+  // Compute ward/province centroid for distance calculations
+  const wardCentroid = computeWardCentroid(boundary);
   params.lat = wardCentroid.lat;
   params.lng = wardCentroid.lng;
   params.radius = null; // ward mode: no radius

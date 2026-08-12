@@ -42,7 +42,7 @@
     map = L.map(el, {
       zoomControl: false,
       scrollWheelZoom: true,
-      fadeAnimation: false,
+      fadeAnimation: true,
       zoomAnimation: true,
       markerZoomAnimation: false
     }).setView([21.0285, 105.8542], 13);
@@ -70,10 +70,11 @@
     if (!Array.isArray(areas) || !areas.length) return "";
     return areas
       .map((a) => {
-        const code = a.wardCode || a.boundary?.features?.[0]?.id || "";
+        const code = a.wardCode || a.provinceCode || a.boundary?.features?.[0]?.id || "";
+        const level = a.level || (a.showGrid === false ? "province" : "ward");
         const n = a.gridPoints?.length || 0;
         const side = Number(a.cellSizeKm || 0).toFixed(4);
-        return `${code}:${n}:${side}`;
+        return `${level}:${code}:${n}:${side}`;
       })
       .join("|");
   }
@@ -87,7 +88,8 @@
 
   /**
    * Vẽ nhiều khu vực + lưới ô quét.
-   * areas: [{ wardCode, wardName, boundary, gridPoints, cellSizeKm, colorIndex }]
+   * areas: [{ wardCode, wardName, boundary, gridPoints, cellSizeKm, colorIndex, showGrid, level }]
+   * opts: { fit, force, activeAreaIndex, animate, duration, maxZoom }
    */
   function drawSearchAreas(areas, opts = {}) {
     if (!map) init();
@@ -97,7 +99,7 @@
     const sig = areasSignature(list);
     const force = opts.force === true;
     if (!force && sig && sig === lastAreasSig) {
-      if (opts.fit !== false) fitToDrawnLayers();
+      if (opts.fit !== false) fitToDrawnLayers(opts);
       return;
     }
     lastAreasSig = sig;
@@ -107,7 +109,13 @@
 
     list.forEach((area, idx) => {
       const colors = paletteFor(area.colorIndex != null ? area.colorIndex : idx);
-      const wardName = area.wardName || area.wardFullName || area.wardCode || `Khu vực ${idx + 1}`;
+      const wardName =
+        area.wardName ||
+        area.wardFullName ||
+        area.provinceName ||
+        area.wardCode ||
+        area.provinceCode ||
+        `Khu vực ${idx + 1}`;
       const activeIdx =
         opts.activeAreaIndex != null && Number.isFinite(Number(opts.activeAreaIndex))
           ? Number(opts.activeAreaIndex)
@@ -115,19 +123,34 @@
       const isActive =
         area.active === true || (activeIdx != null && activeIdx === idx);
       const dimOthers = activeIdx != null;
+      const isProvince = area.level === "province";
+      const showGrid = area.showGrid !== false;
 
       const poly = L.geoJSON(area.boundary, {
         style: {
           color: colors.stroke,
-          weight: isActive ? 3.2 : dimOthers ? 1.6 : 2.5,
+          weight: isActive ? 3.2 : dimOthers ? 1.6 : isProvince ? 2.8 : 2.5,
           fillColor: colors.fill,
-          fillOpacity: isActive ? 0.22 : dimOthers ? 0.08 : 0.14,
-          dashArray: isActive ? "" : "6, 4",
-          opacity: isActive || !dimOthers ? 1 : 0.75
+          fillOpacity: isProvince
+            ? isActive
+              ? 0.12
+              : 0.08
+            : isActive
+              ? 0.22
+              : dimOthers
+                ? 0.08
+                : 0.14,
+          dashArray: isProvince && !showGrid ? "8, 6" : isActive ? "" : "6, 4",
+          opacity: isActive || !dimOthers ? 1 : 0.75,
+          className: "tdb-area-poly"
         }
       });
       poly.bindTooltip(
-        dimOthers ? `${wardName}${isActive ? " · đang quét" : ""}` : wardName,
+        dimOthers
+          ? `${wardName}${isActive ? " · đang quét" : ""}`
+          : isProvince
+            ? `${wardName} · cả tỉnh/thành`
+            : wardName,
         { sticky: true }
       );
       poly.addTo(layerAreas);
@@ -136,27 +159,44 @@
         const rings = extractPolygonRings(area.boundary);
         if (rings?.length) {
           areaRingSets.push({
-            wardCode: String(area.wardCode || ""),
+            wardCode: String(area.wardCode || area.provinceCode || ""),
             rings
           });
         }
       }
 
+      if (!showGrid) return;
+
       const points = Array.isArray(area.gridPoints) ? area.gridPoints : [];
       const sideKm = Number(area.cellSizeKm) || 0.4;
-      // Hiện lưới mọi khu vực; khu vực đang chạy đậm hơn
       drawGridCells(points, sideKm, colors, wardName, idx, {
-        emphasize: isActive || !dimOthers
+        emphasize: isActive || !dimOthers,
+        isProvince,
+        forceLabels: isActive === true
       });
     });
 
-    if (opts.fit !== false) fitToDrawnLayers();
+    if (opts.fit !== false) fitToDrawnLayers(opts);
   }
 
   function drawGridCells(gridPoints, sideKm, colors, wardName, areaIdx, styleOpts = {}) {
     if (!layerGrids || !gridPoints?.length || !sideKm) return;
     if (typeof squareBounds !== "function") return;
     const emphasize = styleOpts.emphasize !== false;
+    const isProvince = styleOpts.isProvince === true;
+    const forceLabels = styleOpts.forceLabels === true;
+    const zoom = map?.getZoom?.() ?? 12;
+
+    // Ô nhỏ (phường): chỉ hiện số khi zoom gần + ít ô.
+    // Ô lớn (cả tỉnh) hoặc đang quét: hiện số để theo dõi tiến độ.
+    let showLabels = false;
+    if (emphasize) {
+      if (forceLabels || isProvince || sideKm >= 1.5) {
+        showLabels = zoom >= 8;
+      } else {
+        showLabels = zoom >= 13 && gridPoints.length <= 36;
+      }
+    }
 
     gridPoints.forEach((p, i) => {
       const bounds = squareBounds(p.lat, p.lng, sideKm);
@@ -175,7 +215,7 @@
         .bindTooltip(tip, { sticky: true, direction: "center" })
         .addTo(layerGrids);
 
-      if (!emphasize) return;
+      if (!showLabels) return;
 
       L.marker([p.lat, p.lng], {
         icon: L.divIcon({
@@ -189,7 +229,7 @@
     });
   }
 
-  function fitToDrawnLayers() {
+  function fitToDrawnLayers(opts = {}) {
     if (!map) return;
     try {
       const parts = [];
@@ -198,8 +238,22 @@
       if (!parts.length) return;
       let bounds = parts[0];
       for (let i = 1; i < parts.length; i++) bounds = bounds.extend(parts[i]);
-      if (bounds?.isValid?.()) {
-        map.fitBounds(bounds, { padding: [28, 28], maxZoom: 15, animate: false });
+      if (!bounds?.isValid?.()) return;
+
+      const padding = opts.padding || [36, 36];
+      const maxZoom = Number(opts.maxZoom) > 0 ? Number(opts.maxZoom) : 14;
+      const animate = opts.animate !== false;
+      const duration = Math.max(0.35, Math.min(Number(opts.duration) || 0.85, 1.6));
+
+      if (animate && typeof map.flyToBounds === "function") {
+        map.flyToBounds(bounds, {
+          padding,
+          maxZoom,
+          duration,
+          easeLinearity: 0.2
+        });
+      } else {
+        map.fitBounds(bounds, { padding, maxZoom, animate });
       }
     } catch {}
   }
@@ -227,13 +281,23 @@
           wardCode: opts.wardCode || geojson.features[0]?.id || "",
           wardName: opts.wardName || opts.provinceName || "",
           wardFullName: opts.wardFullName || "",
+          provinceCode: opts.provinceCode || "",
+          provinceName: opts.provinceName || "",
           boundary: geojson,
           gridPoints: gridPoints || [],
           cellSizeKm: cellSizeKm || 0.4,
-          colorIndex: Number(opts.colorIndex) || Number(opts.areaIndex) || 0
+          colorIndex: Number(opts.colorIndex) || Number(opts.areaIndex) || 0,
+          level: opts.level || "ward",
+          showGrid: opts.showGrid !== false
         }
       ],
-      { fit: opts.fit !== false, force: opts.force === true }
+      {
+        fit: opts.fit !== false,
+        force: opts.force === true,
+        animate: opts.animate !== false,
+        duration: opts.duration,
+        maxZoom: opts.maxZoom
+      }
     );
   }
 

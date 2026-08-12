@@ -476,23 +476,24 @@
     selectEl._combo?.refresh?.();
   }
 
-  function computeScanCells(boundaryGeoJSON) {
+  function computeScanCells(boundaryGeoJSON, opts = {}) {
     if (!boundaryGeoJSON || typeof generateGridFromPolygon !== "function") {
-      return { cells: 0, capped: false, cellSizeM: 0 };
+      return { cells: 0, capped: false, cellSizeM: 0, coverFull: false };
     }
     try {
-      const grid = generateGridFromPolygon(boundaryGeoJSON);
+      const grid = generateGridFromPolygon(boundaryGeoJSON, null, opts);
       return {
         cells: Number(grid?.totalCells) || 0,
         capped: grid?.capped === true,
-        cellSizeM: Math.round((Number(grid?.viewportM) || Number(grid?.cellSizeKm) * 1000) || 0)
+        cellSizeM: Math.round((Number(grid?.viewportM) || Number(grid?.cellSizeKm) * 1000) || 0),
+        coverFull: grid?.coverFull === true
       };
     } catch {
-      return { cells: 0, capped: false, cellSizeM: 0 };
+      return { cells: 0, capped: false, cellSizeM: 0, coverFull: false };
     }
   }
 
-  function showAreaHint(card, info, cells, capped, cellSizeM = 0) {
+  function showAreaHint(card, info, cells, capped, cellSizeM = 0, opts = {}) {
     if (!card?.hint) return;
     const name = info?.fullName || info?.name || "";
     if (!name && !cells) {
@@ -504,8 +505,12 @@
     if (cells > 0) {
       text = `${name} · ~${cells} ô quét`;
       if (cellSizeM > 0) text += ` (ô ~${cellSizeM}m)`;
-      if (capped) {
+      if (opts.provinceWide) text += " — cả tỉnh/thành";
+      if (capped && !opts.provinceWide) {
         text += " — phường/xã lớn, chỉ quét phần gần tâm";
+        type = "warn";
+      } else if (opts.provinceWide && cellSizeM >= 2000) {
+        text += " — ô lớn để phủ kín toàn tỉnh";
         type = "warn";
       }
     }
@@ -549,11 +554,14 @@
       sourceAreas.forEach((area, idx) => {
         const boundary = area.wardBoundary || area.boundary;
         if (!boundary?.features?.length) return;
+        const level = area.level || area.areaLevel || (area.wardCode ? "ward" : "province");
+        const coverFull = level === "province";
+        const showGrid = area.showGrid !== false;
         let gridPoints = [];
         let cellSizeKm = 0.4;
-        if (typeof generateGridFromPolygon === "function") {
+        if (showGrid && typeof generateGridFromPolygon === "function") {
           try {
-            const grid = generateGridFromPolygon(boundary);
+            const grid = generateGridFromPolygon(boundary, null, { coverFull, level });
             gridPoints = grid.points || [];
             cellSizeKm = grid.cellSizeKm || 0.4;
           } catch {}
@@ -562,21 +570,31 @@
           wardCode: area.wardCode || "",
           wardName: area.wardName || "",
           wardFullName: area.wardFullName || area.wardName || "",
+          provinceCode: area.provinceCode || "",
+          provinceName: area.provinceName || "",
           boundary,
           gridPoints,
           cellSizeKm,
           colorIndex: idx,
+          level,
+          showGrid,
           active: Number(opts.activeAreaIndex) === idx
         });
       });
     } else {
       areaCards.forEach((card, idx) => {
         if (!card?.boundary?.features?.length) return;
+        const level = card.level || "ward";
+        const coverFull = level === "province";
+        const showGrid = true;
         let gridPoints = [];
         let cellSizeKm = 0.4;
-        if (typeof generateGridFromPolygon === "function") {
+        if (showGrid && typeof generateGridFromPolygon === "function") {
           try {
-            const grid = generateGridFromPolygon(card.boundary);
+            const grid = generateGridFromPolygon(card.boundary, null, {
+              coverFull,
+              level
+            });
             gridPoints = grid.points || [];
             cellSizeKm = grid.cellSizeKm || 0.4;
             card.cells = Number(grid.totalCells) || gridPoints.length;
@@ -587,19 +605,27 @@
         areas.push({
           wardCode: card.info?.code || card.ward?.value || "",
           wardName: card.info?.name || "",
-          wardFullName: card.info?.fullName || card.info?.name || "",
+          wardFullName: card.info?.fullName || card.info?.name || card.provinceInfo?.fullName || "",
+          provinceCode: card.provinceInfo?.code || card.province?.value || "",
+          provinceName: card.provinceInfo?.name || card.provinceInfo?.fullName || "",
           boundary: card.boundary,
           gridPoints,
           cellSizeKm,
           colorIndex: idx,
+          level,
+          showGrid,
           active: Number(opts.activeAreaIndex) === idx
         });
       });
     }
 
+    const hasProvinceOnly = areas.some((a) => a.level === "province");
     window.TimDiemBanMap.drawSearchAreas(areas, {
       fit: opts.fit !== false,
       force: opts.force === true,
+      animate: opts.animate !== false,
+      duration: opts.duration || (hasProvinceOnly ? 1.0 : 0.8),
+      maxZoom: opts.maxZoom || (hasProvinceOnly ? 11 : 14),
       activeAreaIndex:
         opts.activeAreaIndex != null && Number.isFinite(Number(opts.activeAreaIndex))
           ? Number(opts.activeAreaIndex)
@@ -607,19 +633,97 @@
     });
   }
 
+  async function onAreaProvinceSelected(card, provinceCode) {
+    if (!card) return;
+    card.provinceInfo = null;
+    card.info = null;
+    card.boundary = null;
+    card.level = null;
+    card.cells = 0;
+    card.capped = false;
+    card.cellSizeM = 0;
+
+    if (!provinceCode) {
+      card.hint?.classList.add("hidden");
+      redrawAllAreaMaps({ fit: false, force: true, animate: false });
+      return;
+    }
+
+    if (card.hint) {
+      card.hint.textContent = "Đang tải ranh giới tỉnh/thành…";
+      card.hint.className = "ward-hint ward-hint-info";
+      card.hint.classList.remove("hidden");
+    }
+
+    try {
+      const [infoRes, boundaryRes] = await Promise.all([
+        fetch(`/api/geo/province-info/${encodeURIComponent(provinceCode)}`),
+        fetch(`/api/geo/province-boundary/${encodeURIComponent(provinceCode)}`)
+      ]);
+      // Nếu user đã đổi tỉnh trong lúc chờ → bỏ qua kết quả cũ
+      if (card.province?.value !== provinceCode) return;
+
+      let info = null;
+      if (infoRes.ok) {
+        try {
+          info = await infoRes.json();
+        } catch {}
+      }
+      let boundary = null;
+      if (boundaryRes.ok) {
+        try {
+          boundary = await boundaryRes.json();
+        } catch {}
+      }
+
+      card.provinceInfo = info;
+      card.boundary = boundary?.features?.length ? boundary : null;
+      card.level = card.boundary ? "province" : null;
+      card.info = null;
+
+      const name = info?.fullName || info?.name || "Tỉnh/Thành";
+      if (card.boundary) {
+        const scan = computeScanCells(card.boundary, { coverFull: true, level: "province" });
+        card.cells = scan.cells;
+        card.capped = scan.capped;
+        card.cellSizeM = scan.cellSizeM || 0;
+        showAreaHint(
+          card,
+          { fullName: name, name },
+          card.cells,
+          card.capped,
+          card.cellSizeM,
+          { provinceWide: true }
+        );
+        redrawAllAreaMaps({ fit: true, force: true, animate: true, maxZoom: 11, duration: 1.05 });
+      } else {
+        card.cells = 0;
+        card.capped = false;
+        card.hint.textContent = `${name} · chưa có ranh giới tỉnh — hãy chọn Phường/Xã hoặc thử lại.`;
+        card.hint.className = "ward-hint ward-hint-warn";
+        card.hint.classList.remove("hidden");
+        redrawAllAreaMaps({ fit: false, force: true, animate: false });
+      }
+    } catch (err) {
+      console.warn("[Findmap] onAreaProvinceSelected:", err);
+      if (card.province?.value !== provinceCode) return;
+      card.hint.textContent = "Không tải được ranh giới tỉnh/thành.";
+      card.hint.className = "ward-hint ward-hint-warn";
+      card.hint.classList.remove("hidden");
+    }
+  }
+
   async function loadWardsIntoCard(card, provinceCode, preferredWardCode = "") {
     if (!card?.ward) return;
     card.ward.innerHTML = '<option value="">-- Đang tải... --</option>';
     card.ward.disabled = true;
     card.wardCombo?.refresh?.();
-    card.info = null;
-    card.boundary = null;
-    card.cells = 0;
-    card.capped = false;
-    card.hint?.classList.add("hidden");
-    redrawAllAreaMaps({ fit: false, force: true });
+
+    // Preview ranh giới tỉnh ngay khi chọn (song song với tải danh sách xã)
+    const provincePreview = onAreaProvinceSelected(card, provinceCode || "");
 
     if (!provinceCode) {
+      await provincePreview;
       card.ward.innerHTML = '<option value="">-- Chọn Phường / Xã --</option>';
       card.wardCombo?.refresh?.();
       return;
@@ -630,6 +734,7 @@
       if (!res.ok) throw new Error("fetch wards failed");
       const wards = await res.json();
       if (!Array.isArray(wards)) throw new Error("invalid response");
+      if (card.province?.value !== provinceCode) return;
 
       card.ward.innerHTML = '<option value="">-- Chọn Phường / Xã --</option>';
       for (const w of wards) {
@@ -639,13 +744,19 @@
         card.ward.appendChild(opt);
       }
       card.ward.disabled = false;
+      card.wardCombo?.refresh?.();
+
+      await provincePreview;
+
       if (preferredWardCode && wards.some((w) => w.code === preferredWardCode)) {
         card.ward.value = preferredWardCode;
+        card.wardCombo?.syncFromSelect?.();
         await onAreaWardSelected(card);
       }
-      card.wardCombo?.refresh?.();
     } catch (err) {
       console.warn("[Findmap] loadWardsIntoCard:", err);
+      await provincePreview;
+      if (card.province?.value !== provinceCode) return;
       card.ward.innerHTML = '<option value="">-- Lỗi tải dữ liệu --</option>';
       card.wardCombo?.refresh?.();
     }
@@ -654,13 +765,26 @@
   async function onAreaWardSelected(card) {
     const code = card.ward?.value;
     if (!code) {
-      card.info = null;
-      card.boundary = null;
-      card.cells = 0;
-      card.capped = false;
-      card.hint?.classList.add("hidden");
-      redrawAllAreaMaps({ fit: true, force: true });
+      // Quay về preview tỉnh nếu đang chọn tỉnh
+      const provinceCode = card.province?.value || "";
+      if (provinceCode) {
+        await onAreaProvinceSelected(card, provinceCode);
+      } else {
+        card.info = null;
+        card.boundary = null;
+        card.level = null;
+        card.cells = 0;
+        card.capped = false;
+        card.hint?.classList.add("hidden");
+        redrawAllAreaMaps({ fit: true, force: true, animate: true });
+      }
       return;
+    }
+
+    if (card.hint) {
+      card.hint.textContent = "Đang tải ranh giới phường/xã…";
+      card.hint.className = "ward-hint ward-hint-info";
+      card.hint.classList.remove("hidden");
     }
 
     try {
@@ -668,30 +792,44 @@
         fetch(`/api/geo/ward-info/${encodeURIComponent(code)}`),
         fetch(`/api/geo/ward-boundary/${encodeURIComponent(code)}`)
       ]);
+      if (card.ward?.value !== code) return;
+
       let info = null;
       if (infoRes.ok) {
-        try { info = await infoRes.json(); } catch {}
+        try {
+          info = await infoRes.json();
+        } catch {}
       }
       let boundary = null;
       if (boundaryRes.ok) {
-        try { boundary = await boundaryRes.json(); } catch {}
+        try {
+          boundary = await boundaryRes.json();
+        } catch {}
       }
       card.info = info;
-      card.boundary = boundary;
-      const scan = computeScanCells(boundary);
+      card.boundary = boundary?.features?.length ? boundary : null;
+      card.level = card.boundary ? "ward" : null;
+      const scan = computeScanCells(card.boundary);
       card.cells = scan.cells;
       card.capped = scan.capped;
       card.cellSizeM = scan.cellSizeM || 0;
-      showAreaHint(
-        card,
-        info || { fullName: `Phường ${code}` },
-        card.cells,
-        card.capped,
-        card.cellSizeM
-      );
-      redrawAllAreaMaps({ fit: true, force: true });
+      if (card.boundary) {
+        showAreaHint(
+          card,
+          info || { fullName: `Phường ${code}` },
+          card.cells,
+          card.capped,
+          card.cellSizeM
+        );
+        redrawAllAreaMaps({ fit: true, force: true, animate: true, maxZoom: 14, duration: 0.85 });
+      } else {
+        card.hint.textContent = "Không tải được ranh giới phường/xã.";
+        card.hint.className = "ward-hint ward-hint-warn";
+        card.hint.classList.remove("hidden");
+      }
     } catch (err) {
       console.warn("[Findmap] onAreaWardSelected:", err);
+      if (card.ward?.value !== code) return;
       card.hint.textContent = "Không tải được thông tin phường/xã.";
       card.hint.className = "ward-hint ward-hint-warn";
       card.hint.classList.remove("hidden");
@@ -746,7 +884,9 @@
       provinceCombo,
       wardCombo,
       info: null,
+      provinceInfo: null,
       boundary: null,
+      level: null,
       cells: 0,
       capped: false
     };
@@ -778,7 +918,7 @@
     const [card] = areaCards.splice(idx, 1);
     card.el?.remove();
     renumberAreaCards();
-    redrawAllAreaMaps({ fit: true, force: true });
+    redrawAllAreaMaps({ fit: true, force: true, animate: true });
   }
 
   async function loadProvinces() {
@@ -798,22 +938,53 @@
   }
 
   function buildAreaPayload(card, areaIndex = 0) {
-    if (!card?.info || !card?.boundary) return null;
+    if (!card?.boundary?.features?.length) return null;
+    const provinceCode = card.provinceInfo?.code || card.province?.value || card.info?.provinceCode || "";
+    const provinceName =
+      card.provinceInfo?.fullName ||
+      card.provinceInfo?.name ||
+      card.info?.provinceName ||
+      "";
+    const isProvince = card.level === "province" || (!card.ward?.value && !!provinceCode);
+    if (isProvince) {
+      if (!provinceCode) return null;
+      return {
+        areaLevel: "province",
+        level: "province",
+        provinceCode,
+        provinceName,
+        wardCode: "",
+        wardName: "",
+        wardFullName: "",
+        wardBoundary: card.boundary,
+        viewportM: null,
+        coverFull: true,
+        areaIndex,
+        areaLabel: provinceName || `Tỉnh/Thành ${areaIndex + 1}`,
+        estimatedCells: card.cells || 0,
+        searchAreaKeyBase: `p:${provinceCode}`
+      };
+    }
+    if (!card?.info) return null;
     const wardCode = card.info.code || card.ward?.value || "";
     const wardName = card.info.name || "";
     const wardFullName = card.info.fullName || wardName;
+    if (!wardCode) return null;
     return {
-      provinceCode: card.info.provinceCode || card.province?.value || "",
-      provinceName: card.info.provinceName || "",
+      areaLevel: "ward",
+      level: "ward",
+      provinceCode: card.info.provinceCode || provinceCode,
+      provinceName: card.info.provinceName || provinceName,
       wardCode,
       wardName,
       wardFullName,
       wardBoundary: card.boundary,
-      // null = extension tự chọn kích thước ô theo diện tích khu vực
       viewportM: null,
+      coverFull: false,
       areaIndex,
       areaLabel: wardFullName || wardName || `Khu vực ${areaIndex + 1}`,
-      estimatedCells: card.cells || 0
+      estimatedCells: card.cells || 0,
+      searchAreaKeyBase: wardCode
     };
   }
 
@@ -826,21 +997,64 @@
     if (!payloads.length) return { error: "Thêm ít nhất một khu vực tìm kiếm." };
     for (let i = 0; i < payloads.length; i++) {
       if (!payloads[i]) {
-        return { error: `Khu vực ${i + 1}: chọn đủ Tỉnh và Phường/Xã.` };
+        return { error: `Khu vực ${i + 1}: chọn Tỉnh/Thành (hoặc thêm Phường/Xã) để bắt đầu quét.` };
       }
       if (!payloads[i].wardBoundary?.features?.length) {
-        return { error: `Khu vực ${i + 1}: chưa có ranh giới — chọn lại phường/xã.` };
+        return { error: `Khu vực ${i + 1}: chưa có ranh giới — chọn lại tỉnh hoặc phường/xã.` };
       }
     }
-    const codes = payloads.map((p) => p.wardCode);
-    if (new Set(codes).size !== codes.length) {
-      return { error: "Các khu vực không được trùng cùng một phường/xã." };
+    const keys = payloads.map((p) => p.searchAreaKeyBase || p.wardCode || `p:${p.provinceCode}`);
+    if (new Set(keys).size !== keys.length) {
+      return { error: "Các khu vực không được trùng nhau." };
     }
     return { areas: payloads };
   }
 
   async function hydrateAreaBoundary(areaMeta) {
     if (areaMeta?.wardBoundary?.features?.length) return areaMeta;
+    const isProvince =
+      areaMeta?.areaLevel === "province" ||
+      areaMeta?.level === "province" ||
+      (!areaMeta?.wardCode && areaMeta?.provinceCode);
+
+    if (isProvince) {
+      const code = areaMeta.provinceCode;
+      if (!code) return null;
+      const [infoRes, boundaryRes] = await Promise.all([
+        fetch(`/api/geo/province-info/${encodeURIComponent(code)}`),
+        fetch(`/api/geo/province-boundary/${encodeURIComponent(code)}`)
+      ]);
+      let info = {};
+      if (infoRes.ok) {
+        try {
+          info = await infoRes.json();
+        } catch {}
+      }
+      let boundary = null;
+      if (boundaryRes.ok) {
+        try {
+          boundary = await boundaryRes.json();
+        } catch {}
+      }
+      if (!boundary?.features?.length) return null;
+      const provinceName = info.fullName || info.name || areaMeta.provinceName || "";
+      return {
+        ...areaMeta,
+        areaLevel: "province",
+        level: "province",
+        provinceCode: info.code || code,
+        provinceName,
+        wardCode: "",
+        wardName: "",
+        wardFullName: "",
+        wardBoundary: boundary,
+        coverFull: true,
+        areaLabel: provinceName || areaMeta.areaLabel || "",
+        estimatedCells: computeScanCells(boundary, { coverFull: true, level: "province" }).cells,
+        searchAreaKeyBase: `p:${info.code || code}`
+      };
+    }
+
     const code = areaMeta?.wardCode;
     if (!code) return null;
     const [infoRes, boundaryRes] = await Promise.all([
@@ -849,33 +1063,43 @@
     ]);
     let info = areaMeta;
     if (infoRes.ok) {
-      try { info = { ...areaMeta, ...(await infoRes.json()) }; } catch {}
+      try {
+        info = { ...areaMeta, ...(await infoRes.json()) };
+      } catch {}
     }
     let boundary = null;
     if (boundaryRes.ok) {
-      try { boundary = await boundaryRes.json(); } catch {}
+      try {
+        boundary = await boundaryRes.json();
+      } catch {}
     }
     if (!boundary?.features?.length) return null;
     return {
+      areaLevel: "ward",
+      level: "ward",
       provinceCode: info.provinceCode || areaMeta.provinceCode || "",
       provinceName: info.provinceName || areaMeta.provinceName || "",
       wardCode: info.code || areaMeta.wardCode || "",
       wardName: info.name || areaMeta.wardName || "",
       wardFullName: info.fullName || areaMeta.wardFullName || areaMeta.wardName || "",
       wardBoundary: boundary,
+      coverFull: false,
       areaLabel: info.fullName || areaMeta.areaLabel || areaMeta.wardName || "",
-      estimatedCells: computeScanCells(boundary).cells
+      estimatedCells: computeScanCells(boundary).cells,
+      searchAreaKeyBase: info.code || areaMeta.wardCode || ""
     };
   }
 
   function slimAreaForRecovery(area) {
     return {
+      areaLevel: area.areaLevel || area.level || (area.wardCode ? "ward" : "province"),
       provinceCode: area.provinceCode || "",
       provinceName: area.provinceName || "",
       wardCode: area.wardCode || "",
       wardName: area.wardName || "",
       wardFullName: area.wardFullName || "",
-      areaLabel: area.areaLabel || area.wardFullName || area.wardName || ""
+      areaLabel: area.areaLabel || area.wardFullName || area.wardName || area.provinceName || "",
+      searchAreaKeyBase: area.searchAreaKeyBase || area.wardCode || (area.provinceCode ? `p:${area.provinceCode}` : "")
     };
   }
 
@@ -885,18 +1109,28 @@
       const area = areas[ai];
       for (let ki = 0; ki < keywords.length; ki++) {
         const keyword = keywords[ki];
-        const wardCode = area.wardCode || "";
-        const wardName = area.wardName || area.wardFullName || `KV${ai + 1}`;
-        const key = `${wardCode}::${keyword}`;
+        const isProvince = area.areaLevel === "province" || area.level === "province" || !area.wardCode;
+        const areaKey =
+          area.searchAreaKeyBase ||
+          (isProvince ? `p:${area.provinceCode}` : area.wardCode || "");
+        const areaName =
+          area.areaLabel ||
+          area.wardFullName ||
+          area.wardName ||
+          area.provinceName ||
+          `KV${ai + 1}`;
+        const key = `${areaKey}::${keyword}`;
         out.push({
           key,
-          wardCode,
-          wardName,
-          wardFullName: area.wardFullName || wardName,
+          wardCode: area.wardCode || "",
+          provinceCode: area.provinceCode || "",
+          wardName: isProvince ? areaName : area.wardName || area.wardFullName || `KV${ai + 1}`,
+          wardFullName: area.wardFullName || areaName,
           keyword,
-          label: `${wardName} · ${keyword}`,
+          label: `${areaName} · ${keyword}`,
           areaIndex: ai,
-          keywordIndex: ki
+          keywordIndex: ki,
+          areaLevel: isProvince ? "province" : "ward"
         });
       }
     }
@@ -1774,13 +2008,19 @@
         const { areaIndex, keywordIndex } = jobCoords(job, keywords.length);
         const area = areas[areaIndex];
         const keyword = keywords[keywordIndex];
-        const contextKey = `${area.wardCode}::${keyword}`;
+        const areaKeyBase =
+          area.searchAreaKeyBase ||
+          area.wardCode ||
+          (area.provinceCode ? `p:${area.provinceCode}` : `a${areaIndex}`);
+        const contextKey = `${areaKeyBase}::${keyword}`;
         const searchParams = {
           ...sharedParams,
           ...area,
           areaIndex,
           areaTotal: areas.length,
-          areaLabel: area.areaLabel || area.wardFullName || area.wardName,
+          areaLabel: area.areaLabel || area.wardFullName || area.wardName || area.provinceName,
+          areaLevel: area.areaLevel || area.level || (area.wardCode ? "ward" : "province"),
+          coverFull: area.coverFull === true || area.areaLevel === "province" || !area.wardCode,
           keyword,
           keywordIndex,
           keywordTotal: keywords.length,

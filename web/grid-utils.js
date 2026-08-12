@@ -177,53 +177,77 @@ function pointInPolygon(lat, lng, polygonCoords) {
 /** Ô quét phường/xã — kích thước tự chỉnh theo diện tích (nhỏ → ô nhỏ, lớn → ô lớn). */
 const MIN_POLYGON_VIEWPORT_M = 300;
 const MAX_POLYGON_VIEWPORT_M = 1000;
+/** Khi phủ cả tỉnh/vùng lớn: cho phép ô lớn hơn để phủ kín, không cắt phần biên. */
+const MAX_POLYGON_VIEWPORT_M_COVER = 8000;
 /** Mục tiêu ~số ô trên bbox trước khi lọc PIP (khu vực vừa). */
 const TARGET_POLYGON_GRID_CELLS = 48;
+const TARGET_POLYGON_GRID_CELLS_COVER = 160;
 /** Fallback / tương thích cũ khi không tính được bbox. */
 const DEFAULT_POLYGON_VIEWPORT_M = 400;
 const MAX_POLYGON_GRID_CELLS = 220;
+const MAX_POLYGON_GRID_CELLS_COVER = 280;
 
 /**
  * Chọn cạnh ô (mét) theo kích thước khu vực.
  * viewportM số → dùng giá trị đó (đã clamp). null/"auto"/bỏ trống → tự động.
+ * opts.coverFull: phủ kín toàn bộ bbox (tỉnh/vùng lớn) — phình ô thay vì cắt mép.
  */
-function resolvePolygonViewportM(widthKm, heightKm, viewportM) {
+function resolvePolygonViewportM(widthKm, heightKm, viewportM, opts = {}) {
   const w = Math.max(Number(widthKm) || 0, 0.05);
   const h = Math.max(Number(heightKm) || 0, 0.05);
+  const coverFull = opts.coverFull === true;
+  const maxCells =
+    Number(opts.maxCells) > 0
+      ? Math.floor(Number(opts.maxCells))
+      : coverFull
+        ? MAX_POLYGON_GRID_CELLS_COVER
+        : MAX_POLYGON_GRID_CELLS;
+  const hardMaxM = coverFull ? MAX_POLYGON_VIEWPORT_M_COVER : MAX_POLYGON_VIEWPORT_M;
+  const target = coverFull ? TARGET_POLYGON_GRID_CELLS_COVER : TARGET_POLYGON_GRID_CELLS;
+
   const explicit = Number(viewportM);
   let sideM;
   if (Number.isFinite(explicit) && explicit > 0) {
     sideM = Math.round(explicit);
   } else {
     const area = w * h;
-    let sideKm = Math.sqrt(area / TARGET_POLYGON_GRID_CELLS);
-    // Phường nhỏ: ưu tiên chia ít nhất ~3–4 ô theo cạnh ngắn
-    const shortKm = Math.max(Math.min(w, h), 0.2);
-    sideKm = Math.min(sideKm, shortKm / 3.5);
+    let sideKm = Math.sqrt(area / target);
+    if (!coverFull) {
+      // Phường nhỏ: ưu tiên chia ít nhất ~3–4 ô theo cạnh ngắn
+      const shortKm = Math.max(Math.min(w, h), 0.2);
+      sideKm = Math.min(sideKm, shortKm / 3.5);
+    }
     sideM = Math.round(sideKm * 1000);
   }
-  sideM = Math.max(MIN_POLYGON_VIEWPORT_M, Math.min(sideM, MAX_POLYGON_VIEWPORT_M));
+  sideM = Math.max(MIN_POLYGON_VIEWPORT_M, Math.min(sideM, hardMaxM));
 
-  // Phình ô nếu lưới bbox vượt ngân sách (PIP sẽ lọc bớt ~30%)
-  const budget = Math.floor(MAX_POLYGON_GRID_CELLS * 1.35);
-  for (let i = 0; i < 12; i++) {
+  // Phình ô nếu lưới bbox vượt ngân sách
+  const budget = Math.floor(maxCells * (coverFull ? 1.05 : 1.35));
+  for (let i = 0; i < 24; i++) {
     const sideKm = sideM / 1000;
     const cols = Math.max(1, Math.ceil(w / sideKm));
     const rows = Math.max(1, Math.ceil(h / sideKm));
     if (cols * rows <= budget) break;
-    sideM = Math.min(MAX_POLYGON_VIEWPORT_M, Math.round(sideM * 1.12));
+    if (sideM >= hardMaxM) break;
+    sideM = Math.min(hardMaxM, Math.round(sideM * 1.12));
+  }
+
+  // coverFull: ép cạnh đủ lớn để bbox không vượt budget (phủ kín, không cắt tâm)
+  if (coverFull) {
+    const needM = Math.ceil(Math.sqrt((w * h) / Math.max(budget, 1)) * 1000);
+    sideM = Math.max(sideM, Math.min(needM, hardMaxM));
   }
   return sideM;
 }
 
-function estimateGridCellsFromBoundary(geojson) {
+function estimateGridCellsFromBoundary(geojson, opts = {}) {
   if (!geojson?.bbox) return 0;
   const [minLng, minLat, maxLng, maxLat] = geojson.bbox;
   const kmPerDegLat = 111.32;
   const kmPerDegLng = 111.32 * Math.cos((minLat * Math.PI) / 180);
   const heightKm = (maxLat - minLat) * kmPerDegLat;
   const widthKm = (maxLng - minLng) * kmPerDegLng;
-  const sideKm = resolvePolygonViewportM(widthKm, heightKm, null) / 1000;
+  const sideKm = resolvePolygonViewportM(widthKm, heightKm, null, opts) / 1000;
   const cols = Math.ceil(widthKm / sideKm) || 1;
   const rows = Math.ceil(heightKm / sideKm) || 1;
   return cols * rows;
@@ -251,8 +275,22 @@ function cellIntersectsPolygon(lat, lng, halfLat, halfLng, rings) {
 /**
  * Lưới ô vuông xếp sát phủ toàn bộ polygon.
  * viewportM: số mét cố định, hoặc null/"auto" để tự chỉnh theo diện tích.
+ * opts: { coverFull, level, maxCells }
  */
-function generateGridFromPolygon(boundaryGeoJSON, viewportM = null) {
+function generateGridFromPolygon(boundaryGeoJSON, viewportM = null, opts = {}) {
+  if (viewportM && typeof viewportM === "object" && !Array.isArray(viewportM)) {
+    opts = viewportM;
+    viewportM = opts.viewportM != null ? opts.viewportM : null;
+  }
+  const coverFull =
+    opts.coverFull === true || opts.level === "province" || opts.areaLevel === "province";
+  const maxCells =
+    Number(opts.maxCells) > 0
+      ? Math.floor(Number(opts.maxCells))
+      : coverFull
+        ? MAX_POLYGON_GRID_CELLS_COVER
+        : MAX_POLYGON_GRID_CELLS;
+
   const rings = extractPolygonRings(boundaryGeoJSON);
   if (!rings.length) {
     return generateSearchGrid(21.0285, 105.8542, 1);
@@ -274,7 +312,10 @@ function generateGridFromPolygon(boundaryGeoJSON, viewportM = null) {
     (maxLng - minLng) * 111.32 * Math.cos((midLat * Math.PI) / 180),
     0.05
   );
-  const resolvedVm = resolvePolygonViewportM(widthKm, heightKm, viewportM);
+  const resolvedVm = resolvePolygonViewportM(widthKm, heightKm, viewportM, {
+    coverFull,
+    maxCells
+  });
 
   const sideKm = resolvedVm / 1000;
   const latDegPerKm = 1 / 111.32;
@@ -323,8 +364,9 @@ function generateGridFromPolygon(boundaryGeoJSON, viewportM = null) {
     });
   } else {
     points.sort((a, b) => a.distFromCenter - b.distFromCenter);
-    if (points.length > MAX_POLYGON_GRID_CELLS) {
-      points = points.slice(0, MAX_POLYGON_GRID_CELLS);
+    // coverFull: đã phình ô để phủ bbox — chỉ cắt nếu vượt trần cứng
+    if (points.length > maxCells) {
+      points = points.slice(0, maxCells);
     }
     points.forEach((p, i) => {
       p.searchOrder = i + 1;
@@ -338,9 +380,10 @@ function generateGridFromPolygon(boundaryGeoJSON, viewportM = null) {
     viewportM: resolvedVm,
     totalCells: points.length,
     gridSteps: 0,
-    gridMode: "polygon",
+    gridMode: coverFull ? "province" : "polygon",
     stepKm: sideKm,
-    capped: points.length >= MAX_POLYGON_GRID_CELLS,
+    capped: points.length >= maxCells,
+    coverFull,
     adaptive: !(Number(viewportM) > 0)
   };
 }

@@ -38,7 +38,7 @@ const {
   JobsIntegrationError,
   createJobsIntegrationService
 } = require("./jobs-integration");
-const { getProvinces, getWards, getWardBoundary, getWardInfo } = require("./geo-api");
+const { getProvinces, getWards, getWardBoundary, getWardInfo, getProvinceInfo, getProvinceBoundary } = require("./geo-api");
 
 const { getSetting, setSetting } = dbModule;
 const {
@@ -551,6 +551,8 @@ app.get("/api/geo/provinces", getProvinces);
 app.get("/api/geo/wards", getWards);
 app.get("/api/geo/ward-boundary/:code", getWardBoundary);
 app.get("/api/geo/ward-info/:code", getWardInfo);
+app.get("/api/geo/province-boundary/:code", getProvinceBoundary);
+app.get("/api/geo/province-info/:code", getProvinceInfo);
 
 app.post("/api/auth/login", authWriteRateLimit, guardSensitiveInput("email", "password"), async (req, res) => {
   try {
