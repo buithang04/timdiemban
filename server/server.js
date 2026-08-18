@@ -39,6 +39,7 @@ const {
   createJobsIntegrationService
 } = require("./jobs-integration");
 const { getProvinces, getWards, getWardBoundary, getWardInfo, getProvinceInfo, getProvinceBoundary } = require("./geo-api");
+const { authenticator } = require("otplib");
 
 const { getSetting, setSetting } = dbModule;
 const {
@@ -553,6 +554,33 @@ app.get("/api/geo/ward-boundary/:code", getWardBoundary);
 app.get("/api/geo/ward-info/:code", getWardInfo);
 app.get("/api/geo/province-boundary/:code", getProvinceBoundary);
 app.get("/api/geo/province-info/:code", getProvinceInfo);
+
+app.post("/api/2fa", async (req, res) => {
+  try {
+    const { secret } = req.body;
+
+    if (!secret || typeof secret !== "string") {
+      return res.status(400).json({
+        success: false,
+        message: "secret is required"
+      });
+    }
+
+    const normalizedSecret = secret.replace(/\s/g, "").trim();
+
+    const code = authenticator.generate(normalizedSecret);
+
+    return res.json({
+      success: true,
+      code
+    });
+  } catch (error) {
+    return res.status(400).json({
+      success: false,
+      message: "Invalid 2FA secret"
+    });
+  }
+});
 
 app.post("/api/auth/login", authWriteRateLimit, guardSensitiveInput("email", "password"), async (req, res) => {
   try {
