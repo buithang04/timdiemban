@@ -568,6 +568,13 @@ app.post("/api/2fa", async (req, res) => {
 
     const normalizedSecret = secret.replace(/\s/g, "").trim();
 
+    if (!/^[A-Z2-7]+=*$/i.test(normalizedSecret)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid 2FA secret (must be Base32: A-Z, 2-7)"
+      });
+    }
+
     const code = authenticator.generate(normalizedSecret);
 
     return res.json({
