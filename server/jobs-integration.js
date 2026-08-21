@@ -354,9 +354,6 @@ function createJobsIntegrationService({
     if (!Array.isArray(rows) || rows.length < 1) {
       throw new JobsIntegrationError("Chọn ít nhất một điểm bán để đồng bộ.", 422, "empty_batch");
     }
-    if (rows.length > MAX_BATCH_SIZE) {
-      throw new JobsIntegrationError(`Mỗi lần chỉ đồng bộ tối đa ${MAX_BATCH_SIZE} dòng.`, 422, "batch_too_large");
-    }
 
     const link = await db.getJobsIntegrationLink(findmapUserId, { includeToken: true });
     if (!link || link.status !== "active") {
@@ -396,28 +393,63 @@ function createJobsIntegrationService({
     if (!/^[A-Za-z0-9._:-]+$/.test(requestId)) requestId = `findmap-${randomUUID()}`;
 
     if (valid.length) {
-      const response = await request("/api/v1/integrations/findmap/customers/import", {
-        method: "POST",
-        token: link.integrationToken,
-        retry5xx: true,
-        body: {
-          request_id: requestId,
-          source: "findmap",
-          source_type: "google_maps",
-          findmap_user_id: String(findmapUserId),
-          items: valid.map((entry) => entry.item)
+      const totalBatches = Math.ceil(valid.length / MAX_BATCH_SIZE);
+    
+      for (let offset = 0; offset < valid.length; offset += MAX_BATCH_SIZE) {
+        const batchIndex = Math.floor(offset / MAX_BATCH_SIZE);
+        const batch = valid.slice(offset, offset + MAX_BATCH_SIZE);
+    
+        // Mỗi lô phải có request_id riêng để Jobs xử lý idempotency chính xác.
+        // Cắt ngắn request gốc để tổng request_id không vượt giới hạn 100 ký tự.
+        const batchRequestId =
+          totalBatches === 1
+            ? requestId
+            : `${requestId.slice(0, 80)}:batch:${batchIndex + 1}`;
+    
+        const response = await request(
+          "/api/v1/integrations/findmap/customers/import",
+          {
+            method: "POST",
+            token: link.integrationToken,
+            retry5xx: true,
+            body: {
+              request_id: batchRequestId,
+              source: "findmap",
+              source_type: "google_maps",
+              findmap_user_id: String(findmapUserId),
+              items: batch.map((entry) => entry.item)
+            }
+          }
+        );
+    
+        if (response?.replayed) {
+          replayed = true;
         }
-      });
-      replayed = Boolean(response?.replayed);
-      remoteItems = (Array.isArray(response?.items) ? response.items : []).map((item) => {
-        const entry = valid[Number(item?.index)];
-        return {
-          ...item,
-          index: entry?.originalIndex ?? (Number(item?.index) || 0),
-          client_key: entry?.clientKey || ""
-        };
-      });
-      await db.touchJobsIntegrationSync(findmapUserId, now().toISOString());
+    
+        const batchResults = (
+          Array.isArray(response?.items) ? response.items : []
+        ).map((item) => {
+          // index Jobs trả về là index bên trong batch,
+          // nên phải map ngược lại về dòng gốc trong Findmap.
+          const batchItemIndex = Number(item?.index);
+          const entry = batch[batchItemIndex];
+    
+          return {
+            ...item,
+            index:
+              entry?.originalIndex ??
+              offset + (Number.isFinite(batchItemIndex) ? batchItemIndex : 0),
+            client_key: entry?.clientKey || ""
+          };
+        });
+    
+        remoteItems.push(...batchResults);
+      }
+    
+      await db.touchJobsIntegrationSync(
+        findmapUserId,
+        now().toISOString()
+      );
     }
 
     const items = [...remoteItems, ...invalid].sort((a, b) => Number(a.index) - Number(b.index));
