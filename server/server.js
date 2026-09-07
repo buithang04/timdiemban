@@ -39,7 +39,11 @@ const {
   createJobsIntegrationService
 } = require("./jobs-integration");
 const { getProvinces, getWards, getWardBoundary, getWardInfo, getProvinceInfo, getProvinceBoundary } = require("./geo-api");
-const { authenticator } = require("otplib");
+const { createGuardrails, generate: generateTotp } = require("otplib");
+
+const TWO_FACTOR_GUARDRAILS = createGuardrails({
+  MIN_SECRET_BYTES: 10
+});
 
 const { getSetting, setSetting } = dbModule;
 const {
@@ -575,7 +579,10 @@ app.post("/api/2fa", async (req, res) => {
       });
     }
 
-    const code = authenticator.generate(normalizedSecret);
+    const code = await generateTotp({
+      secret: normalizedSecret,
+      guardrails: TWO_FACTOR_GUARDRAILS
+    });
 
     return res.json({
       success: true,
