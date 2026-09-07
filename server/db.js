@@ -483,6 +483,13 @@ function assertJobsIntegrationEncryptionReady() {
   encryptJobsIntegrationToken("findmap-encryption-readiness-check");
 }
 
+function assertWinmapSiteEncryptionReady() {
+  const encrypted = encryptSecret("winmap-site-encryption-readiness-check");
+  if (!encrypted || !isEncrypted(encrypted)) {
+    throw new Error("Không mã hóa được token Winmap");
+  }
+}
+
 async function getJobsIntegrationLink(findmapUserId, options = {}) {
   const [rows] = await getPool().execute(
     "SELECT * FROM integration_links WHERE provider = 'jobs_clickon' AND findmap_user_id = ? LIMIT 1",
@@ -582,6 +589,7 @@ module.exports = {
   encryptJobsIntegrationToken,
   decryptJobsIntegrationToken,
   assertJobsIntegrationEncryptionReady,
+  assertWinmapSiteEncryptionReady,
   getJobsIntegrationLink,
   saveJobsIntegrationLink,
   revokeJobsIntegrationLink,

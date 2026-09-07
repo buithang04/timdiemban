@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="referrer" content="no-referrer" />
-  <title>Kết nối Jobs ClickOn - Findmap</title>
+  <title>Kết nối Winmap - Findmap</title>
   <link rel="icon" href="/assets/icons/favicon.svg" type="image/svg+xml" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -15,17 +15,28 @@
   <script src="/session-cookie.js"></script>
   <script>
     try {
-      const pendingKey = "findmap_jobs_pending_request";
-      const requestToken = new URLSearchParams(window.location.hash.slice(1)).get("request");
-      if (requestToken) sessionStorage.setItem(pendingKey, requestToken);
+      const pendingKey = "findmap_winmap_pending_request";
+      const params = new URLSearchParams(window.location.hash.slice(1));
+      const requestToken = params.get("request");
+      const tenantUrl = params.get("tenant_url");
+      const previewUrl = params.get("preview_url");
+      const exchangeUrl = params.get("exchange_url");
+      if (requestToken && tenantUrl && previewUrl && exchangeUrl) {
+        sessionStorage.setItem(pendingKey, JSON.stringify({
+          request_token: requestToken,
+          tenant_url: tenantUrl,
+          preview_url: previewUrl,
+          exchange_url: exchangeUrl
+        }));
+      }
       if (window.location.hash) {
         window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
       }
       if (!localStorage.getItem("timdiemban_token")) {
-        window.location.replace("/login?redirect=%2Fket-noi-jobs");
+        window.location.replace("/login?redirect=%2Fket-noi-winmap");
       }
     } catch {
-      window.location.replace("/login?redirect=%2Fket-noi-jobs");
+      window.location.replace("/login?redirect=%2Fket-noi-winmap");
     }
   </script>
 </head>
@@ -42,11 +53,11 @@
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
         Tìm điểm bán
       </a>
-      <a href="/ket-noi-jobs" class="wm-nav-item wm-nav-active hidden" data-jobs-nav>
+      <a href="/ket-noi-jobs" class="wm-nav-item hidden" data-jobs-nav>
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l2-2a5 5 0 0 0-7.07-7.07l-1.15 1.15"/><path d="M14 11a5 5 0 0 0-7.54-.54l-2 2a5 5 0 0 0 7.07 7.07l1.14-1.14"/></svg>
         Kết nối Jobs
       </a>
-      <a href="/ket-noi-winmap" class="wm-nav-item hidden" data-winmap-nav>
+      <a href="/ket-noi-winmap" class="wm-nav-item wm-nav-active hidden" data-winmap-nav>
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l2-2a5 5 0 0 0-7.07-7.07l-1.15 1.15"/><path d="M14 11a5 5 0 0 0-7.54-.54l-2 2a5 5 0 0 0 7.07 7.07l1.14-1.14"/></svg>
         Kết nối Winmap
       </a>
@@ -72,72 +83,70 @@
   <div class="wm-app">
     <header class="wm-header">
       <div class="wm-header-left">
-        <h1 class="wm-header-title">Kết nối Jobs ClickOn</h1>
-        <p class="wm-header-sub">Tài khoản nhận khách hàng Google Maps từ Findmap.</p>
+        <h1 class="wm-header-title">Kết nối Winmap tenant</h1>
+        <p class="wm-header-sub">Xác nhận Findmap gửi điểm bán vào kho điểm bán tiềm năng của Winmap.</p>
       </div>
     </header>
 
     <main class="wm-site-config-main jobs-integration-main">
-      <div id="jobsMessage" class="jobs-message hidden" role="status"></div>
+      <div id="winmapMessage" class="jobs-message hidden" role="status"></div>
 
       <section class="wm-config-card jobs-status-card">
         <div class="jobs-status-head">
           <div>
             <div class="jobs-status-title-row">
-              <span id="jobsStatusDot" class="jobs-status-dot"></span>
-              <h2 id="jobsStatusTitle">Đang kiểm tra</h2>
+              <span id="winmapStatusDot" class="jobs-status-dot"></span>
+              <h2 id="winmapStatusTitle">Đang kiểm tra</h2>
             </div>
-            <p id="jobsStatusSubtitle" class="wm-config-hint">Đang tải trạng thái liên kết.</p>
+            <p id="winmapStatusSubtitle" class="wm-config-hint">Đang tải trạng thái liên kết.</p>
           </div>
-          <button type="button" id="verifyJobsBtn" class="wm-btn wm-btn-outline-blue hidden">Kiểm tra kết nối</button>
+          <button type="button" id="verifyWinmapBtn" class="wm-btn wm-btn-outline-blue hidden">Kiểm tra kết nối</button>
         </div>
 
-        <dl id="jobsAccountDetails" class="jobs-account-details hidden">
-          <div><dt>Nhân sự Jobs</dt><dd id="jobsUserName">-</dd></div>
-          <div><dt>Email</dt><dd id="jobsUserEmail">-</dd></div>
-          <div><dt>Phòng ban</dt><dd id="jobsDepartment">-</dd></div>
-          <div><dt>Ngày kết nối</dt><dd id="jobsLinkedAt">-</dd></div>
-          <div><dt>Lần đồng bộ gần nhất</dt><dd id="jobsLastSyncAt">-</dd></div>
+        <dl id="winmapAccountDetails" class="jobs-account-details hidden">
+          <div><dt>Winmap tenant</dt><dd id="winmapTenantName">-</dd></div>
+          <div><dt>Domain</dt><dd id="winmapTenantUrl">-</dd></div>
+          <div><dt>Endpoint nhập điểm</dt><dd id="winmapImportUrl">-</dd></div>
+          <div><dt>Ngày kết nối</dt><dd id="winmapLinkedAt">-</dd></div>
         </dl>
       </section>
 
-      <section id="jobsApprovalPanel" class="wm-config-card hidden">
+      <section id="winmapApprovalPanel" class="wm-config-card hidden">
         <div class="jobs-request-head">
           <div>
             <h2>Yêu cầu kết nối</h2>
-            <p class="wm-config-hint">Xác nhận tài khoản Jobs ClickOn sẽ nhận khách hàng từ Findmap.</p>
+            <p class="wm-config-hint">Chỉ chấp nhận khi đúng tenant Winmap bạn đang muốn gửi điểm bán.</p>
           </div>
         </div>
-        <p id="jobsRequestLoading" class="wm-config-hint">Đang kiểm tra yêu cầu.</p>
-        <dl id="jobsRequestDetails" class="jobs-account-details hidden">
-          <div><dt>Nhân sự Jobs</dt><dd id="jobsRequestName">-</dd></div>
-          <div><dt>Email</dt><dd id="jobsRequestEmail">-</dd></div>
-          <div><dt>Phòng ban</dt><dd id="jobsRequestDepartment">-</dd></div>
-          <div><dt>Yêu cầu hết hạn</dt><dd id="jobsRequestExpiresAt">-</dd></div>
+        <p id="winmapRequestLoading" class="wm-config-hint">Đang kiểm tra yêu cầu.</p>
+        <dl id="winmapRequestDetails" class="jobs-account-details hidden">
+          <div><dt>Winmap tenant</dt><dd id="winmapRequestTenant">-</dd></div>
+          <div><dt>Domain</dt><dd id="winmapRequestUrl">-</dd></div>
+          <div><dt>Yêu cầu hết hạn</dt><dd id="winmapRequestExpiresAt">-</dd></div>
         </dl>
-        <div id="jobsRequestActions" class="jobs-request-actions hidden">
-          <button type="button" id="declineJobsBtn" class="wm-btn jobs-secondary-btn">Từ chối</button>
-          <button type="button" id="acceptJobsBtn" class="wm-btn wm-btn-primary">Chấp nhận kết nối</button>
+        <div id="winmapRequestActions" class="jobs-request-actions hidden">
+          <button type="button" id="declineWinmapBtn" class="wm-btn jobs-secondary-btn">Từ chối</button>
+          <button type="button" id="acceptWinmapBtn" class="wm-btn wm-btn-primary">Chấp nhận kết nối</button>
         </div>
       </section>
 
-      <section id="jobsNoRequestPanel" class="wm-config-card hidden">
+      <section id="winmapNoRequestPanel" class="wm-config-card hidden">
         <h2>Chưa có yêu cầu kết nối</h2>
-        <p class="wm-config-hint">Mở màn hình Kết nối Findmap trên Jobs ClickOn và bấm Kết nối Findmap.</p>
+        <p class="wm-config-hint">Mở kho điểm bán tiềm năng trên Winmap tenant và bấm Kết nối FindMap.</p>
       </section>
 
-      <section id="jobsDisconnectPanel" class="wm-config-card jobs-disconnect-panel hidden">
+      <section id="winmapDisconnectPanel" class="wm-config-card jobs-disconnect-panel hidden">
         <div>
           <h2>Quản lý liên kết</h2>
-          <p class="wm-config-hint">Ngắt liên kết không đăng xuất tài khoản Findmap.</p>
+          <p class="wm-config-hint">Ngắt liên kết sẽ thu hồi token nhập điểm ở Winmap tenant.</p>
         </div>
-        <button type="button" id="disconnectJobsBtn" class="wm-btn jobs-danger-btn">Ngắt kết nối</button>
+        <button type="button" id="disconnectWinmapBtn" class="wm-btn jobs-danger-btn">Ngắt kết nối</button>
       </section>
     </main>
   </div>
 
   <script src="/jobs-nav.js"></script>
   <script src="/winmap-nav.js"></script>
-  <script src="/jobs-integration.js"></script>
+  <script src="/winmap-integration.js"></script>
 </body>
 </html>

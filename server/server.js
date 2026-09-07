@@ -38,6 +38,10 @@ const {
   JobsIntegrationError,
   createJobsIntegrationService
 } = require("./jobs-integration");
+const {
+  WinmapIntegrationError,
+  createWinmapIntegrationService
+} = require("./winmap-integration");
 const { getProvinces, getWards, getWardBoundary, getWardInfo, getProvinceInfo, getProvinceBoundary } = require("./geo-api");
 const { createGuardrails, generate: generateTotp } = require("otplib");
 
@@ -222,6 +226,11 @@ const jobsIntegrationRateLimit = createRateLimiter({
   max: 30,
   keyPrefix: "jobs-integration"
 });
+const winmapIntegrationRateLimit = createRateLimiter({
+  windowMs: 60 * 1000,
+  max: 30,
+  keyPrefix: "winmap-integration"
+});
 
 function sanitizeValue(val, key) {
   // KhÃ´ng lÃ m biáº¿n dáº¡ng máº­t kháº©u (kÃ½ tá»± Ä‘áº·c biá»‡t há»£p lá»‡).
@@ -336,6 +345,7 @@ async function requireAdmin(req, res, next) {
 }
 
 const jobsIntegration = createJobsIntegrationService({ db: dbModule });
+const winmapIntegration = createWinmapIntegrationService({ db: dbModule });
 
 function sendJobsIntegrationError(res, error) {
   const status = error instanceof JobsIntegrationError ? error.status : 500;
@@ -345,6 +355,17 @@ function sendJobsIntegrationError(res, error) {
   return res.status(status).json({
     error: error?.message || "KhÃ´ng xá»­ lÃ½ Ä‘Æ°á»£c yÃªu cáº§u tÃ­ch há»£p Jobs ClickOn.",
     code: error instanceof JobsIntegrationError ? error.code : "jobs_integration_error"
+  });
+}
+
+function sendWinmapIntegrationError(res, error) {
+  const status = error instanceof WinmapIntegrationError ? error.status : 500;
+  if (!(error instanceof WinmapIntegrationError)) {
+    console.error("[Winmap integration]", error?.message || error);
+  }
+  return res.status(status).json({
+    error: error?.message || "Không xử lý được yêu cầu tích hợp Winmap.",
+    code: error instanceof WinmapIntegrationError ? error.code : "winmap_integration_error"
   });
 }
 
@@ -724,6 +745,47 @@ app.post("/api/integrations/jobs/sync-customers", jobsIntegrationRateLimit, requ
     );
   } catch (error) {
     sendJobsIntegrationError(res, error);
+  }
+});
+
+app.get("/api/integrations/winmap/status", winmapIntegrationRateLimit, requireAuth, async (req, res) => {
+  try {
+    const verify = String(req.query.verify || "") === "1";
+    res.json(await winmapIntegration.status(req.user.id, { verify }));
+  } catch (error) {
+    sendWinmapIntegrationError(res, error);
+  }
+});
+
+app.post("/api/integrations/winmap/request-preview", winmapIntegrationRateLimit, requireAuth, async (req, res) => {
+  try {
+    res.json(await winmapIntegration.previewRequest(req.body));
+  } catch (error) {
+    sendWinmapIntegrationError(res, error);
+  }
+});
+
+app.post("/api/integrations/winmap/connect", winmapIntegrationRateLimit, requireAuth, async (req, res) => {
+  try {
+    res.json(await winmapIntegration.connect(req.user, req.body));
+  } catch (error) {
+    sendWinmapIntegrationError(res, error);
+  }
+});
+
+app.post("/api/integrations/winmap/request-decline", winmapIntegrationRateLimit, requireAuth, async (req, res) => {
+  try {
+    res.json(await winmapIntegration.declineRequest(req.body));
+  } catch (error) {
+    sendWinmapIntegrationError(res, error);
+  }
+});
+
+app.delete("/api/integrations/winmap/disconnect", winmapIntegrationRateLimit, requireAuth, async (req, res) => {
+  try {
+    res.json(await winmapIntegration.disconnect(req.user.id));
+  } catch (error) {
+    sendWinmapIntegrationError(res, error);
   }
 });
 
@@ -1205,10 +1267,11 @@ async function getWinmapSite(userId) {
   const url = (await getSetting(`winmap_site_url:${userId}`, "")).trim();
   const token = (await getSetting(`winmap_site_token:${userId}`, "")).trim();
   const label = (await getSetting(`winmap_site_label:${userId}`, "")).trim();
+  const connectedAt = (await getSetting(`winmap_site_connected_at:${userId}`, "")).trim();
   const pushConfigRaw = await getSetting(`winmap_site_push_config:${userId}`, "");
   const { parsePushConfig } = require("./push-config");
   const pushConfig = parsePushConfig(pushConfigRaw || null);
-  return { url, token, label, pushConfig };
+  return { url, token, label, connectedAt, pushConfig };
 }
 
 function siteHost(url, urlMode = "winmap") {
@@ -1230,6 +1293,7 @@ app.get("/api/points/site", requireAuth, async (req, res) => {
     importUrl: site.url ? resolveImportUrl(site.url, urlMode) : "",
     hasToken: Boolean(site.token),
     configured: Boolean(site.url && site.token),
+    connectedAt: site.connectedAt || null,
     pushConfig: site.pushConfig
   });
 });
@@ -1273,6 +1337,7 @@ app.post("/api/points/site", requireAuth, async (req, res) => {
       importUrl: resolveImportUrl(site.url, savedMode),
       hasToken: Boolean(site.token),
       configured: Boolean(site.url && site.token),
+      connectedAt: site.connectedAt || null,
       pushConfig: site.pushConfig
     });
   } catch (err) {
@@ -1478,6 +1543,7 @@ const webPages = {
   "/nap-diem": "nap-diem.html",
   "/cau-hinh-site": "cau-hinh-site.html",
   "/ket-noi-jobs": "ket-noi-jobs.html",
+  "/ket-noi-winmap": "ket-noi-winmap.html",
   "/chinh-sach-quyen-rieng-tu": "privacy-policy.html",
   "/privacy-policy": "privacy-policy.html",
   "/quen-mat-khau": "quen-mat-khau.html",
@@ -1516,6 +1582,7 @@ const legacyHtmlRedirects = {
   "/nap-diem.html": "/nap-diem",
   "/cau-hinh-site.html": "/cau-hinh-site",
   "/ket-noi-jobs.html": "/ket-noi-jobs",
+  "/ket-noi-winmap.html": "/ket-noi-winmap",
   "/quen-mat-khau.html": "/quen-mat-khau",
   "/dat-lai-mat-khau.html": "/dat-lai-mat-khau",
   "/index.html": "/",
