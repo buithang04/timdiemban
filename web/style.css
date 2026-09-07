@@ -638,6 +638,16 @@ body {
   z-index: 1;
 }
 
+.osm-map.tdb-map-openfreemap {
+  background:
+    radial-gradient(circle at 25% 20%, rgba(186, 230, 253, 0.55), transparent 26%),
+    linear-gradient(135deg, #dbeafe 0%, #eef2ff 42%, #ecfeff 100%);
+}
+
+.osm-map.tdb-map-openstreetmap {
+  background: #e2e8f0;
+}
+
 .tdb-grid-label {
   background: transparent !important;
   border: none !important;
@@ -2256,6 +2266,19 @@ body.wm-console .wm-main { display: contents; }
   margin-top: 16px;
 }
 
+body.tdb-search-running .wm-search-form,
+body.tdb-search-paused .wm-search-form,
+body.tdb-search-preparing .wm-search-form,
+body.tdb-rescan-running .wm-search-form {
+  border-radius: 14px;
+  outline: 2px solid rgba(245, 158, 11, 0.28);
+  outline-offset: 8px;
+}
+
+body.tdb-search-paused .wm-search-form {
+  outline-color: rgba(37, 99, 235, 0.24);
+}
+
 .wm-field label {
   display: block;
   font-size: 12px;
@@ -2506,6 +2529,43 @@ body.wm-console .wm-main { display: contents; }
   position: relative;
   background: #e5e7eb;
   min-height: 400px;
+}
+
+body.tdb-search-running .wm-map-col::after,
+body.tdb-search-preparing .wm-map-col::after,
+body.tdb-search-paused .wm-map-col::after,
+body.tdb-rescan-running .wm-map-col::after {
+  position: absolute;
+  left: 16px;
+  top: 64px;
+  z-index: 460;
+  max-width: min(360px, calc(100% - 88px));
+  padding: 9px 12px;
+  border: 1px solid rgba(245, 158, 11, 0.32);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.12);
+  color: #7c2d12;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.25;
+  pointer-events: none;
+  backdrop-filter: blur(8px);
+}
+
+body.tdb-search-running .wm-map-col::after,
+body.tdb-search-preparing .wm-map-col::after {
+  content: "Findmap đang giữ phiên quét — không tắt tab Maps/extension";
+}
+
+body.tdb-search-paused .wm-map-col::after {
+  content: "Lượt quét đang tạm dừng — có thể tiếp tục từ điểm dở";
+  border-color: rgba(37, 99, 235, 0.28);
+  color: #1e3a8a;
+}
+
+body.tdb-rescan-running .wm-map-col::after {
+  content: "Đang quét lại điểm thiếu — tiến trình được giữ ở nền";
 }
 
 body.wm-console .wm-map-section { display: contents; }
@@ -3036,4 +3096,3 @@ body.wm-console .wm-header {
     flex-direction: column;
   }
 }
-

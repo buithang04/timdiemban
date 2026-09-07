@@ -35,6 +35,7 @@ const defaultExtensionInstallUrl =
 const TIMDIEMBAN_CONFIG = {
   APP_ORIGIN: appOrigin,
   NEWS_ORIGIN: env("NEWS_ORIGIN") || defaultNews,
+  MAP_PROVIDER: env("MAP_PROVIDER") || "openfreemap",
   MAPS_AUTO_FOCUS_MINUTES: 2,
   MAPS_AUTO_REOPEN_MAX: 5,
   /** Link cài Extension Chrome — cập nhật khi có URL store/zip */

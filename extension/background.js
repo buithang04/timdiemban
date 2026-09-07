@@ -106,10 +106,12 @@ let mapsReloadRecoverBusy = false;
 let mapsReloadTimer = null;
 let syncDebounceTimer = null;
 const MAPS_AUTO_FOCUS_ALARM = "timdiemban_maps_focus";
+const mapsRunWakeTokens = new Set();
 const mapsCellWorkTokens = new Set();
 const quickEnrichWorkTokens = new Set();
 let activeMapsCellListToken = null;
 const mapsRescanWorkTokens = new Set();
+let activeMainScanWakeToken = null;
 const operationTransitionTokens = new Set();
 let mapsContentWakeTimer = null;
 let mapsContentWakeTickBusy = false;
@@ -324,22 +326,25 @@ function startMapsContentWakePulse() {
   if (mapsContentWakeTimer) return;
   const tick = async () => {
     if (mapsContentWakeTickBusy) return;
+    const hasRunWork = mapsRunWakeTokens.size > 0;
     const hasCellWork = mapsCellWorkTokens.size > 0;
     const hasQuickEnrichWork =
       typeof quickEnrichWorkTokens !== "undefined" && quickEnrichWorkTokens.size > 0;
     const hasRescanWork = mapsRescanWorkTokens.size > 0;
-    if (!hasCellWork && !hasQuickEnrichWork && !hasRescanWork) {
+    if (!hasRunWork && !hasCellWork && !hasQuickEnrichWork && !hasRescanWork) {
       stopMapsContentWakePulse();
       return;
     }
-    const tabIds = hasCellWork
-      ? [scrapeState.mapsTabId, scrapeState?.quickScan ? scrapeState.enrichTabId : null]
-          .filter(Number.isInteger)
-      : hasQuickEnrichWork && scrapeState.enrichTabId
-        ? [scrapeState.enrichTabId]
-        : hasRescanWork && rescanState.mapsTabId
-          ? [rescanState.mapsTabId]
-          : [];
+    const tabIds = [];
+    const addTabId = (tabId) => {
+      if (Number.isInteger(tabId) && !tabIds.includes(tabId)) tabIds.push(tabId);
+    };
+    if (hasRunWork || hasCellWork) {
+      addTabId(scrapeState.mapsTabId);
+      if (scrapeState?.quickScan) addTabId(scrapeState.enrichTabId);
+    }
+    if (hasQuickEnrichWork) addTabId(scrapeState.enrichTabId);
+    if (hasRescanWork) addTabId(rescanState.mapsTabId);
     // Giữ timer khi tab đang được mở lại; tick sau sẽ tự dùng tab mới.
     if (!tabIds.length) return;
     mapsContentWakeTickBusy = true;
@@ -364,6 +369,19 @@ function stopMapsContentWakePulse() {
   mapsContentWakeTimer = null;
 }
 
+function hasActiveMapsContentWakeWork() {
+  return (
+    mapsRunWakeTokens.size > 0 ||
+    mapsCellWorkTokens.size > 0 ||
+    (typeof quickEnrichWorkTokens !== "undefined" && quickEnrichWorkTokens.size > 0) ||
+    mapsRescanWorkTokens.size > 0
+  );
+}
+
+function stopMapsContentWakePulseIfIdle() {
+  if (!hasActiveMapsContentWakeWork()) stopMapsContentWakePulse();
+}
+
 function clearMapsCellListWorkTokens() {
   activeMapsCellListToken = null;
   scrapeState._mapsCellListActive = false;
@@ -376,17 +394,12 @@ function clearMapsCellWorkTokens() {
   if (typeof quickEnrichWorkTokens !== "undefined") quickEnrichWorkTokens.clear();
   scrapeState._mapsCellWorkActive = false;
   clearMapsCellListWorkTokens();
-  if (mapsRescanWorkTokens.size === 0) stopMapsContentWakePulse();
+  stopMapsContentWakePulseIfIdle();
 }
 
 function clearMapsRescanWorkTokens() {
   mapsRescanWorkTokens.clear();
-  if (
-    mapsCellWorkTokens.size === 0 &&
-    (typeof quickEnrichWorkTokens === "undefined" || quickEnrichWorkTokens.size === 0)
-  ) {
-    stopMapsContentWakePulse();
-  }
+  stopMapsContentWakePulseIfIdle();
 }
 
 function isValidWindowId(windowId) {
@@ -2529,6 +2542,7 @@ async function parkSearchAfterResumeFailure(reason) {
   );
   scrapeState.resumeRequestedAt = 0;
   stopScrapeKeepAlive();
+  endMainScanWakePulse();
   releaseDisplayKeepAwakeIfIdle({ force: true });
   await persistScrapeCheckpoint({ forceRecoverable: true });
   await clearDurableWorkAlarmIfIdle();
@@ -2558,6 +2572,7 @@ async function tryResumeFromCheckpoint({ allowReopen = false, allowPaused = fals
   scrapeState.running = true;
   await persistScrapeCheckpoint({ forceRecoverable: true });
   requestDisplayKeepAwake();
+  beginMainScanWakePulse();
   startScrapeKeepAlive();
 
   let mapsAlive = false;
@@ -2695,6 +2710,7 @@ async function finalizeFromCheckpoint(reason) {
 
   restoreScrapeStateFromCheckpoint(cp);
   scrapeState.running = false;
+  endMainScanWakePulse();
   scrapeState.runId = "";
 
   if (scrapeState.mapsTabId) {
@@ -2866,6 +2882,7 @@ async function pauseActiveSearch(reason = "Người dùng tạm dừng quét") {
 
   clearMapsCellWorkTokens();
   stopScrapeKeepAlive();
+  endMainScanWakePulse();
   releaseDisplayKeepAwakeIfIdle({ force: true });
 
   if (Number.isInteger(listTabId) && listLease) {
@@ -3100,6 +3117,7 @@ async function pushSearchStatusToWeb(status = null) {
 
 async function resetScrapeState({ preserveCheckpoint = false } = {}) {
   stopScrapeKeepAlive();
+  endMainScanWakePulse();
   clearMapsCellWorkTokens();
   if (syncDebounceTimer) {
     clearTimeout(syncDebounceTimer);
@@ -3810,6 +3828,25 @@ function markMapsControlledActivity(extraMs = 120000) {
   scrapeState._programmaticMapsNavUntil = Math.max(scrapeState._programmaticMapsNavUntil || 0, until);
 }
 
+function beginMainScanWakePulse() {
+  if (activeMainScanWakeToken) {
+    startMapsContentWakePulse();
+    return activeMainScanWakeToken;
+  }
+  const token = Symbol("main-scan-wake");
+  activeMainScanWakeToken = token;
+  mapsRunWakeTokens.add(token);
+  startMapsContentWakePulse();
+  return token;
+}
+
+function endMainScanWakePulse() {
+  if (!activeMainScanWakeToken) return;
+  mapsRunWakeTokens.delete(activeMainScanWakeToken);
+  activeMainScanWakeToken = null;
+  stopMapsContentWakePulseIfIdle();
+}
+
 function beginMapsCellWork(extraMs = 15 * 60 * 1000) {
   const token = Symbol("maps-cell-work");
   mapsCellWorkTokens.add(token);
@@ -3822,13 +3859,7 @@ function beginMapsCellWork(extraMs = 15 * 60 * 1000) {
 function endMapsCellWork(token) {
   mapsCellWorkTokens.delete(token);
   scrapeState._mapsCellWorkActive = mapsCellWorkTokens.size > 0;
-  if (
-    mapsCellWorkTokens.size === 0 &&
-    (typeof quickEnrichWorkTokens === "undefined" || quickEnrichWorkTokens.size === 0) &&
-    mapsRescanWorkTokens.size === 0
-  ) {
-    stopMapsContentWakePulse();
-  }
+  stopMapsContentWakePulseIfIdle();
 }
 
 function beginQuickEnrichWork() {
@@ -3840,13 +3871,7 @@ function beginQuickEnrichWork() {
 
 function endQuickEnrichWork(token) {
   quickEnrichWorkTokens.delete(token);
-  if (
-    mapsCellWorkTokens.size === 0 &&
-    (typeof quickEnrichWorkTokens === "undefined" || quickEnrichWorkTokens.size === 0) &&
-    mapsRescanWorkTokens.size === 0
-  ) {
-    stopMapsContentWakePulse();
-  }
+  stopMapsContentWakePulseIfIdle();
 }
 
 function beginMapsCellListWork(lease) {
@@ -3874,13 +3899,7 @@ function beginMapsRescanWork() {
 
 function endMapsRescanWork(token) {
   mapsRescanWorkTokens.delete(token);
-  if (
-    mapsCellWorkTokens.size === 0 &&
-    (typeof quickEnrichWorkTokens === "undefined" || quickEnrichWorkTokens.size === 0) &&
-    mapsRescanWorkTokens.size === 0
-  ) {
-    stopMapsContentWakePulse();
-  }
+  stopMapsContentWakePulseIfIdle();
 }
 
 function isMapsLoadingExpected() {
@@ -6373,6 +6392,7 @@ async function handleStartSearch(params) {
   scrapeState._mapsListWarningKey = "";
   lastSyncedMergedCount = 0;
   lastForceSyncAt = 0;
+  beginMainScanWakePulse();
   startScrapeKeepAlive();
 
   scrapeState.webTabId = webTab.id;

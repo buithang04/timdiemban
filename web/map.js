@@ -1,5 +1,6 @@
 /**
- * Bản đồ OpenStreetMap (Leaflet) — nhiều khu vực (ward/province polygon) + lưới ô quét + marker.
+ * Bản đồ Findmap (Leaflet + OpenFreeMap/MapLibre fallback OSM) — nhiều khu vực
+ * (ward/province polygon) + lưới ô quét + marker.
  */
 (function () {
   const MARKER_IN = "#1e3a8a";
@@ -51,11 +52,15 @@
       preferCanvas: true
     }).setView([21.0285, 105.8542], 13);
 
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-      updateWhenIdle: true,
-      keepBuffer: 2
-    }).addTo(map);
+    if (window.TimDiemBanMapProvider?.addBaseLayer) {
+      window.TimDiemBanMapProvider.addBaseLayer(map, window.TIMDIEMBAN_CONFIG || {}, L);
+    } else {
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+        updateWhenIdle: true,
+        keepBuffer: 2
+      }).addTo(map);
+    }
 
     gridRenderer = L.canvas({ padding: 0.4 });
     layerAreas = L.featureGroup().addTo(map);

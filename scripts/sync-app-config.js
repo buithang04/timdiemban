@@ -95,6 +95,7 @@ const TIMDIEMBAN_CONFIG = {
   APP_ORIGIN: __findmapPageOrigin(${JSON.stringify(app)}),
   NEWS_ORIGIN: __findmapPageOrigin(${JSON.stringify(news)}),
   SEARCH_ORIGIN: __findmapPageOrigin(${JSON.stringify(search)}),
+  MAP_PROVIDER: ${JSON.stringify(String(cfg.MAP_PROVIDER || "openfreemap"))},
   MAPS_AUTO_FOCUS_MINUTES: ${Number(cfg.MAPS_AUTO_FOCUS_MINUTES) || 2},
   MAPS_AUTO_REOPEN_MAX: ${Number(cfg.MAPS_AUTO_REOPEN_MAX) || 5},
   EXTENSION_INSTALL_URL: ${JSON.stringify(String(cfg.EXTENSION_INSTALL_URL || ""))}

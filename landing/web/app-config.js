@@ -17,6 +17,7 @@ const TIMDIEMBAN_CONFIG = {
   APP_ORIGIN: __findmapPageOrigin("https://findmap.vn"),
   NEWS_ORIGIN: __findmapPageOrigin("https://findmap.vn"),
   SEARCH_ORIGIN: __findmapPageOrigin("https://findmap.vn"),
+  MAP_PROVIDER: "openfreemap",
   MAPS_AUTO_FOCUS_MINUTES: 2,
   MAPS_AUTO_REOPEN_MAX: 5,
   EXTENSION_INSTALL_URL: "https://chromewebstore.google.com/detail/dkdopmhionlfkmeicnppaljeibldgjia"

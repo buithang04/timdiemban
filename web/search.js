@@ -8,6 +8,12 @@
   const MAPS_AUTO_REOPEN_KEY = "timdiemban_maps_auto_reopen";
   const SEARCH_OPTIONS_OPEN_KEY = "timdiemban_search_options_open";
   const SEARCH_BATCH_RECOVERY_KEY = "timdiemban_search_batch_recovery_v3";
+  const QUICK_SCAN_DESCRIPTION =
+    "Quét nhanh dùng 2 tab: tab 1 lấy danh sách URL, tab 2 liên tục đọc chi tiết địa điểm";
+  const NORMAL_SCAN_DESCRIPTION =
+    "Quét thường dùng 1 tab: lấy xong danh sách URL của từng khu vực rồi mới đọc chi tiết";
+  const QUICK_SCAN_FOREGROUND_HINT =
+    "Khi tab 1 đang lấy danh sách, hãy giữ tab đó ở phía trước; tab 2 vẫn đọc chi tiết ở nền";
 
   const els = {
     form: document.getElementById("searchForm"),
@@ -349,6 +355,9 @@
     if (els.mapsAutoFocus?.checked) tags.push("Khôi phục Maps khi treo");
     if (els.mapsAutoReopen?.checked) tags.push("Mở lại tab");
     els.searchOptionsHint.textContent = tags.length ? tags.join(" · ") : "Chưa bật";
+    els.searchOptionsHint.title = els.quickScan?.checked
+      ? `${QUICK_SCAN_DESCRIPTION}. ${QUICK_SCAN_FOREGROUND_HINT}.`
+      : NORMAL_SCAN_DESCRIPTION;
   }
 
   function onSearchOptionChange() {
@@ -1415,6 +1424,21 @@
     throw lastErr || new Error("Không bắt đầu được tìm kiếm");
   }
 
+  function updateSearchRunGuardClass(locked) {
+    const body = document.body;
+    if (!body?.classList) return;
+    const preparing = submitting || formBusy || batchRecoveryStarting;
+    const running = searchRunning || multiKeywordBatch;
+    body.classList.toggle("tdb-search-running", running && !searchPaused);
+    body.classList.toggle("tdb-search-paused", searchPaused);
+    body.classList.toggle("tdb-search-preparing", preparing && !running && !searchPaused);
+    body.classList.toggle("tdb-search-locked", locked);
+    if (els.form) {
+      els.form.setAttribute("aria-busy", running || preparing ? "true" : "false");
+      els.form.dataset.scanLocked = locked ? "1" : "0";
+    }
+  }
+
   function updateFormControls() {
     const locked = isFormLocked();
     if (els.startBtn) {
@@ -1462,6 +1486,7 @@
         ? "Hãy tạm dừng rồi dừng hẳn lượt quét trước khi xóa kết quả."
         : button.dataset.defaultTitle;
     }
+    updateSearchRunGuardClass(locked);
   }
 
   function resetFormLock() {
@@ -1584,7 +1609,7 @@
     if (!searchRunning || !els.searchStatus) return;
     if (document.visibilityState === "hidden") {
       showSearchStatus(
-        "Tìm kiếm vẫn tiếp tục và kết quả đang được đồng bộ. Khi Maps đang lấy danh sách URL, hãy giữ tab đó ở phía trước; giai đoạn đọc chi tiết vẫn có thể chạy khi bạn dùng tab khác.",
+        "Tìm kiếm vẫn tiếp tục, Findmap đang giữ phiên chạy và đồng bộ kết quả. Nếu có cảnh báo ở pha lấy danh sách URL, hãy quay lại tab Google Maps để tránh bị gián đoạn.",
         "info"
       );
     }

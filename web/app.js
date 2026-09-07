@@ -361,6 +361,12 @@ function resetRescanUiState() {
   updateRescanBtn();
 }
 
+function updateRescanRunGuardClass() {
+  const body = document.body;
+  if (!body?.classList) return;
+  body.classList.toggle("tdb-rescan-running", rescanRunning);
+}
+
 function armRescanAckTimeout(sessionId) {
   clearRescanAckTimer();
   rescanAckTimer = setTimeout(() => {
@@ -2625,6 +2631,7 @@ function updateSendSiteButton() {
 }
 
 function updateRescanBtn() {
+  updateRescanRunGuardClass();
   if (!els.rescanBtn) return;
 
   // Chỉ cho quét lại SAU KHI quét xong (status !== "running")

@@ -168,7 +168,10 @@ test("complete phục hồi chỉ tăng batch một lần và bỏ qua event tr�
     activeSearchId: "search_batch_0",
     currentIndex: 0,
     nextIndex: 0,
+    currentJobIndex: 0,
+    nextJobIndex: 0,
     keywords: ["a", "b"],
+    areas: [{}],
     baseParams: {},
     phase: "running"
   };
@@ -184,7 +187,12 @@ test("complete phục hồi chỉ tăng batch một lần và bỏ qua event tr�
     isUserCancelEnd: () => false,
     updateSearchProgress: () => {},
     showSearchStatus: () => {},
-    launchRecoveredBatch: (next) => launches.push(next.nextIndex),
+    totalJobs: (areasLen, keywordsLen) => Math.max(0, areasLen) * Math.max(0, keywordsLen),
+    jobCoords: (jobIndex, keywordsLen) => ({
+      areaIndex: keywordsLen > 0 ? Math.floor(jobIndex / keywordsLen) : 0,
+      keywordIndex: keywordsLen > 0 ? jobIndex % keywordsLen : 0
+    }),
+    launchRecoveredBatch: (next) => launches.push(next.nextJobIndex),
     Math,
     Number
   });
@@ -195,7 +203,7 @@ test("complete phục hồi chỉ tăng batch một lần và bỏ qua event tr�
 
   const payload = { type: "complete", searchId: "search_batch_0" };
   assert.equal(context.continueRecoveredBatchAfterTerminal(payload), true);
-  assert.equal(state.nextIndex, 1);
+  assert.equal(state.nextJobIndex, 1);
   assert.equal(state.activeSearchId, "");
   assert.deepEqual(launches, [1]);
   assert.equal(context.continueRecoveredBatchAfterTerminal(payload), false);

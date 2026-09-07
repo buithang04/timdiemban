@@ -449,6 +449,7 @@ test("wake pulse dùng token nên finally của lượt cũ không dừng lượ
         _programmaticMapsNavUntil: 0
       };
       const rescanState = { mapsTabId: 9 };
+      const mapsRunWakeTokens = new Set();
       const mapsCellWorkTokens = new Set();
       let activeMapsCellListToken = null;
       const mapsRescanWorkTokens = new Set();
@@ -537,6 +538,7 @@ test("rescan tab nền được wake trong toàn bộ thao tác đọc URL", asy
         _programmaticMapsNavUntil: 0
       };
       const rescanState = { mapsTabId: 29 };
+      const mapsRunWakeTokens = new Set();
       const mapsCellWorkTokens = new Set();
       const mapsRescanWorkTokens = new Set();
       let mapsContentWakeTimer = null;
@@ -1009,6 +1011,7 @@ test("resume checkpoint ô cuối rỗng kết thúc và dọn checkpoint thay v
     },
     startScrapeKeepAlive: () => calls.push("keepalive:start"),
     stopScrapeKeepAlive: () => calls.push("keepalive:stop"),
+    beginMainScanWakePulse: () => calls.push("wake:main:start"),
     persistScrapeCheckpoint: async () => calls.push("checkpoint:resume"),
     nextPendingCellFromScrapeState: () => 1,
     closeMapsTabSafely: async () => calls.push("tab:close"),
@@ -1033,6 +1036,7 @@ test("resume checkpoint ô cuối rỗng kết thúc và dọn checkpoint thay v
   assert.deepEqual(calls, [
     "restore",
     "checkpoint:resume",
+    "wake:main:start",
     "keepalive:start",
     "tab:get:17",
     "keepalive:stop",
@@ -1788,6 +1792,20 @@ test("START chỉ chạy Maps sau khi checkpoint đầu tiên đã lưu thành c
   assert.match(startRescan, /if \(!initialCheckpointSaved\)[\s\S]*Không lưu được trạng thái quét lại/);
 });
 
+test("main scan giữ wake pulse từ lúc START/RESUME tới reset/pause", () => {
+  const pulse = section("const MAPS_CONTENT_WAKE_INTERVAL_MS", "function isValidWindowId");
+  const startSearch = section("async function handleStartSearch", "async function handleResumeSearch");
+  const resume = section("async function tryResumeFromCheckpoint", "async function finalizeFromCheckpoint");
+  const pause = section("async function pauseActiveSearch", "async function abandonActiveSearch");
+  const reset = section("async function resetScrapeState", "function isMapsAutoReopenEnabled");
+
+  assert.match(pulse, /mapsRunWakeTokens\.size > 0/);
+  assert.match(startSearch, /scrapeState\.running = true;[\s\S]*beginMainScanWakePulse\(\);[\s\S]*startScrapeKeepAlive\(\);/);
+  assert.match(resume, /scrapeState\.running = true;[\s\S]*beginMainScanWakePulse\(\);[\s\S]*startScrapeKeepAlive\(\);/);
+  assert.match(pause, /clearMapsCellWorkTokens\(\);\s*stopScrapeKeepAlive\(\);\s*endMainScanWakePulse\(\);/);
+  assert.match(reset, /stopScrapeKeepAlive\(\);\s*endMainScanWakePulse\(\);\s*clearMapsCellWorkTokens\(\);/);
+});
+
 test("display wake lock chỉ giữ trong phiên Maps active", () => {
   const power = section("function requestDisplayKeepAwake", "function pingMapsTabWake");
   const keepalive = section("function startScrapeKeepAlive", "function stopScrapeKeepAlive");
@@ -2201,7 +2219,7 @@ test("continuation restore dựng abort/reload barrier trước request mới v�
   assert.ok(resumeLeaseAt >= 0 && abortAt > resumeLeaseAt, "lease cũ phải được abort trước");
   assert.ok(readyAt > abortAt && requestAt > readyAt, "barrier phải xong trước request list mới");
   assert.ok(resumeFlagAt > requestAt, "request mới phải nhận quyết định resume/restart sau barrier");
-  assert.match(runCell, /if \(cancellation\.reloaded\) resumeFromCurrent = false/);
+  assert.match(runCell, /if \(cancellation\.reloaded\)\s*\{[\s\S]*resumeFromCurrent = false;/);
 });
 
 test("PING treo có timeout và ensureMapsContentReady trả về thay vì chờ vô hạn", async () => {
@@ -2320,6 +2338,7 @@ test("pause lưu đúng ô/lease và vô hiệu hóa list + enrich trước khi 
     },
     clearMapsCellWorkTokens: () => calls.push("clear-work"),
     stopScrapeKeepAlive: () => calls.push("stop-keepalive"),
+    endMainScanWakePulse: () => calls.push("wake:main:end"),
     releaseDisplayKeepAwakeIfIdle: (options) => calls.push(["release-power", options]),
     clearDurableWorkAlarmIfIdle: async () => calls.push("clear-alarm"),
     notifyPopup: (message) => calls.push(["popup", message]),
