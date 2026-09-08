@@ -43,11 +43,7 @@ const {
   createWinmapIntegrationService
 } = require("./winmap-integration");
 const { getProvinces, getWards, getWardBoundary, getWardInfo, getProvinceInfo, getProvinceBoundary } = require("./geo-api");
-const { createGuardrails, generate: generateTotp } = require("otplib");
-
-const TWO_FACTOR_GUARDRAILS = createGuardrails({
-  MIN_SECRET_BYTES: 10
-});
+const { authenticator } = require("otplib");
 
 const { getSetting, setSetting } = dbModule;
 const {
@@ -600,10 +596,7 @@ app.post("/api/2fa", async (req, res) => {
       });
     }
 
-    const code = await generateTotp({
-      secret: normalizedSecret,
-      guardrails: TWO_FACTOR_GUARDRAILS
-    });
+    const code = authenticator.generate(normalizedSecret);
 
     return res.json({
       success: true,

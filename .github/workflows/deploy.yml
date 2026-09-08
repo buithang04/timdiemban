@@ -83,6 +83,7 @@ jobs:
             "${FINDMAP_DEPLOY_USER}@${FINDMAP_DEPLOY_HOST}" \
             "${remote_env} bash -s" <<'REMOTE_DEPLOY'
           set -euo pipefail
+          trap 'rm -f "$DEPLOY_BUNDLE"' EXIT
 
           cd "$DEPLOY_PATH"
           if [ "$(git rev-parse --is-inside-work-tree)" != "true" ]; then
@@ -132,10 +133,36 @@ jobs:
           pm2 save
           pm2 list
 
-          curl -fsSI https://findmap.vn/map-provider.js >/dev/null
-          curl -fsS https://findmap.vn/app-config.js | grep -q 'MAP_PROVIDER'
-          curl -fsS https://findmap.vn/api/config/origins >/dev/null
+          retry_smoke() {
+            name="$1"
+            shift
+            for attempt in $(seq 1 20); do
+              if "$@"; then
+                echo "smoke_ok=$name"
+                return 0
+              fi
+              echo "smoke_wait=$name attempt=$attempt"
+              sleep 3
+            done
+            echo "smoke_failed=$name"
+            "$@"
+          }
 
-          rm "$DEPLOY_BUNDLE"
+          smoke_map_provider() {
+            curl -fsSI https://findmap.vn/map-provider.js >/dev/null
+          }
+
+          smoke_app_config() {
+            curl -fsS https://findmap.vn/app-config.js | grep -q 'MAP_PROVIDER'
+          }
+
+          smoke_api_config() {
+            curl -fsS https://findmap.vn/api/config/origins >/dev/null
+          }
+
+          retry_smoke map-provider smoke_map_provider
+          retry_smoke app-config smoke_app_config
+          retry_smoke api-config smoke_api_config
+
           echo "deployed=$deployed_sha"
           REMOTE_DEPLOY
