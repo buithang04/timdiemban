@@ -1,0 +1,141 @@
+name: Deploy Findmap
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: findmap-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy production
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+
+    steps:
+      - name: Checkout current commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Prepare SSH
+        shell: bash
+        env:
+          FINDMAP_DEPLOY_KEY: ${{ secrets.FINDMAP_DEPLOY_KEY }}
+          FINDMAP_DEPLOY_KNOWN_HOSTS: ${{ secrets.FINDMAP_DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$FINDMAP_DEPLOY_KEY" | tr -d '\r' > ~/.ssh/findmap_cd_key
+          chmod 600 ~/.ssh/findmap_cd_key
+          printf '%s\n' "$FINDMAP_DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+
+      - name: Bundle commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          git update-ref refs/heads/cd-deploy "$GITHUB_SHA"
+          git bundle create findmap-cd.bundle refs/heads/cd-deploy
+          git bundle verify findmap-cd.bundle
+
+      - name: Upload bundle
+        shell: bash
+        env:
+          FINDMAP_DEPLOY_HOST: ${{ secrets.FINDMAP_DEPLOY_HOST }}
+          FINDMAP_DEPLOY_PORT: ${{ secrets.FINDMAP_DEPLOY_PORT }}
+          FINDMAP_DEPLOY_USER: ${{ secrets.FINDMAP_DEPLOY_USER }}
+        run: |
+          set -euo pipefail
+          remote_bundle="/tmp/findmap-${GITHUB_SHA}.bundle"
+          scp \
+            -P "$FINDMAP_DEPLOY_PORT" \
+            -i ~/.ssh/findmap_cd_key \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            findmap-cd.bundle \
+            "${FINDMAP_DEPLOY_USER}@${FINDMAP_DEPLOY_HOST}:${remote_bundle}"
+
+      - name: Deploy on server
+        shell: bash
+        env:
+          FINDMAP_DEPLOY_HOST: ${{ secrets.FINDMAP_DEPLOY_HOST }}
+          FINDMAP_DEPLOY_PORT: ${{ secrets.FINDMAP_DEPLOY_PORT }}
+          FINDMAP_DEPLOY_USER: ${{ secrets.FINDMAP_DEPLOY_USER }}
+          FINDMAP_DEPLOY_PATH: ${{ secrets.FINDMAP_DEPLOY_PATH }}
+        run: |
+          set -euo pipefail
+          remote_bundle="/tmp/findmap-${GITHUB_SHA}.bundle"
+          remote_env="DEPLOY_PATH='${FINDMAP_DEPLOY_PATH}' DEPLOY_SHA='${GITHUB_SHA}' DEPLOY_BUNDLE='${remote_bundle}'"
+          ssh \
+            -p "$FINDMAP_DEPLOY_PORT" \
+            -i ~/.ssh/findmap_cd_key \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            "${FINDMAP_DEPLOY_USER}@${FINDMAP_DEPLOY_HOST}" \
+            "${remote_env} bash -s" <<'REMOTE_DEPLOY'
+          set -euo pipefail
+
+          cd "$DEPLOY_PATH"
+          if [ "$(git rev-parse --is-inside-work-tree)" != "true" ]; then
+            echo "Deploy path is not a git work tree: $DEPLOY_PATH"
+            exit 1
+          fi
+
+          if [ "$(git rev-parse --abbrev-ref HEAD)" != "main" ]; then
+            git checkout main
+          fi
+
+          backup_base="${DEPLOY_PATH%/}-deploy-backups/$(date +%Y%m%d-%H%M%S)"
+          backup_created=0
+          for f in package-lock.json server/package-lock.json landing/package-lock.json; do
+            if [ -f "$f" ] && ! git ls-files --error-unmatch "$f" >/dev/null 2>&1; then
+              mkdir -p "$backup_base/$(dirname "$f")"
+              mv "$f" "$backup_base/$f"
+              echo "moved_untracked=$f -> $backup_base/$f"
+              backup_created=1
+            fi
+          done
+          if [ "$backup_created" -eq 0 ]; then
+            echo "moved_untracked=none"
+          fi
+
+          git bundle verify "$DEPLOY_BUNDLE"
+          git fetch "$DEPLOY_BUNDLE" refs/heads/cd-deploy:refs/remotes/cd/deploy
+          git merge --ff-only refs/remotes/cd/deploy
+
+          deployed_sha="$(git rev-parse HEAD)"
+          if [ "$deployed_sha" != "$DEPLOY_SHA" ]; then
+            echo "Deployed SHA mismatch: expected $DEPLOY_SHA, got $deployed_sha"
+            exit 1
+          fi
+          git update-ref refs/remotes/origin/main "$DEPLOY_SHA" || true
+
+          node scripts/sync-app-config.js
+
+          cd "$DEPLOY_PATH/server"
+          npm install --omit=dev --package-lock=false
+
+          cd "$DEPLOY_PATH/landing"
+          npm install --omit=dev --package-lock=false
+
+          pm2 restart findmap-server --update-env
+          pm2 restart findmap-landing --update-env
+          pm2 save
+          pm2 list
+
+          curl -fsSI https://findmap.vn/map-provider.js >/dev/null
+          curl -fsS https://findmap.vn/app-config.js | grep -q 'MAP_PROVIDER'
+          curl -fsS https://findmap.vn/api/config/origins >/dev/null
+
+          rm "$DEPLOY_BUNDLE"
+          echo "deployed=$deployed_sha"
+          REMOTE_DEPLOY
